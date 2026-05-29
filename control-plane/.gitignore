@@ -1,0 +1,5 @@
+/control-plane
+*.test
+*.out
+.env
+.env.local

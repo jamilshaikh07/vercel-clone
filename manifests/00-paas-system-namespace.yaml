@@ -1,0 +1,12 @@
+---
+# Control plane / builder namespace. NOT under restricted PSA because
+# Kaniko (and future builder tooling) needs broader fs/syscall access
+# than tenant workloads. Tenant apps live in paas-deployments (restricted).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: paas-system
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: baseline
+    pod-security.kubernetes.io/warn: baseline
