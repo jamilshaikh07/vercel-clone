@@ -72,6 +72,16 @@ func (w *worker) Run(ctx context.Context) {
 }
 
 func (w *worker) tick(ctx context.Context) error {
+	// Reconcile: rows that have been non-terminal longer than buildTimeout
+	// belong to a worker that died (crashed pod, rollout race, OOM, etc.).
+	// Reset them so we can pick them up. The build path is idempotent and
+	// reuses the in-cluster Job if it's still progressing.
+	if n, err := w.store.RequeueStale(ctx, buildTimeout); err != nil {
+		w.log.Error("reconcile stale failed", "err", err)
+	} else if n > 0 {
+		w.log.Info("reconciled stale deployments", "count", n)
+	}
+
 	claim, err := w.store.ClaimNextQueued(ctx)
 	if err != nil {
 		return fmt.Errorf("claim: %w", err)

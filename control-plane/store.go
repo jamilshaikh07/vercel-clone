@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -311,6 +312,25 @@ func (s *store) MarkReady(ctx context.Context, deploymentID, url string) error {
 		 WHERE id = $1::uuid
 	`, deploymentID, url)
 	return err
+}
+
+// RequeueStale requeues any deployment that's been in a non-terminal state
+// longer than maxAge. Called periodically by the worker so a crashed or
+// terminated worker (rollout race, OOM, etc.) can't permanently strand a row.
+func (s *store) RequeueStale(ctx context.Context, maxAge time.Duration) (int, error) {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE deployments
+		   SET status = 'queued',
+		       build_started_at = NULL,
+		       build_ended_at = NULL,
+		       error = NULL
+		 WHERE status IN ('building', 'deploying')
+		   AND COALESCE(build_started_at, created_at) < now() - $1::interval
+	`, fmt.Sprintf("%d seconds", int(maxAge.Seconds())))
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 // RequeueStuck resets non-terminal deployments to 'queued' so a fresh
