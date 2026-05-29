@@ -1,0 +1,55 @@
+---
+# RBAC the control plane needs to drive end-to-end deployments.
+#
+# Scope is intentionally tight: namespaced Role inside paas-system, not a
+# ClusterRole. When we later split tenant workloads into paas-deployments
+# we'll add a second RoleBinding there, not widen this one.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: control-plane
+  namespace: paas-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: control-plane
+  namespace: paas-system
+rules:
+  # Per-build secrets (the GIT_TOKEN env source for Kaniko Jobs).
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+  # Build workloads.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  # Tenant workloads.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Routing.
+  - apiGroups: ["traefik.io"]
+    resources: ["ingressroutes"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Read access for future log streaming + status display.
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: control-plane
+  namespace: paas-system
+subjects:
+  - kind: ServiceAccount
+    name: control-plane
+    namespace: paas-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: control-plane

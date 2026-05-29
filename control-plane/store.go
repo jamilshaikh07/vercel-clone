@@ -227,6 +227,103 @@ func (s *store) ListRecentDeployments(ctx context.Context, limit int) ([]deploym
 	return out, rows.Err()
 }
 
+// --- worker side: claim + transition deployments --------------------------
+
+// claimedDeployment carries everything the builder needs in one fetch so
+// the worker never has to round-trip back to projects/installation_repos.
+type claimedDeployment struct {
+	DeploymentID   string
+	ProjectID      string
+	Slug           string
+	RepoFullName   string
+	InstallationID int64
+	CommitSHA      string
+	Ref            string
+}
+
+// ClaimNextQueued atomically transitions the oldest 'queued' deployment to
+// 'building' and returns it. FOR UPDATE SKIP LOCKED lets multiple control
+// plane replicas coexist later without double-building. Returns (nil, nil)
+// when the queue is empty.
+func (s *store) ClaimNextQueued(ctx context.Context) (*claimedDeployment, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	var (
+		c              claimedDeployment
+		installationID int64
+		repoFullName   string
+	)
+	err = tx.QueryRow(ctx, `
+		WITH next AS (
+			SELECT id
+			  FROM deployments
+			 WHERE status = 'queued'
+			 ORDER BY created_at
+			 FOR UPDATE SKIP LOCKED
+			 LIMIT 1
+		)
+		UPDATE deployments d
+		   SET status = 'building',
+		       build_started_at = now()
+		  FROM next, projects p
+		 WHERE d.id = next.id
+		   AND p.id = d.project_id
+		RETURNING d.id::text, d.project_id::text, p.slug, p.full_name,
+		          p.installation_id, d.commit_sha, d.ref
+	`).Scan(&c.DeploymentID, &c.ProjectID, &c.Slug, &repoFullName,
+		&installationID, &c.CommitSHA, &c.Ref)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	c.RepoFullName = repoFullName
+	c.InstallationID = installationID
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+func (s *store) MarkDeploying(ctx context.Context, deploymentID, image string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE deployments
+		   SET status = 'deploying',
+		       build_ended_at = now(),
+		       image = $2
+		 WHERE id = $1::uuid
+	`, deploymentID, image)
+	return err
+}
+
+func (s *store) MarkReady(ctx context.Context, deploymentID, url string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE deployments
+		   SET status = 'ready',
+		       ready_at = now(),
+		       url = $2
+		 WHERE id = $1::uuid
+	`, deploymentID, url)
+	return err
+}
+
+func (s *store) MarkFailed(ctx context.Context, deploymentID, reason string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE deployments
+		   SET status = 'failed',
+		       build_ended_at = COALESCE(build_ended_at, now()),
+		       error = $2
+		 WHERE id = $1::uuid
+	`, deploymentID, reason)
+	return err
+}
+
 // slugify turns "jamilshaikh07/paas-sample-hello" into
 // "jamilshaikh07-paas-sample-hello" (URL-safe, lower-case, no double dashes).
 var slugUnsafe = regexp.MustCompile(`[^a-z0-9-]+`)

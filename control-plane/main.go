@@ -60,6 +60,12 @@ func main() {
 		log.Error("DATABASE_URL is required")
 		os.Exit(1)
 	}
+	appIDStr := strings.TrimSpace(os.Getenv("GITHUB_APP_ID"))
+	keyPath := strings.TrimSpace(os.Getenv("GITHUB_APP_PRIVATE_KEY_PATH"))
+	if appIDStr == "" || keyPath == "" {
+		log.Error("GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY_PATH are required")
+		os.Exit(1)
+	}
 
 	addr := os.Getenv("LISTEN_ADDR")
 	if addr == "" {
@@ -87,11 +93,26 @@ func main() {
 	cancel()
 	log.Info("migrations applied")
 
+	gh, err := loadGitHubApp(appIDStr, keyPath)
+	if err != nil {
+		log.Error("load github app failed", "err", err)
+		os.Exit(1)
+	}
+	k8s, err := newInClusterClient()
+	if err != nil {
+		log.Error("init k8s client failed", "err", err)
+		os.Exit(1)
+	}
+	log.Info("github app + k8s client ready", "app_id", appIDStr, "namespace", k8s.namespace)
+
 	s := &server{
 		webhookSecret: []byte(secret),
 		store:         newStore(pool),
 		log:           log,
 	}
+
+	bw := &worker{store: s.store, gh: gh, k8s: k8s, log: log}
+	go bw.Run(rootCtx)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.healthz)
