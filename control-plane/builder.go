@@ -39,10 +39,14 @@ const (
 	// TODO: detect from the built image's Config.ExposedPorts. For MVP we
 	// assume the modern non-root convention (most rootless images use 8080+).
 	tenantPort = 8080
-	pollInterval    = 3 * time.Second
-	buildTimeout    = 15 * time.Minute
-	registryBase    = "ttl.sh"
-	tunnelTarget    = "3a067db9-77b1-49c9-a3d4-30f86d16c80d.cfargotunnel.com"
+	pollInterval = 3 * time.Second
+	buildTimeout = 15 * time.Minute
+	// Registry lives in-cluster, exposed at registry.jamilshaikh.in via the
+	// same Cloudflare Tunnel. dockerCfgSecret holds the docker config.json
+	// used by Kaniko for push and by tenant pods for pull (imagePullSecrets).
+	registryBase     = "registry.jamilshaikh.in"
+	dockerCfgSecret  = "registry-dockercfg"
+	tunnelTarget     = "3a067db9-77b1-49c9-a3d4-30f86d16c80d.cfargotunnel.com"
 )
 
 type worker struct {
@@ -110,7 +114,7 @@ func (w *worker) tick(ctx context.Context) error {
 
 func (w *worker) runOne(ctx context.Context, c *claimedDeployment) error {
 	shortSHA := short(c.CommitSHA)
-	image := fmt.Sprintf("%s/%s-%s:24h", registryBase, c.Slug, shortSHA)
+	image := fmt.Sprintf("%s/%s:%s", registryBase, c.Slug, shortSHA)
 	host := fmt.Sprintf("%s-%s.%s", c.Slug, shortSHA, tenantHostZone)
 	buildName := fmt.Sprintf("build-%s", strings.ReplaceAll(c.DeploymentID[:8], "-", ""))
 	gitSecretName := buildName + "-git"
@@ -279,6 +283,13 @@ type buildJobInput struct {
 
 func buildJobManifest(in buildJobInput) map[string]any {
 	workspaceMount := map[string]any{"name": "workspace", "mountPath": "/workspace"}
+	// Kaniko reads docker config from /kaniko/.docker/config.json — mount the
+	// project-wide registry credentials there so it can push.
+	dockerCfgMount := map[string]any{
+		"name":      "docker-config",
+		"mountPath": "/kaniko/.docker",
+		"readOnly":  true,
+	}
 	secretEnvFrom := []any{map[string]any{
 		"secretRef": map[string]any{"name": in.GitSecretName},
 	}}
@@ -319,6 +330,18 @@ func buildJobManifest(in buildJobInput) map[string]any {
 							"name":     "workspace",
 							"emptyDir": map[string]any{},
 						},
+						map[string]any{
+							"name": "docker-config",
+							"secret": map[string]any{
+								"secretName": dockerCfgSecret,
+								"items": []any{
+									map[string]any{
+										"key":  ".dockerconfigjson",
+										"path": "config.json",
+									},
+								},
+							},
+						},
 					},
 					"initContainers": []any{
 						map[string]any{
@@ -346,7 +369,7 @@ func buildJobManifest(in buildJobInput) map[string]any {
 								"--cache=false",
 								"--verbosity=info",
 							},
-							"volumeMounts": []any{workspaceMount},
+							"volumeMounts": []any{workspaceMount, dockerCfgMount},
 							"resources": map[string]any{
 								"requests": map[string]any{"cpu": "500m", "memory": "1Gi"},
 								"limits":   map[string]any{"cpu": "2", "memory": "4Gi"},
@@ -405,6 +428,9 @@ func deploymentManifest(in deployInput) map[string]any {
 			"template": map[string]any{
 				"metadata": map[string]any{"labels": labels},
 				"spec": map[string]any{
+					"imagePullSecrets": []any{
+						map[string]any{"name": dockerCfgSecret},
+					},
 					"containers": []any{
 						map[string]any{
 							"name":            "app",

@@ -1,0 +1,45 @@
+---
+# One-shot Job: creates the S3 bucket the registry stores blobs in.
+# Idempotent — `mc mb -p` is a no-op if the bucket already exists.
+# Re-apply this manifest after deleting the Job if you ever need to
+# recreate the bucket (e.g. after a MinIO restore).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: registry-bucket-init
+  namespace: paas-system
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: quay.io/minio/mc:latest
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -eu
+              mc alias set src "http://minio.minio-system.svc.cluster.local:9000" \
+                "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+              mc mb -p src/paas-registry || true
+              mc ls src
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minio-creds
+                  key: user
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minio-creds
+                  key: password
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
