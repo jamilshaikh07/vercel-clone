@@ -109,33 +109,20 @@ func (w *worker) runOne(ctx context.Context, c *claimedDeployment) error {
 	if err != nil {
 		return fmt.Errorf("mint installation token: %w", err)
 	}
+	_ = gitSecretName // (kept for future SSH/netrc auth path)
 
-	// 2. Create per-build Secret holding the token. Kaniko reads
-	//    GIT_USERNAME / GIT_TOKEN env vars for HTTPS auth.
-	if err := w.k8s.applySecret(ctx, buildNamespace, gitSecretName,
-		map[string]string{
-			"GIT_USERNAME": "x-access-token",
-			"GIT_TOKEN":    token,
-		},
-		map[string]string{
-			"app.kubernetes.io/managed-by": "control-plane",
-			"app.kubernetes.io/component":  "build",
-			"paas.deployment":              c.DeploymentID,
-		},
-	); err != nil {
-		return fmt.Errorf("create git secret: %w", err)
-	}
-
-	// 3. Kaniko Job.
+	// 2. Kaniko Job — token embedded in context URL because the GIT_TOKEN
+	//    env-var path is unreliable across versions. The token lives 1h
+	//    and is revocable on App uninstall.
 	if err := w.k8s.createJob(ctx, buildNamespace, buildJobManifest(buildJobInput{
-		Name:           buildName,
-		Namespace:      buildNamespace,
-		RepoFullName:   c.RepoFullName,
-		CommitSHA:      c.CommitSHA,
-		Destination:    image,
-		GitSecretName:  gitSecretName,
-		DeploymentID:   c.DeploymentID,
-		ProjectSlug:    c.Slug,
+		Name:         buildName,
+		Namespace:    buildNamespace,
+		RepoFullName: c.RepoFullName,
+		CommitSHA:    c.CommitSHA,
+		GitToken:     token,
+		Destination:  image,
+		DeploymentID: c.DeploymentID,
+		ProjectSlug:  c.Slug,
 	})); err != nil {
 		return fmt.Errorf("create job: %w", err)
 	}
@@ -221,18 +208,19 @@ func (w *worker) waitForJob(ctx context.Context, namespace, name string) error {
 // --- manifest builders -----------------------------------------------------
 
 type buildJobInput struct {
-	Name          string
-	Namespace     string
-	RepoFullName  string
-	CommitSHA     string
-	Destination   string
-	GitSecretName string
-	DeploymentID  string
-	ProjectSlug   string
+	Name         string
+	Namespace    string
+	RepoFullName string
+	CommitSHA    string
+	GitToken     string
+	Destination  string
+	DeploymentID string
+	ProjectSlug  string
 }
 
 func buildJobManifest(in buildJobInput) map[string]any {
-	context := fmt.Sprintf("git://github.com/%s.git#%s", in.RepoFullName, in.CommitSHA)
+	context := fmt.Sprintf("git://x-access-token:%s@github.com/%s.git#%s",
+		in.GitToken, in.RepoFullName, in.CommitSHA)
 	return map[string]any{
 		"apiVersion": "batch/v1",
 		"kind":       "Job",
@@ -270,13 +258,6 @@ func buildJobManifest(in buildJobInput) map[string]any {
 								"--use-new-run",
 								"--cache=false",
 								"--verbosity=info",
-							},
-							"envFrom": []any{
-								map[string]any{
-									"secretRef": map[string]any{
-										"name": in.GitSecretName,
-									},
-								},
 							},
 							"resources": map[string]any{
 								"requests": map[string]any{"cpu": "500m", "memory": "1Gi"},
