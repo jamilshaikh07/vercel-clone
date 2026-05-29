@@ -1,0 +1,41 @@
+---
+# Kaniko build of the control plane itself. Eats our own dogfood:
+# the same in-cluster builder we'll use for tenant apps also produces
+# our service image. context-sub-path scopes the build to control-plane/
+# inside the monorepo so the COPY paths in the Dockerfile resolve.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: build-control-plane
+  namespace: paas-system
+  labels:
+    app.kubernetes.io/component: builder
+    app.kubernetes.io/part-of: paas
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: builder
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: kaniko
+          image: gcr.io/kaniko-project/executor:v1.23.2
+          args:
+            - --context=git://github.com/jamilshaikh07/vercel-clone.git#refs/heads/main
+            - --context-sub-path=control-plane
+            - --dockerfile=Dockerfile
+            - --destination=ttl.sh/jamilshaikh-paas-control-plane-3f89a328:24h
+            - --snapshot-mode=redo
+            - --use-new-run
+            - --cache=false
+            - --verbosity=info
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
