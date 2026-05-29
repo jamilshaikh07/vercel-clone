@@ -30,7 +30,7 @@ spec:
     spec:
       containers:
         - name: control-plane
-          image: ttl.sh/jamilshaikh-paas-control-plane-3f89a328:24h
+          image: ttl.sh/jamilshaikh-paas-control-plane-37e826b9:24h
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
@@ -43,6 +43,11 @@ spec:
                 secretKeyRef:
                   name: github-webhook
                   key: secret
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: paas-db-app
+                  key: uri
           resources:
             requests:
               cpu: 20m
@@ -63,10 +68,11 @@ spec:
               type: RuntimeDefault
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: 8080
             periodSeconds: 5
-            failureThreshold: 3
+            failureThreshold: 6
+            initialDelaySeconds: 3
           livenessProbe:
             httpGet:
               path: /healthz

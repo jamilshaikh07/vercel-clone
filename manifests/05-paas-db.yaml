@@ -1,0 +1,43 @@
+---
+# Postgres for the control plane.
+# Single-instance MVP. We can scale to 3 with sync replicas later without
+# changing app-side connection logic (CNPG's -rw service abstracts failover).
+#
+# Secrets auto-created by CNPG:
+#   paas-db-app         (role 'app', database 'paas')   ← used by control-plane
+#   paas-db-superuser   (role 'postgres')               ← admin
+#
+# Connection service: paas-db-rw.paas-system.svc.cluster.local:5432
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: paas-db
+  namespace: paas-system
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:16.4
+  primaryUpdateStrategy: unsupervised
+
+  bootstrap:
+    initdb:
+      database: paas
+      owner: app
+      # gen_random_uuid() lives in pgcrypto on older PG; in 16 it's built-in
+      # via the pgcrypto extension which we enable to be safe.
+      postInitApplicationSQL:
+        - CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+  storage:
+    size: 5Gi
+    storageClass: local-path
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+  monitoring:
+    enablePodMonitor: false

@@ -3,3 +3,10 @@ control-plane/control-plane
 **/.env.local
 *.log
 .DS_Store
+
+# Secrets / build outputs that must never be committed.
+tools/out/
+tools/setup-gh-app/setup-gh-app
+tools/setup-gh-app/out/
+**/*.pem
+**/*-private-key*

@@ -1,9 +1,14 @@
 // Control plane for the self-hosted PaaS.
 //
-// First slice: receive verified GitHub webhooks at /webhooks/github
-// and structured-log them. No DB, no build orchestration yet —
-// the goal is to prove the end-to-end identity + delivery path before
-// wiring in Kaniko jobs and K8s deploys.
+// Current capabilities:
+//   - HMAC-verified GitHub webhook ingestion at POST /webhooks/github
+//   - Persistence to Postgres (CNPG-managed): installations, repos,
+//     projects, deployments, full webhook audit log
+//   - Idempotent dispatch keyed on X-GitHub-Delivery so retries are safe
+//   - GET /admin/deployments to inspect recent activity
+//
+// Still TODO (next slice): mint installation tokens, spawn Kaniko Jobs,
+// apply Deployment+Service+IngressRoute, drive the status machine.
 package main
 
 import (
@@ -21,20 +26,23 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
-	maxBodyBytes      = 5 << 20 // 5 MiB — well above GitHub's webhook payload cap
+	maxBodyBytes      = 5 << 20
 	sigHeader         = "X-Hub-Signature-256"
 	eventHeader       = "X-GitHub-Event"
 	deliveryHeader    = "X-GitHub-Delivery"
-	installationHdr   = "X-GitHub-Hook-Installation-Target-Id"
-	installationType  = "X-GitHub-Hook-Installation-Target-Type"
-	shutdownGraceTime = 10 * time.Second
+	installTargetType = "X-GitHub-Hook-Installation-Target-Type"
+	installTargetID   = "X-GitHub-Hook-Installation-Target-Id"
+	shutdownGrace     = 10 * time.Second
 )
 
 type server struct {
 	webhookSecret []byte
+	store         *store
 	log           *slog.Logger
 }
 
@@ -47,18 +55,49 @@ func main() {
 		log.Error("GITHUB_WEBHOOK_SECRET is required")
 		os.Exit(1)
 	}
+	dsn := strings.TrimSpace(os.Getenv("DATABASE_URL"))
+	if dsn == "" {
+		log.Error("DATABASE_URL is required")
+		os.Exit(1)
+	}
 
 	addr := os.Getenv("LISTEN_ADDR")
 	if addr == "" {
 		addr = ":8080"
 	}
 
-	s := &server{webhookSecret: []byte(secret), log: log}
+	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// Database — connect with a short retry loop because the control plane
+	// pod can start before CNPG's primary endpoint is ready on cold boot.
+	pool, err := connectDB(rootCtx, dsn, log)
+	if err != nil {
+		log.Error("db connect failed", "err", err)
+		os.Exit(1)
+	}
+	defer pool.Close()
+
+	migCtx, cancel := context.WithTimeout(rootCtx, 30*time.Second)
+	if err := runMigrations(migCtx, pool); err != nil {
+		cancel()
+		log.Error("migrations failed", "err", err)
+		os.Exit(1)
+	}
+	cancel()
+	log.Info("migrations applied")
+
+	s := &server{
+		webhookSecret: []byte(secret),
+		store:         newStore(pool),
+		log:           log,
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.healthz)
-	mux.HandleFunc("GET /readyz", s.healthz)
+	mux.HandleFunc("GET /readyz", s.readyz(pool))
 	mux.HandleFunc("POST /webhooks/github", s.handleGitHubWebhook)
+	mux.HandleFunc("GET /admin/deployments", s.handleListDeployments)
 	mux.HandleFunc("GET /", s.root)
 
 	httpSrv := &http.Server{
@@ -70,9 +109,6 @@ func main() {
 		IdleTimeout:       120 * time.Second,
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	go func() {
 		log.Info("control plane listening", "addr", addr)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -81,13 +117,47 @@ func main() {
 		}
 	}()
 
-	<-ctx.Done()
+	<-rootCtx.Done()
 	log.Info("shutdown signal received")
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGraceTime)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
 	defer cancel()
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 		log.Error("graceful shutdown failed", "err", err)
+	}
+}
+
+func connectDB(ctx context.Context, dsn string, log *slog.Logger) (*pgxpool.Pool, error) {
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, err
+	}
+	cfg.MaxConns = 8
+	cfg.MinConns = 1
+	cfg.MaxConnLifetime = 30 * time.Minute
+
+	deadline := time.Now().Add(60 * time.Second)
+	for attempt := 1; ; attempt++ {
+		pool, err := pgxpool.NewWithConfig(ctx, cfg)
+		if err == nil {
+			pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			pingErr := pool.Ping(pingCtx)
+			cancel()
+			if pingErr == nil {
+				return pool, nil
+			}
+			pool.Close()
+			err = pingErr
+		}
+		if time.Now().After(deadline) {
+			return nil, err
+		}
+		log.Warn("db not ready, retrying", "attempt", attempt, "err", err)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
 	}
 }
 
@@ -101,6 +171,33 @@ func (s *server) healthz(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.WriteString(w, "ok\n")
 }
 
+func (s *server) readyz(pool *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		if err := pool.Ping(ctx); err != nil {
+			http.Error(w, "db not ready", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = io.WriteString(w, "ready\n")
+	}
+}
+
+func (s *server) handleListDeployments(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	rows, err := s.store.ListRecentDeployments(ctx, 50)
+	if err != nil {
+		s.log.Error("list deployments failed", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"deployments": rows})
+}
+
+// --- webhook receiver ------------------------------------------------------
+
 func (s *server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	event := r.Header.Get(eventHeader)
 	delivery := r.Header.Get(deliveryHeader)
@@ -112,30 +209,37 @@ func (s *server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-
 	if !verifySignature(s.webhookSecret, sig, body) {
 		s.log.Warn("invalid signature", "delivery", delivery, "event", event)
 		http.Error(w, "invalid signature", http.StatusUnauthorized)
 		return
 	}
 
-	// Minimal envelope extraction — log enough to confirm wiring works,
-	// without pretending to model every event type yet.
-	var env struct {
-		Action       string `json:"action,omitempty"`
-		Repository   struct {
-			FullName string `json:"full_name"`
-		} `json:"repository,omitempty"`
-		Ref         string `json:"ref,omitempty"`
-		After       string `json:"after,omitempty"`
-		Installation struct {
-			ID int64 `json:"id"`
-		} `json:"installation,omitempty"`
-		Sender struct {
-			Login string `json:"login"`
-		} `json:"sender,omitempty"`
+	env := parseEnvelope(body)
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	inserted, err := s.store.RecordDelivery(
+		ctx, delivery, event, env.Action, env.Installation.ID, env.Repository.FullName, body,
+	)
+	if err != nil {
+		s.log.Error("record delivery failed", "delivery", delivery, "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
 	}
-	_ = json.Unmarshal(body, &env) // best-effort; not all events have these
+	if !inserted {
+		// Duplicate retry from GitHub — already processed.
+		s.log.Info("duplicate delivery ignored", "delivery", delivery, "event", event)
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+
+	if err := s.dispatch(ctx, event, body, env, delivery); err != nil {
+		s.log.Error("dispatch failed", "delivery", delivery, "event", event, "err", err)
+		// We've already persisted the delivery; tell GitHub OK so it doesn't
+		// retry. Real processing happens in background reconciliation later.
+	}
 
 	s.log.Info("github webhook verified",
 		"delivery", delivery,
@@ -146,17 +250,164 @@ func (s *server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		"sha", env.After,
 		"installation_id", env.Installation.ID,
 		"sender", env.Sender.Login,
-		"target_type", r.Header.Get(installationType),
-		"target_id", r.Header.Get(installationHdr),
+		"target_type", r.Header.Get(installTargetType),
+		"target_id", r.Header.Get(installTargetID),
 		"bytes", len(body),
 	)
-
 	w.WriteHeader(http.StatusAccepted)
 	_, _ = io.WriteString(w, "accepted\n")
 }
 
-// verifySignature implements GitHub's X-Hub-Signature-256 HMAC check.
-// Constant-time compare to avoid timing side channels.
+// dispatch handles only events we currently care about. Anything else is
+// already persisted to webhook_deliveries — no-op here keeps the receiver
+// forward-compatible with new GitHub events.
+func (s *server) dispatch(ctx context.Context, event string, body []byte, env envelope, deliveryID string) error {
+	switch event {
+	case "installation":
+		return s.handleInstallation(ctx, env, body)
+
+	case "installation_repositories":
+		return s.handleInstallationRepos(ctx, env, body)
+
+	case "push":
+		// Ignore branch deletes and tag pushes — only build commits to branches.
+		if env.Deleted || !strings.HasPrefix(env.Ref, "refs/heads/") || env.After == "" || env.After == "0000000000000000000000000000000000000000" {
+			return nil
+		}
+		res, err := s.store.EnqueueDeployment(ctx,
+			env.Installation.ID, env.Repository.ID, env.After, env.Ref, deliveryID)
+		if err != nil {
+			return err
+		}
+		if res == nil {
+			s.log.Warn("push for unknown project — skipping",
+				"repo", env.Repository.FullName, "installation_id", env.Installation.ID)
+			return nil
+		}
+		s.log.Info("deployment queued",
+			"deployment_id", res.DeploymentID,
+			"project_id", res.ProjectID,
+			"slug", res.Slug,
+			"repo", env.Repository.FullName,
+			"ref", env.Ref,
+			"sha", env.After,
+		)
+		return nil
+	}
+	return nil
+}
+
+func (s *server) handleInstallation(ctx context.Context, env envelope, body []byte) error {
+	switch env.Action {
+	case "created", "new_permissions_accepted", "unsuspend":
+		if err := s.store.UpsertInstallation(ctx, installationUpsert{
+			ID:           env.Installation.ID,
+			AccountLogin: env.Installation.Account.Login,
+			AccountID:    env.Installation.Account.ID,
+			TargetType:   env.Installation.TargetType,
+		}); err != nil {
+			return err
+		}
+		// On created, payload includes the initial list of repositories.
+		var p struct {
+			Repositories []githubRepo `json:"repositories"`
+		}
+		if err := json.Unmarshal(body, &p); err == nil && len(p.Repositories) > 0 {
+			return s.store.AddRepos(ctx, env.Installation.ID, toRepoRows(p.Repositories))
+		}
+		return nil
+
+	case "suspend":
+		return s.store.SuspendInstallation(ctx, env.Installation.ID, true)
+
+	case "deleted":
+		return s.store.DeleteInstallation(ctx, env.Installation.ID)
+	}
+	return nil
+}
+
+func (s *server) handleInstallationRepos(ctx context.Context, env envelope, body []byte) error {
+	var p struct {
+		RepositoriesAdded   []githubRepo `json:"repositories_added"`
+		RepositoriesRemoved []githubRepo `json:"repositories_removed"`
+	}
+	if err := json.Unmarshal(body, &p); err != nil {
+		return err
+	}
+	if len(p.RepositoriesAdded) > 0 {
+		if err := s.store.AddRepos(ctx, env.Installation.ID, toRepoRows(p.RepositoriesAdded)); err != nil {
+			return err
+		}
+	}
+	if len(p.RepositoriesRemoved) > 0 {
+		ids := make([]int64, 0, len(p.RepositoriesRemoved))
+		for _, r := range p.RepositoriesRemoved {
+			ids = append(ids, r.ID)
+		}
+		if err := s.store.RemoveRepos(ctx, env.Installation.ID, ids); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// --- envelope --------------------------------------------------------------
+
+type envelope struct {
+	Action     string `json:"action,omitempty"`
+	Ref        string `json:"ref,omitempty"`
+	Before     string `json:"before,omitempty"`
+	After      string `json:"after,omitempty"`
+	Deleted    bool   `json:"deleted,omitempty"`
+	Repository struct {
+		ID            int64  `json:"id"`
+		FullName      string `json:"full_name"`
+		Private       bool   `json:"private"`
+		DefaultBranch string `json:"default_branch"`
+	} `json:"repository,omitempty"`
+	Installation struct {
+		ID         int64  `json:"id"`
+		TargetType string `json:"target_type"`
+		Account    struct {
+			Login string `json:"login"`
+			ID    int64  `json:"id"`
+		} `json:"account"`
+	} `json:"installation,omitempty"`
+	Sender struct {
+		Login string `json:"login"`
+	} `json:"sender,omitempty"`
+}
+
+type githubRepo struct {
+	ID       int64  `json:"id"`
+	FullName string `json:"full_name"`
+	Private  bool   `json:"private"`
+	// default_branch is not in the slim repo object inside
+	// installation_repositories payloads; we fill it from API later.
+	DefaultBranch string `json:"default_branch,omitempty"`
+}
+
+func parseEnvelope(body []byte) envelope {
+	var e envelope
+	_ = json.Unmarshal(body, &e)
+	return e
+}
+
+func toRepoRows(in []githubRepo) []repoRow {
+	out := make([]repoRow, 0, len(in))
+	for _, r := range in {
+		out = append(out, repoRow{
+			ID:            r.ID,
+			FullName:      r.FullName,
+			Private:       r.Private,
+			DefaultBranch: r.DefaultBranch,
+		})
+	}
+	return out
+}
+
+// --- signature + logging ---------------------------------------------------
+
 func verifySignature(secret []byte, header string, body []byte) bool {
 	const prefix = "sha256="
 	if !strings.HasPrefix(header, prefix) {
@@ -168,12 +419,9 @@ func verifySignature(secret []byte, header string, body []byte) bool {
 	}
 	mac := hmac.New(sha256.New, secret)
 	mac.Write(body)
-	got := mac.Sum(nil)
-	return hmac.Equal(got, want)
+	return hmac.Equal(mac.Sum(nil), want)
 }
 
-// withRequestLogging is a tiny middleware that records request lines
-// without the body. Useful for sanity-checking ingress + TLS.
 func withRequestLogging(log *slog.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()

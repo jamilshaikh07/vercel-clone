@@ -27,7 +27,7 @@ spec:
             - --context=git://github.com/jamilshaikh07/vercel-clone.git#refs/heads/main
             - --context-sub-path=control-plane
             - --dockerfile=Dockerfile
-            - --destination=ttl.sh/jamilshaikh-paas-control-plane-3f89a328:24h
+            - --destination=ttl.sh/jamilshaikh-paas-control-plane-37e826b9:24h
             - --snapshot-mode=redo
             - --use-new-run
             - --cache=false
