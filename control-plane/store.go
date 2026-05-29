@@ -313,6 +313,24 @@ func (s *store) MarkReady(ctx context.Context, deploymentID, url string) error {
 	return err
 }
 
+// RequeueStuck resets non-terminal deployments to 'queued' so a fresh
+// worker picks them up on boot. The build path is idempotent: if a
+// matching Kaniko Job is still running we attach instead of redoing it.
+func (s *store) RequeueStuck(ctx context.Context) (int, error) {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE deployments
+		   SET status = 'queued',
+		       build_started_at = NULL,
+		       build_ended_at = NULL,
+		       error = NULL
+		 WHERE status IN ('building', 'deploying')
+	`)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
 func (s *store) MarkFailed(ctx context.Context, deploymentID, reason string) error {
 	_, err := s.pool.Exec(ctx, `
 		UPDATE deployments

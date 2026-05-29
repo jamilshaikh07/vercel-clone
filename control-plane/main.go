@@ -111,6 +111,13 @@ func main() {
 		log:           log,
 	}
 
+	requeued, err := s.store.RequeueStuck(rootCtx)
+	if err != nil {
+		log.Error("requeue stuck deployments failed", "err", err)
+	} else if requeued > 0 {
+		log.Info("requeued stuck deployments after restart", "count", requeued)
+	}
+
 	bw := &worker{store: s.store, gh: gh, k8s: k8s, log: log}
 	go bw.Run(rootCtx)
 

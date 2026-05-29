@@ -158,6 +158,11 @@ type jobPhase struct {
 	CompletedAt *time.Time
 }
 
+// createJob returns os.ErrExist (well, errJobExists) on 409 so the caller
+// can decide whether to attach to it or replace it. Jobs are immutable
+// after create which is why we don't use apply() here.
+var errJobExists = errors.New("job already exists")
+
 func (k *kubeClient) createJob(ctx context.Context, namespace string, job map[string]any) error {
 	path := fmt.Sprintf("/apis/batch/v1/namespaces/%s/jobs", url.PathEscape(namespace))
 	status, body, err := k.do(ctx, "POST", path, job)
@@ -165,21 +170,7 @@ func (k *kubeClient) createJob(ctx context.Context, namespace string, job map[st
 		return err
 	}
 	if status == http.StatusConflict {
-		// A leftover Job with this name still exists. Try to delete it
-		// (with foreground propagation) and retry once.
-		name, _ := nestedString(job, "metadata", "name")
-		if name == "" {
-			return errors.New("job conflict but no metadata.name to retry")
-		}
-		if err := k.deleteJob(ctx, namespace, name); err != nil {
-			return fmt.Errorf("delete stale job for retry: %w", err)
-		}
-		// Wait briefly for finalization.
-		time.Sleep(2 * time.Second)
-		status, body, err = k.do(ctx, "POST", path, job)
-		if err != nil {
-			return err
-		}
+		return errJobExists
 	}
 	if status < 200 || status >= 300 {
 		return fmt.Errorf("create job: status %d: %s", status, snippet(body))

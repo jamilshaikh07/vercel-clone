@@ -36,7 +36,9 @@ const (
 	deployNamespace = "paas-system"
 	tenantHostZone  = "jamilshaikh.in"
 	kanikoImage     = "gcr.io/kaniko-project/executor:v1.23.2"
-	tenantPort      = 80
+	// TODO: detect from the built image's Config.ExposedPorts. For MVP we
+	// assume the modern non-root convention (most rootless images use 8080+).
+	tenantPort = 8080
 	pollInterval    = 3 * time.Second
 	buildTimeout    = 15 * time.Minute
 	registryBase    = "ttl.sh"
@@ -133,17 +135,20 @@ func (w *worker) runOne(ctx context.Context, c *claimedDeployment) error {
 	//    Kaniko's own git fetcher (1.23.x) silently mishandles URL-embedded
 	//    HTTPS credentials — independently verified with alpine/git that
 	//    the same URL clones fine outside Kaniko.
-	if err := w.k8s.createJob(ctx, buildNamespace, buildJobManifest(buildJobInput{
+	//
+	//    ensureBuildJob is idempotent so a worker restart in the middle of
+	//    a build re-attaches to the running Job instead of redoing work.
+	jobSpec := buildJobManifest(buildJobInput{
 		Name:          buildName,
 		Namespace:     buildNamespace,
 		Destination:   image,
 		GitSecretName: gitSecretName,
 		DeploymentID:  c.DeploymentID,
 		ProjectSlug:   c.Slug,
-	})); err != nil {
-		return fmt.Errorf("create job: %w", err)
+	})
+	if err := w.ensureBuildJob(ctx, buildNamespace, buildName, jobSpec); err != nil {
+		return fmt.Errorf("ensure job: %w", err)
 	}
-	w.log.Info("build job created", "deployment_id", c.DeploymentID, "job", buildName, "image", image)
 
 	// 4. Poll until terminal.
 	if err := w.waitForJob(ctx, buildNamespace, buildName); err != nil {
@@ -185,6 +190,35 @@ func (w *worker) runOne(ctx context.Context, c *claimedDeployment) error {
 	}
 	w.log.Info("deployment ready",
 		"deployment_id", c.DeploymentID, "url", "https://"+host, "image", image)
+	return nil
+}
+
+// ensureBuildJob makes a Kaniko Job exist for this deployment, recreating
+// it only if a previous attempt failed. This is what lets the worker
+// safely resume a deployment after a pod restart.
+func (w *worker) ensureBuildJob(ctx context.Context, namespace, name string, spec map[string]any) error {
+	phase, err := w.k8s.getJobPhase(ctx, namespace, name)
+	if err != nil {
+		return err
+	}
+	if phase != nil {
+		switch {
+		case phase.Failed > 0 || phase.FailureMsg != "":
+			w.log.Info("recreating previously failed build job", "job", name, "reason", phase.FailureMsg)
+			if err := w.k8s.deleteJob(ctx, namespace, name); err != nil {
+				return err
+			}
+			time.Sleep(2 * time.Second)
+		default:
+			w.log.Info("attaching to existing build job", "job", name,
+				"active", phase.Active, "succeeded", phase.Succeeded)
+			return nil
+		}
+	}
+	if err := w.k8s.createJob(ctx, namespace, spec); err != nil {
+		return fmt.Errorf("create job: %w", err)
+	}
+	w.log.Info("build job created", "job", name)
 	return nil
 }
 

@@ -29,6 +29,11 @@ spec:
         app.kubernetes.io/component: control-plane
     spec:
       serviceAccountName: control-plane
+      securityContext:
+        # The projected Secret files are owned by root:fsGroup; fsGroup=65532
+        # matches the distroless nonroot uid/gid so defaultMode 0440 is readable.
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: control-plane
           image: ttl.sh/jamilshaikh-paas-control-plane-05836ffc:24h
@@ -98,7 +103,7 @@ spec:
             items:
               - key: private-key.pem
                 path: private-key.pem
-            defaultMode: 0400
+            defaultMode: 0440
 ---
 apiVersion: v1
 kind: Service
