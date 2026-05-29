@@ -109,20 +109,37 @@ func (w *worker) runOne(ctx context.Context, c *claimedDeployment) error {
 	if err != nil {
 		return fmt.Errorf("mint installation token: %w", err)
 	}
-	_ = gitSecretName // (kept for future SSH/netrc auth path)
 
-	// 2. Kaniko Job — token embedded in context URL because the GIT_TOKEN
-	//    env-var path is unreliable across versions. The token lives 1h
-	//    and is revocable on App uninstall.
+	// 2. Per-build Secret holds the auth'd clone URL + SHA. Kept out of
+	//    the Job spec args so `kubectl describe job` doesn't leak the token.
+	cloneURL := fmt.Sprintf("https://x-access-token:%s@github.com/%s.git",
+		token, c.RepoFullName)
+	if err := w.k8s.applySecret(ctx, buildNamespace, gitSecretName,
+		map[string]string{
+			"GIT_CLONE_URL": cloneURL,
+			"COMMIT_SHA":    c.CommitSHA,
+		},
+		map[string]string{
+			"app.kubernetes.io/managed-by": "control-plane",
+			"app.kubernetes.io/component":  "build",
+			"paas.deployment":              c.DeploymentID,
+		},
+	); err != nil {
+		return fmt.Errorf("create git secret: %w", err)
+	}
+
+	// 3. Job: initContainer clones the repo into an emptyDir, Kaniko
+	//    builds from that directory (dir:// context). We do this because
+	//    Kaniko's own git fetcher (1.23.x) silently mishandles URL-embedded
+	//    HTTPS credentials — independently verified with alpine/git that
+	//    the same URL clones fine outside Kaniko.
 	if err := w.k8s.createJob(ctx, buildNamespace, buildJobManifest(buildJobInput{
-		Name:         buildName,
-		Namespace:    buildNamespace,
-		RepoFullName: c.RepoFullName,
-		CommitSHA:    c.CommitSHA,
-		GitToken:     token,
-		Destination:  image,
-		DeploymentID: c.DeploymentID,
-		ProjectSlug:  c.Slug,
+		Name:          buildName,
+		Namespace:     buildNamespace,
+		Destination:   image,
+		GitSecretName: gitSecretName,
+		DeploymentID:  c.DeploymentID,
+		ProjectSlug:   c.Slug,
 	})); err != nil {
 		return fmt.Errorf("create job: %w", err)
 	}
@@ -208,19 +225,26 @@ func (w *worker) waitForJob(ctx context.Context, namespace, name string) error {
 // --- manifest builders -----------------------------------------------------
 
 type buildJobInput struct {
-	Name         string
-	Namespace    string
-	RepoFullName string
-	CommitSHA    string
-	GitToken     string
-	Destination  string
-	DeploymentID string
-	ProjectSlug  string
+	Name          string
+	Namespace     string
+	Destination   string
+	GitSecretName string
+	DeploymentID  string
+	ProjectSlug   string
 }
 
 func buildJobManifest(in buildJobInput) map[string]any {
-	context := fmt.Sprintf("git://x-access-token:%s@github.com/%s.git#%s",
-		in.GitToken, in.RepoFullName, in.CommitSHA)
+	workspaceMount := map[string]any{"name": "workspace", "mountPath": "/workspace"}
+	secretEnvFrom := []any{map[string]any{
+		"secretRef": map[string]any{"name": in.GitSecretName},
+	}}
+
+	cloneCmd := `set -e
+            git clone --quiet "$GIT_CLONE_URL" /workspace
+            cd /workspace
+            git -c advice.detachedHead=false checkout --quiet "$COMMIT_SHA"
+            echo "cloned $(git rev-parse --short HEAD) at $(date -u +%FT%TZ)"`
+
 	return map[string]any{
 		"apiVersion": "batch/v1",
 		"kind":       "Job",
@@ -246,12 +270,31 @@ func buildJobManifest(in buildJobInput) map[string]any {
 				},
 				"spec": map[string]any{
 					"restartPolicy": "Never",
+					"volumes": []any{
+						map[string]any{
+							"name":     "workspace",
+							"emptyDir": map[string]any{},
+						},
+					},
+					"initContainers": []any{
+						map[string]any{
+							"name":         "clone",
+							"image":        "alpine/git:latest",
+							"command":      []any{"sh", "-c", cloneCmd},
+							"envFrom":      secretEnvFrom,
+							"volumeMounts": []any{workspaceMount},
+							"resources": map[string]any{
+								"requests": map[string]any{"cpu": "50m", "memory": "64Mi"},
+								"limits":   map[string]any{"cpu": "500m", "memory": "256Mi"},
+							},
+						},
+					},
 					"containers": []any{
 						map[string]any{
 							"name":  "kaniko",
 							"image": kanikoImage,
 							"args": []any{
-								"--context=" + context,
+								"--context=dir:///workspace",
 								"--dockerfile=Dockerfile",
 								"--destination=" + in.Destination,
 								"--snapshot-mode=redo",
@@ -259,6 +302,7 @@ func buildJobManifest(in buildJobInput) map[string]any {
 								"--cache=false",
 								"--verbosity=info",
 							},
+							"volumeMounts": []any{workspaceMount},
 							"resources": map[string]any{
 								"requests": map[string]any{"cpu": "500m", "memory": "1Gi"},
 								"limits":   map[string]any{"cpu": "2", "memory": "4Gi"},
