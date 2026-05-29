@@ -155,7 +155,36 @@ Public `IngressRoute`s without the
 the cluster, route correctly internally, and never get a public DNS
 record. Symptom: `dig +short host.jamilshaikh.in` returns nothing.
 
-### 6. `samples/hello-app` is part of THIS monorepo
+### 6. Kaniko 1.23.x mishandles URL-embedded HTTPS credentials
+
+`--context=git://x-access-token:TOKEN@github.com/...#SHA` parses but
+silently drops the auth, then fails with `error resolving source
+context: authentication required`. Verified with `alpine/git` that
+the same URL clones fine. **Workaround in place:** the build Job uses
+an `alpine/git` initContainer that clones into an `emptyDir`, then
+Kaniko builds with `--context=dir:///workspace`. Don't revert to
+Kaniko's native git fetcher unless you've re-verified the bug is fixed
+upstream.
+
+### 7. Tenant port is hardcoded to 8080
+
+`builder.go` const `tenantPort = 8080`. Most rootless images
+(`nginx-unprivileged`, distroless, etc.) listen on 8080+. Repos that
+use a different port will deploy but their `Service`/`IngressRoute`
+won't route. Detect from the built image's `Config.ExposedPorts` once
+we have a real registry — `ttl.sh` doesn't have a stable manifest API
+worth bothering with.
+
+### 8. Worker single-replica assumption
+
+The `deployments` table has `FOR UPDATE SKIP LOCKED` semantics so the
+schema is multi-worker-safe, but during a rollout the old pod's worker
+can race the new one and strand a row at `building`. `RequeueStale`
+fires every tick to rescue these after `buildTimeout` (15 min).
+If we run >1 replica, expect occasional re-builds when both workers
+target the same Job — the `ensureBuildJob` path handles it via attach.
+
+### 9. `samples/hello-app` is part of THIS monorepo
 
 There used to be a nested `.git` inside `samples/hello-app/` linked to
 `github.com/jamilshaikh07/paas-sample-hello`. It was removed when this
@@ -170,16 +199,19 @@ Kaniko build context).
 
 ### Done
 - HMAC-verified webhook ingestion
-- Postgres persistence of installations, repos, projects, deliveries, queued deployments
-- Manual build flow via Kaniko Job → ttl.sh → manual Deploy/Svc/IngressRoute
-- GitHub App manifest flow automation
-- One end-to-end smoke test: `sample-paas.jamilshaikh.in` works
+- Postgres persistence of installations, repos, projects, deliveries, deployments
+- GitHub App manifest flow automation (`tools/setup-gh-app`)
+- **Full push → build → deploy automation.** A push event creates a `queued` row;
+  the in-process worker (`control-plane/builder.go`) claims it, mints a GitHub
+  installation token, creates a Kaniko Job (with an `alpine/git` initContainer
+  doing the clone), pushes the image to ttl.sh, then applies
+  Deployment + Service + IngressRoute and marks `ready` with the live URL.
+- Idempotent build path: `ensureBuildJob` attaches to existing Jobs across
+  worker restarts; `RequeueStale` periodically rescues stranded rows.
+- Three live deployments at `<slug>-<short-sha>.jamilshaikh.in` proving E2E.
 
 ### NOT done — don't claim these exist
-- Automatic push → build → deploy. The push event creates a row in
-  `deployments` with `status='queued'` and that's it. Nothing reads
-  that queue yet.
-- Real container registry. We use `ttl.sh` with 24h TTL.
+- Real container registry. We use `ttl.sh` with 24h TTL — images expire daily.
 - TLS issuance via cert-manager. We rely on Cloudflare Universal SSL
   at the tunnel edge.
 - Auth on `/admin/*`. The endpoint is open to anyone who can hit

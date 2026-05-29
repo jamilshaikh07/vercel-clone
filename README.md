@@ -4,8 +4,9 @@ A self-hosted PaaS (Platform-as-a-Service) that aims to replicate the Vercel
 deployment experience — connect a GitHub repo, `git push`, get a live URL —
 on a bare-metal Talos Linux Kubernetes cluster.
 
-> ⚠️ **Status:** work in progress, MVP slice. Build pipeline and webhook
-> identity work end-to-end. Automated push → deploy is the next slice.
+> ✅ **Status:** MVP automation working end-to-end. `git push` to a connected
+> repo produces a live URL in ~2 minutes with zero human intervention.
+> See `architecture.md` for the deeper design and what's still rough.
 
 ---
 
@@ -89,19 +90,21 @@ flowchart LR
 
 ## What's working today
 
-- ✅ Cloudflare Tunnel → Traefik → pod path validated by two real services
-- ✅ Wildcard DNS automation via external-dns; per-deploy hosts work
+- ✅ Cloudflare Tunnel → Traefik → pod path validated by real tenant deployments
+- ✅ Wildcard DNS automation via external-dns; per-commit hosts at `<slug>-<sha>.jamilshaikh.in`
 - ✅ Rootless in-cluster builds via Kaniko on Talos under PSA `baseline`
 - ✅ GitHub App + HMAC-signed webhooks delivered to the control plane
 - ✅ Postgres (CNPG) with idempotent schema migrations baked into the binary
 - ✅ Webhook delivery audit log (every event persisted with `delivery_id` as PK)
 - ✅ Dispatched events: `installation`, `installation_repositories`, `push`
-- ✅ Push to a connected repo creates a `queued` deployment row
+- ✅ **Full automation:** push → mint installation token → clone (alpine/git initContainer)
+  → Kaniko build → ttl.sh push → Deployment + Service + IngressRoute → live URL
+- ✅ Idempotent worker: pod restart mid-build attaches to running Job;
+  periodic stale-state reconcile prevents stranded rows
 
 ## What's next
 
-1. **Build orchestration** — on `push`, mint a GitHub installation token, spawn a Kaniko Job, watch it, then apply Deployment + Service + IngressRoute
-2. **Real registry** — replace `ttl.sh` with `registry:2` on MinIO at `registry.jamilshaikh.in`
+1. **Real registry** — replace `ttl.sh` with `registry:2` on MinIO at `registry.jamilshaikh.in`
 3. **Real-time logs** — WebSocket stream of build pod stdout
 4. **Dashboard UI** — Next.js app at `https://paas.jamilshaikh.in/dashboard`
 5. **Multi-tenant auth** — proper OAuth + per-account access controls
