@@ -53,6 +53,11 @@ const (
 	registryPullHost = "registry.jamilshaikh.in"
 	dockerCfgSecret  = "registry-dockercfg"
 	tunnelTarget     = "3a067db9-77b1-49c9-a3d4-30f86d16c80d.cfargotunnel.com"
+	// GitHub commit status check
+	statusContext = "paas/deploy"
+	// dashboardBaseURL is used as target_url for pending/failed status checks.
+	// Successful deployments point at the live preview URL instead.
+	dashboardBaseURL = "https://paas.jamilshaikh.in"
 )
 
 type worker struct {
@@ -113,9 +118,31 @@ func (w *worker) tick(ctx context.Context) error {
 		if markErr := w.store.MarkFailed(ctx, claim.DeploymentID, err.Error()); markErr != nil {
 			w.log.Error("mark failed failed", "err", markErr)
 		}
+		w.postStatus(ctx, claim, "failure", err.Error(), deploymentLogURL(claim.DeploymentID))
 		return nil
 	}
 	return nil
+}
+
+// postStatus posts a GitHub commit status, swallowing errors. The build is
+// the source of truth; a missing or stale check must never block deploys.
+func (w *worker) postStatus(ctx context.Context, c *claimedDeployment, state, desc, target string) {
+	postCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := w.gh.setCommitStatus(postCtx, c.InstallationID,
+		c.RepoFullName, c.CommitSHA, state, desc, target, statusContext); err != nil {
+		w.log.Warn("set commit status failed",
+			"deployment_id", c.DeploymentID, "state", state, "err", err)
+		return
+	}
+	w.log.Info("commit status posted",
+		"deployment_id", c.DeploymentID, "state", state, "desc", desc)
+}
+
+// deploymentLogURL returns a dashboard URL that auto-opens the logs panel
+// for one deployment. The fragment is read by static/dashboard.html on load.
+func deploymentLogURL(id string) string {
+	return dashboardBaseURL + "/#d=" + id
 }
 
 func (w *worker) runOne(ctx context.Context, c *claimedDeployment) error {
@@ -127,6 +154,11 @@ func (w *worker) runOne(ctx context.Context, c *claimedDeployment) error {
 	buildName := fmt.Sprintf("build-%s", strings.ReplaceAll(c.DeploymentID[:8], "-", ""))
 	gitSecretName := buildName + "-git"
 	deployName := fmt.Sprintf("%s-%s", c.Slug, shortSHA)
+
+	// First commit status: pending → "building". target_url points at the
+	// dashboard with the deployment pre-selected so clicking the yellow
+	// dot in GitHub takes you straight to the live logs.
+	w.postStatus(ctx, c, "pending", "building", deploymentLogURL(c.DeploymentID))
 
 	// 1. Mint a short-lived installation token for cloning the repo.
 	token, err := w.gh.installationToken(ctx, c.InstallationID)
@@ -207,11 +239,15 @@ func (w *worker) runOne(ctx context.Context, c *claimedDeployment) error {
 		return fmt.Errorf("apply ingressroute: %w", err)
 	}
 
-	if err := w.store.MarkReady(ctx, c.DeploymentID, "https://"+host); err != nil {
+	liveURL := "https://" + host
+	if err := w.store.MarkReady(ctx, c.DeploymentID, liveURL); err != nil {
 		return fmt.Errorf("mark ready: %w", err)
 	}
+	// Success status: target_url is the live preview URL itself, so the
+	// green check on the commit in GitHub deep-links to the deployed app.
+	w.postStatus(ctx, c, "success", "deployed", liveURL)
 	w.log.Info("deployment ready",
-		"deployment_id", c.DeploymentID, "url", "https://"+host,
+		"deployment_id", c.DeploymentID, "url", liveURL,
 		"push_image", pushImage, "pull_image", pullImage)
 	return nil
 }

@@ -171,3 +171,51 @@ func (g *githubApp) installationToken(ctx context.Context, installationID int64)
 	g.mu.Unlock()
 	return r.Token, nil
 }
+
+// setCommitStatus posts a Status check to the given commit. `state` must be
+// one of: pending, success, failure, error. Description is truncated to 140
+// chars (GitHub's limit). Returns nil on 2xx, error otherwise. Callers
+// generally want to log-and-swallow — a missing status check shouldn't fail
+// an otherwise-good build.
+func (g *githubApp) setCommitStatus(
+	ctx context.Context,
+	installationID int64,
+	repoFullName, sha, state, description, targetURL, context string,
+) error {
+	if len(description) > 140 {
+		description = description[:137] + "..."
+	}
+	tok, err := g.installationToken(ctx, installationID)
+	if err != nil {
+		return fmt.Errorf("mint token: %w", err)
+	}
+	body, err := json.Marshal(map[string]string{
+		"state":       state,
+		"target_url":  targetURL,
+		"description": description,
+		"context":     context,
+	})
+	if err != nil {
+		return err
+	}
+	url := fmt.Sprintf("https://api.github.com/repos/%s/statuses/%s", repoFullName, sha)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, strings.NewReader(string(body)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := g.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("set status: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	return nil
+}

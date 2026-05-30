@@ -320,9 +320,38 @@ logClose.addEventListener('click', () => {
   logBody.innerHTML = '<div class="log-placeholder">Click a deployment on the left to stream its build logs.</div>';
 });
 
+// Deep-link support: GitHub status check target_url is `/#d=<deployment-id>`.
+// Auto-open that deployment's logs as soon as it shows up in the project list.
+function deepLinkID() {
+  const m = window.location.hash.match(/d=([0-9a-fA-F-]{36})/);
+  return m ? m[1] : null;
+}
+let pendingDeepLink = deepLinkID();
+
+const origRender = render;
+render = function(data) {
+  origRender(data);
+  if (pendingDeepLink) {
+    const el = projectsEl.querySelector(`.deployment[data-id="${pendingDeepLink}"]`);
+    if (el) {
+      el.scrollIntoView({ block: 'center' });
+      openLogs(el);
+      pendingDeepLink = null;
+    }
+  }
+};
+
+window.addEventListener('hashchange', () => {
+  const id = deepLinkID();
+  if (!id) return;
+  const el = projectsEl.querySelector(`.deployment[data-id="${id}"]`);
+  if (el) openLogs(el);
+  else pendingDeepLink = id;
+});
+
 refresh();
-// Background poll — every 10s when no live stream, every 30s otherwise so
-// the deployment list stays fresh after another browser triggers a build.
+// Background poll — every 10s when no live stream so the deployment list
+// stays fresh after another browser (or webhook) triggers a build.
 setInterval(() => {
   if (!currentES) refresh();
 }, 10000);
