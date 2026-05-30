@@ -121,15 +121,42 @@ func (s *server) handleDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Re-fetch final state — the worker may have updated status between
-	// pod-exit and now.
-	finalCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	final, _ := s.store.GetDeployment(finalCtx, id)
-	cancel()
+	// Poll the row for up to 30s after the build pod exits — the worker
+	// still has to apply Deployment/Service/IngressRoute and flip the
+	// status to ready/failed.
+	final := s.waitForTerminal(r.Context(), id, 30*time.Second)
+	if final == nil {
+		// Fall back to a one-shot lookup so we always send something useful.
+		oneCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		final, _ = s.store.GetDeployment(oneCtx, id)
+		cancel()
+	}
 	if final != nil {
 		send("status", statusPayload(final))
 	}
 	send("end", map[string]string{"status": valueOr(final, "status", dep.Status)})
+}
+
+// waitForTerminal returns the deployment once status is ready/failed, or nil
+// if the deadline elapsed.
+func (s *server) waitForTerminal(ctx context.Context, id string, maxWait time.Duration) *deploymentRow {
+	deadline := time.Now().Add(maxWait)
+	for {
+		lookupCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		d, err := s.store.GetDeployment(lookupCtx, id)
+		cancel()
+		if err == nil && d != nil && (d.Status == "ready" || d.Status == "failed") {
+			return d
+		}
+		if time.Now().After(deadline) {
+			return d
+		}
+		select {
+		case <-ctx.Done():
+			return d
+		case <-time.After(1500 * time.Millisecond):
+		}
+	}
 }
 
 // waitForBuildPod polls for the build pod every 2s up to maxWait. Returns
