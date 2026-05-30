@@ -41,10 +41,16 @@ const (
 	tenantPort = 8080
 	pollInterval = 3 * time.Second
 	buildTimeout = 15 * time.Minute
-	// Registry lives in-cluster, exposed at registry.jamilshaikh.in via the
-	// same Cloudflare Tunnel. dockerCfgSecret holds the docker config.json
-	// used by Kaniko for push and by tenant pods for pull (imagePullSecrets).
-	registryBase     = "registry.jamilshaikh.in"
+	// Registry has two endpoints for the same backing storage:
+	//   * registryPushHost — in-cluster Service, plain HTTP. Kaniko uses this
+	//     so blob uploads don't hit Cloudflare's 100s edge timeout (524).
+	//   * registryPullHost — public HTTPS via the Cloudflare Tunnel. Tenant
+	//     pods pull through here so we don't have to teach containerd to
+	//     trust internal HTTP registries.
+	// The registry stores by repo+tag — hostnames are just transport endpoints,
+	// so a push via one hostname is pullable via the other.
+	registryPushHost = "registry.paas-system.svc.cluster.local:5000"
+	registryPullHost = "registry.jamilshaikh.in"
 	dockerCfgSecret  = "registry-dockercfg"
 	tunnelTarget     = "3a067db9-77b1-49c9-a3d4-30f86d16c80d.cfargotunnel.com"
 )
@@ -114,7 +120,9 @@ func (w *worker) tick(ctx context.Context) error {
 
 func (w *worker) runOne(ctx context.Context, c *claimedDeployment) error {
 	shortSHA := short(c.CommitSHA)
-	image := fmt.Sprintf("%s/%s:%s", registryBase, c.Slug, shortSHA)
+	repoPath := fmt.Sprintf("%s:%s", c.Slug, shortSHA)
+	pushImage := registryPushHost + "/" + repoPath
+	pullImage := registryPullHost + "/" + repoPath
 	host := fmt.Sprintf("%s-%s.%s", c.Slug, shortSHA, tenantHostZone)
 	buildName := fmt.Sprintf("build-%s", strings.ReplaceAll(c.DeploymentID[:8], "-", ""))
 	gitSecretName := buildName + "-git"
@@ -155,7 +163,7 @@ func (w *worker) runOne(ctx context.Context, c *claimedDeployment) error {
 	jobSpec := buildJobManifest(buildJobInput{
 		Name:          buildName,
 		Namespace:     buildNamespace,
-		Destination:   image,
+		Destination:   pushImage,
 		GitSecretName: gitSecretName,
 		DeploymentID:  c.DeploymentID,
 		ProjectSlug:   c.Slug,
@@ -170,7 +178,7 @@ func (w *worker) runOne(ctx context.Context, c *claimedDeployment) error {
 	}
 
 	// 5. Transition to deploying, write image, apply tenant resources.
-	if err := w.store.MarkDeploying(ctx, c.DeploymentID, image); err != nil {
+	if err := w.store.MarkDeploying(ctx, c.DeploymentID, pullImage); err != nil {
 		return fmt.Errorf("mark deploying: %w", err)
 	}
 
@@ -180,7 +188,7 @@ func (w *worker) runOne(ctx context.Context, c *claimedDeployment) error {
 			Namespace:    deployNamespace,
 			Slug:         c.Slug,
 			ShortSHA:     shortSHA,
-			Image:        image,
+			Image:        pullImage,
 			DeploymentID: c.DeploymentID,
 			CommitSHA:    c.CommitSHA,
 			Port:         tenantPort,
@@ -203,7 +211,8 @@ func (w *worker) runOne(ctx context.Context, c *claimedDeployment) error {
 		return fmt.Errorf("mark ready: %w", err)
 	}
 	w.log.Info("deployment ready",
-		"deployment_id", c.DeploymentID, "url", "https://"+host, "image", image)
+		"deployment_id", c.DeploymentID, "url", "https://"+host,
+		"push_image", pushImage, "pull_image", pullImage)
 	return nil
 }
 
@@ -364,6 +373,7 @@ func buildJobManifest(in buildJobInput) map[string]any {
 								"--context=dir:///workspace",
 								"--dockerfile=Dockerfile",
 								"--destination=" + in.Destination,
+								"--insecure",
 								"--snapshot-mode=redo",
 								"--use-new-run",
 								"--cache=false",
