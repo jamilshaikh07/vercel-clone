@@ -132,11 +132,19 @@ func (s *server) handleRunQuery(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// runTenantQuery does the actual connect+execute+marshal cycle. Split
-// out so the error paths uniformly return a populated queryResponse
-// (status 200 with an error body) rather than a bare HTTP error — the
-// UI distinguishes between "your query had a bug" and "the network is
-// broken" much more cleanly that way.
+// runTenantQuery does the actual connect+execute+marshal cycle.
+//
+// We use pgconn's simple-protocol Exec (not pgx.Query, which forces the
+// extended protocol and rejects multi-statement input with
+// "cannot insert multiple commands into a prepared statement"). The
+// simple protocol matches what Vercel/Supabase/psql do: a user can
+// paste a chain of CREATE TABLE / INSERT / SELECT and we walk each
+// result. We surface the LAST result set that contains rows; if every
+// command was DDL/DML with no SELECT, we report the last command tag.
+//
+// Error paths return a populated queryResponse (HTTP 200 with .error)
+// so the UI cleanly distinguishes "your SQL had a bug" from "network
+// is broken".
 func runTenantQuery(ctx context.Context, dsn, sql string) queryResponse {
 	conn, err := pgx.Connect(ctx, dsn)
 	if err != nil {
@@ -144,55 +152,76 @@ func runTenantQuery(ctx context.Context, dsn, sql string) queryResponse {
 	}
 	defer conn.Close(context.Background())
 
-	rows, err := conn.Query(ctx, sql)
-	if err != nil {
-		return queryResponse{Error: pgErrorToBody(err)}
-	}
-	defer rows.Close()
+	mrr := conn.PgConn().Exec(ctx, sql)
+	defer mrr.Close()
 
-	fields := rows.FieldDescriptions()
-	cols := make([]queryColumn, len(fields))
-	for i, f := range fields {
-		cols[i] = queryColumn{
-			Name: string(f.Name),
-			Type: pgOIDName(uint32(f.DataTypeOID)),
-		}
-	}
+	out := queryResponse{Rows: [][]any{}}
+	var lastTag pgconn.CommandTag
 
-	out := queryResponse{Columns: cols, Rows: [][]any{}}
-	var rowCount int64
-	for rows.Next() {
-		if rowCount >= queryMaxRows {
-			out.Truncated = true
-			break
+	for mrr.NextResult() {
+		rr := mrr.ResultReader()
+		fields := rr.FieldDescriptions()
+
+		// Reset accumulators each iteration — we only keep the LAST
+		// result set's columns/rows (or the last command tag if none
+		// have columns).
+		cols := make([]queryColumn, len(fields))
+		for i, f := range fields {
+			cols[i] = queryColumn{
+				Name: string(f.Name),
+				Type: pgOIDName(uint32(f.DataTypeOID)),
+			}
 		}
-		vals, err := rows.Values()
+		hasRows := len(fields) > 0
+
+		var rows [][]any
+		var rowCount int64
+		truncated := false
+		for rr.NextRow() {
+			if rowCount >= queryMaxRows {
+				truncated = true
+				break
+			}
+			raw := rr.Values()
+			vals := make([]any, len(raw))
+			for i := range raw {
+				if raw[i] == nil {
+					vals[i] = nil
+					continue
+				}
+				// rr.Values returns the on-the-wire text representation
+				// for the simple protocol — always a []byte we can stringify.
+				vals[i] = string(raw[i])
+			}
+			rows = append(rows, vals)
+			rowCount++
+		}
+		tag, err := rr.Close()
 		if err != nil {
 			out.Error = pgErrorToBody(err)
 			return out
 		}
-		// Coerce binary types (e.g. []byte) to base64-safe strings so
-		// JSON encoding never breaks. Other types pass through.
-		for i, v := range vals {
-			switch x := v.(type) {
-			case []byte:
-				vals[i] = string(x) // bytea / json / etc. — render as text
-			}
+		lastTag = tag
+
+		if hasRows {
+			out.Columns = cols
+			out.Rows = rows
+			out.Truncated = truncated
+			out.RowCount = rowCount
 		}
-		out.Rows = append(out.Rows, vals)
-		rowCount++
 	}
-	if err := rows.Err(); err != nil {
+	if err := mrr.Close(); err != nil {
 		out.Error = pgErrorToBody(err)
 		return out
 	}
-	tag := rows.CommandTag()
-	out.Command = strings.Fields(tag.String())[0] // first token: SELECT / INSERT / UPDATE / ...
-	out.RowCount = tag.RowsAffected()
-	if out.Command == "SELECT" {
-		// pgx returns 0 from RowsAffected on SELECT — substitute the
-		// count we actually streamed.
-		out.RowCount = rowCount
+
+	tagStr := lastTag.String()
+	if parts := strings.Fields(tagStr); len(parts) > 0 {
+		out.Command = parts[0]
+	}
+	// For non-SELECT trailing commands, use the server-reported row count.
+	if out.Command != "SELECT" && len(out.Columns) == 0 {
+		out.RowCount = lastTag.RowsAffected()
 	}
 	return out
 }

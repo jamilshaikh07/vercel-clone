@@ -291,6 +291,11 @@ const meta       = $('meta');
 
 let currentES = null;
 let selectedId = null;
+// Per-project SQL console state preserved across refresh() re-renders.
+// Without this the 10s background poll wipes the user's textarea +
+// closes the panel mid-edit.
+//   { open: bool, sql: string, resultHTML: string }
+const sqlState = {};
 
 function timeAgo(iso) {
   const t = new Date(iso).getTime();
@@ -357,6 +362,21 @@ function render(data) {
       </div>`;
     return;
   }
+  // Snapshot any live SQL editor state BEFORE we wipe the DOM. The
+  // background poll calls render() every 10s — without this snapshot
+  // the user's typed SQL disappears mid-edit.
+  projectsEl.querySelectorAll('.sql-panel').forEach(panel => {
+    const pid = panel.dataset.sqlFor;
+    if (!pid) return;
+    const ta = panel.querySelector('[data-sql-input]');
+    const res = panel.querySelector('[data-sql-result]');
+    sqlState[pid] = {
+      open: panel.classList.contains('open'),
+      sql: ta ? ta.value : (sqlState[pid]?.sql || ''),
+      resultHTML: res ? res.innerHTML : (sqlState[pid]?.resultHTML || ''),
+    };
+  });
+
   const html = data.projects.map(p => {
     const deps = (p.deployments || []);
     const depHTML = deps.length ? deps.map(d => `
@@ -465,30 +485,45 @@ function renderStorage(slot, projectID, db) {
   `;
   // Toggle SQL console.
   const queryBtn = slot.querySelector('[data-toggle-query]');
-  const panel = projectsEl.querySelector(`.sql-panel[data-sql-for="${projectID}"]`);
+  const panel    = projectsEl.querySelector(`.sql-panel[data-sql-for="${projectID}"]`);
+  const ta       = panel.querySelector('[data-sql-input]');
+  const runBtn   = panel.querySelector('[data-sql-run]');
+  const resEl    = panel.querySelector('[data-sql-result]');
+
+  // Restore any state captured at the top of render() before we wiped
+  // the DOM. This keeps the panel open across the 10s background poll
+  // and preserves the user's typed SQL + last result.
+  const saved = sqlState[projectID];
+  if (saved) {
+    if (saved.sql)        ta.value = saved.sql;
+    if (saved.resultHTML) resEl.innerHTML = saved.resultHTML;
+    if (saved.open) {
+      panel.classList.add('open');
+      queryBtn.classList.add('active');
+      queryBtn.textContent = 'Query ▴';
+    }
+  }
+
   queryBtn.addEventListener('click', () => {
     const open = panel.classList.toggle('open');
     queryBtn.classList.toggle('active', open);
     queryBtn.textContent = open ? 'Query ▴' : 'Query ▾';
-    if (open) {
-      const ta = panel.querySelector('[data-sql-input]');
-      ta.focus();
+    sqlState[projectID] = { ...(sqlState[projectID] || {}), open };
+    if (open) ta.focus();
+  });
+
+  runBtn.addEventListener('click', () => runQuery(projectID, ta, runBtn, resEl));
+  ta.addEventListener('keydown', (ev) => {
+    if ((ev.metaKey || ev.ctrlKey) && ev.key === 'Enter') {
+      ev.preventDefault();
+      runQuery(projectID, ta, runBtn, resEl);
     }
   });
-  // Bind Run button + ⌘/Ctrl+Enter inside the textarea — wire once per render.
-  if (panel && !panel.dataset.bound) {
-    const runBtn = panel.querySelector('[data-sql-run]');
-    const ta     = panel.querySelector('[data-sql-input]');
-    const resEl  = panel.querySelector('[data-sql-result]');
-    runBtn.addEventListener('click', () => runQuery(projectID, ta, runBtn, resEl));
-    ta.addEventListener('keydown', (ev) => {
-      if ((ev.metaKey || ev.ctrlKey) && ev.key === 'Enter') {
-        ev.preventDefault();
-        runQuery(projectID, ta, runBtn, resEl);
-      }
-    });
-    panel.dataset.bound = '1';
-  }
+  // Persist typed SQL on every keystroke so even a refresh between
+  // keystrokes doesn't drop input.
+  ta.addEventListener('input', () => {
+    sqlState[projectID] = { ...(sqlState[projectID] || {}), sql: ta.value };
+  });
   slot.querySelector('[data-copy-uri]').addEventListener('click', async (ev) => {
     try {
       await navigator.clipboard.writeText(db.uri);
@@ -566,6 +601,7 @@ async function runQuery(projectID, ta, btn, resEl) {
   } finally {
     btn.disabled = false;
     btn.textContent = orig;
+    sqlState[projectID] = { ...(sqlState[projectID] || {}), resultHTML: resEl.innerHTML };
   }
 }
 
