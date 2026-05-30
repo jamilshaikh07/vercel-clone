@@ -59,7 +59,11 @@ func (p *dbProvisioner) Provision(ctx context.Context, roleName, dbName, passwor
 		return fmt.Errorf("db name: %w", err)
 	}
 
-	conn, err := pgx.Connect(ctx, p.superuserURI)
+	adminURI, err := normalizeAdminURI(p.superuserURI)
+	if err != nil {
+		return fmt.Errorf("normalize superuser uri: %w", err)
+	}
+	conn, err := pgx.Connect(ctx, adminURI)
 	if err != nil {
 		return fmt.Errorf("connect superuser: %w", err)
 	}
@@ -144,6 +148,30 @@ func validateIdent(s string) error {
 func quoteIdent(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
 
 func sqlSingleQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
+
+// normalizeAdminURI takes the URI from the CNPG paas-db-superuser Secret
+// and rewrites the database segment from CNPG's wildcard "*" sentinel to
+// the always-present "postgres" admin database. Without this fix pgx tries
+// to connect to a literal database called "*" and Postgres rejects with
+// SQLSTATE 3D000.
+//
+// We also drop any query params that reference dbname for the same reason.
+func normalizeAdminURI(uri string) (string, error) {
+	u, err := url.Parse(uri)
+	if err != nil {
+		return "", err
+	}
+	// Path is the dbname for postgres:// URIs (e.g. "/*"). Normalise.
+	if u.Path == "" || u.Path == "/" || u.Path == "/*" {
+		u.Path = "/postgres"
+	}
+	q := u.Query()
+	if v := q.Get("dbname"); v == "" || v == "*" {
+		q.Del("dbname")
+	}
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
 
 // buildDSN composes the postgres URI handed to the tenant pod. The fields
 // are escaped per RFC 3986 so passwords containing reserved chars survive.
