@@ -5,18 +5,27 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>paas — dashboard</title>
   <style>
+    /* === Palette / globals =================================================
+       Observability stack vibe: deep slate background, denser sidebar rail,
+       subtle accent. Variables consolidated for theme work later. */
     :root {
       --bg: #0b0d11;
+      --bg-2: #0e1116;
       --panel: #14171d;
       --panel-2: #1c2027;
+      --panel-3: #232831;
       --border: #262b34;
+      --border-2: #1e222a;
       --text: #e6e8eb;
       --text-dim: #9aa1ad;
+      --text-faint: #6b7280;
       --accent: #7aa2f7;
+      --accent-dim: rgba(122, 162, 247, 0.15);
       --ok: #2ecc71;
       --warn: #f1c40f;
       --err: #ff6b6b;
       --building: #5bc0de;
+      --sidebar-w: 248px;
     }
     * { box-sizing: border-box; }
     html, body {
@@ -27,350 +36,242 @@
     a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
     code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+    /* === Top-level layout =================================================
+       Sidebar rail on the left, scrollable content area on the right. Both
+       are 100vh; content area has its own scrollable .page within. */
     .app {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      grid-template-rows: 56px 1fr;
-      grid-template-areas:
-        "header header"
-        "projects logs";
+      grid-template-columns: var(--sidebar-w) 1fr;
+      grid-template-rows: 100vh;
       height: 100vh;
     }
-    header {
-      grid-area: header;
-      display: flex; align-items: center; gap: 16px;
-      padding: 0 24px;
+
+    /* === Sidebar ========================================================= */
+    .sidebar {
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .brand {
+      display: flex; align-items: center; gap: 10px;
+      padding: 16px 18px 14px;
       border-bottom: 1px solid var(--border);
+    }
+    .brand .logo {
+      width: 28px; height: 28px;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--accent); color: var(--bg);
+      border-radius: 7px; font-weight: 700; font-size: 14px;
+      font-family: ui-monospace, monospace;
+    }
+    .brand .name {
+      font-weight: 700; font-size: 15px; letter-spacing: 0.02em;
+    }
+    .brand .meta {
+      margin-left: auto;
+      font-size: 10px; color: var(--text-faint);
+      font-family: ui-monospace, monospace;
+    }
+    .sidebar-scroll {
+      flex: 1; min-height: 0; overflow-y: auto;
+      padding: 12px 0;
+    }
+    .nav-section {
+      padding: 8px 0 12px;
+    }
+    .nav-section + .nav-section { border-top: 1px solid var(--border-2); margin-top: 4px; padding-top: 12px; }
+    .nav-section-title {
+      padding: 0 18px 6px;
+      font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
+      color: var(--text-faint); text-transform: uppercase;
+    }
+    .nav-list { list-style: none; margin: 0; padding: 0; }
+    .nav-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 18px;
+      color: var(--text-dim);
+      font-size: 13px;
+      cursor: pointer;
+      border-left: 2px solid transparent;
+      text-decoration: none;
+      user-select: none;
+    }
+    .nav-item:hover { color: var(--text); background: var(--panel-2); text-decoration: none; }
+    .nav-item.active {
+      color: var(--text);
+      background: var(--accent-dim);
+      border-left-color: var(--accent);
+    }
+    .nav-item .icon {
+      width: 14px; height: 14px; display: inline-flex; align-items: center;
+      justify-content: center; color: var(--text-faint); flex-shrink: 0;
+    }
+    .nav-item.active .icon { color: var(--accent); }
+    .nav-item .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .nav-item .pill {
+      font-size: 9px; padding: 1px 6px; border-radius: 8px;
+      background: var(--panel-3); color: var(--text-dim);
+      font-family: ui-monospace, monospace;
+      letter-spacing: 0.02em;
+    }
+    .nav-item .pill.ready    { background: rgba(46, 204, 113, 0.18); color: var(--ok); }
+    .nav-item .pill.building { background: rgba(91, 192, 222, 0.18); color: var(--building); }
+    .nav-item .pill.queued   { background: rgba(154, 161, 173, 0.18); color: var(--text-dim); }
+    .nav-item .pill.failed   { background: rgba(255, 107, 107, 0.18); color: var(--err); }
+    .nav-subitem {
+      padding-left: 38px;
+      font-size: 12px;
+    }
+    .nav-install {
+      display: block;
+      margin: 4px 14px 0;
+      padding: 8px 12px;
+      background: transparent;
+      border: 1px dashed var(--border);
+      border-radius: 6px;
+      color: var(--text-dim);
+      font-size: 12px; text-align: center;
+      text-decoration: none;
+    }
+    .nav-install:hover { color: var(--text); border-color: var(--accent); border-style: solid; text-decoration: none; }
+
+    .sidebar-footer {
+      border-top: 1px solid var(--border);
+      padding: 10px 14px;
+      display: flex; align-items: center; gap: 8px;
       background: var(--panel);
     }
-    header h1 { font-size: 14px; font-weight: 600; margin: 0; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-dim); }
-    header .spacer { flex: 1; }
-    header .meta { color: var(--text-dim); font-size: 12px; }
-    header .me { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); }
-    header .me img { width: 24px; height: 24px; border-radius: 50%; }
-    header .signout {
+    .sidebar-footer .me { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text); min-width: 0; flex: 1; }
+    .sidebar-footer .me img { width: 22px; height: 22px; border-radius: 50%; }
+    .sidebar-footer .me span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sidebar-footer .signout {
       background: transparent; border: 1px solid var(--border); color: var(--text-dim);
-      font-size: 12px; padding: 4px 10px; border-radius: 6px; cursor: pointer;
+      font-size: 11px; padding: 4px 8px; border-radius: 6px; cursor: pointer;
     }
-    header .signout:hover { color: var(--text); border-color: var(--accent); }
+    .sidebar-footer .signout:hover { color: var(--text); border-color: var(--accent); }
+
+    /* === Content area ==================================================== */
+    .content {
+      min-height: 0; min-width: 0;
+      display: flex; flex-direction: column;
+      background: var(--bg);
+    }
+    .content-head {
+      display: flex; align-items: center; gap: 16px;
+      padding: 14px 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-2);
+      flex-shrink: 0;
+    }
+    .content-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+    .content-head .crumbs {
+      font-size: 12px; color: var(--text-dim);
+      font-family: ui-monospace, monospace;
+    }
+    .content-head .crumbs strong { color: var(--text); font-weight: 600; }
+    .content-head .crumbs .sep { padding: 0 6px; color: var(--text-faint); }
+    .content-head .spacer { flex: 1; }
+    .content-head .meta { color: var(--text-dim); font-size: 12px; }
+    .content-head .meta .live { color: var(--ok); font-weight: 600; }
+
+    .pages {
+      flex: 1; min-height: 0; position: relative;
+      display: flex; flex-direction: column;
+    }
+    .page {
+      display: none;
+      flex: 1; min-height: 0;
+      overflow-y: auto;
+    }
+    .page.active { display: flex; flex-direction: column; }
+    .page-inner {
+      padding: 20px 24px;
+      max-width: 1200px;
+      width: 100%;
+    }
+
+    /* === Empty/install state ============================================== */
     .install-cta {
       background: var(--panel); border: 1px solid var(--border);
-      border-radius: 8px; padding: 24px; text-align: center;
-      margin-bottom: 16px;
+      border-radius: 10px; padding: 32px; text-align: center;
+      max-width: 520px; margin: 60px auto;
     }
-    .install-cta h3 { margin: 0 0 8px; font-size: 16px; }
-    .install-cta p { color: var(--text-dim); margin: 0 0 16px; font-size: 13px; }
+    .install-cta h3 { margin: 0 0 10px; font-size: 18px; }
+    .install-cta p { color: var(--text-dim); margin: 0 0 20px; font-size: 13px; }
     .install-cta a.btn {
       display: inline-block; background: var(--accent); color: #14171d;
-      padding: 8px 18px; border-radius: 6px; font-weight: 600; font-size: 13px;
+      padding: 10px 22px; border-radius: 6px; font-weight: 600; font-size: 13px;
     }
     .install-cta a.btn:hover { text-decoration: none; opacity: 0.9; }
-    main {
-      grid-area: projects;
-      overflow-y: auto;
-      padding: 16px 24px;
-      border-right: 1px solid var(--border);
+
+    /* === Overview page ==================================================== */
+    .summary {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px; margin-bottom: 24px;
     }
-    aside {
-      grid-area: logs;
-      display: flex; flex-direction: column;
-      overflow: hidden;
-      background: var(--panel);
+    .summary .stat {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 8px; padding: 12px 14px;
     }
-    /* Workspace = per-project right pane: storage + SQL on top. */
-    .ws-empty {
-      flex: 1;
-      display: flex; align-items: center; justify-content: center;
-      color: var(--text-dim); font-style: italic; font-size: 13px;
-      text-align: center; padding: 24px;
+    .summary .stat .label {
+      font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--text-faint); font-weight: 600;
     }
-    .ws {
-      display: none; flex-direction: column;
-      flex: 1; min-height: 0;
+    .summary .stat .value {
+      font-size: 22px; font-weight: 700; margin-top: 4px;
     }
-    .ws.active { display: flex; }
-    .ws-head {
+    .summary .stat .value.ok { color: var(--ok); }
+    .summary .stat .value.err { color: var(--err); }
+    .summary .stat .sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+
+    .panel {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 8px; overflow: hidden;
+      margin-bottom: 16px;
+    }
+    .panel-head {
+      padding: 10px 16px; border-bottom: 1px solid var(--border);
       display: flex; align-items: center; gap: 10px;
-      padding: 10px 16px;
-      border-bottom: 1px solid var(--border);
+      background: var(--bg-2);
     }
-    .ws-head .slug { font-weight: 600; font-size: 13px; }
-    .ws-head .repo { color: var(--text-dim); font-size: 12px; }
-    .ws-head .spacer { flex: 1; }
-    .ws-head button {
-      background: transparent; border: 1px solid var(--border); color: var(--text-dim);
-      padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer;
+    .panel-head h3 { margin: 0; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
+    .panel-head .spacer { flex: 1; }
+    .panel-head .branch {
+      font-family: ui-monospace, monospace; font-size: 11px;
+      padding: 2px 8px; background: var(--panel-3); border-radius: 4px; color: var(--text-dim);
     }
-    .ws-head button:hover { color: var(--text); border-color: var(--accent); }
-    /* Storage row inside workspace — flatter than the old inline version. */
-    .ws-storage {
-      padding: 8px 16px; font-size: 12px; color: var(--text-dim);
-      display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
-      border-bottom: 1px solid var(--border);
+    .panel-head .prod-link {
+      font-family: ui-monospace, monospace; font-size: 12px;
     }
-    .ws-storage .label {
-      text-transform: uppercase; letter-spacing: 0.06em;
-      font-size: 10px; font-weight: 600; color: var(--text-dim);
-    }
-    .ws-storage .pill {
-      font-family: ui-monospace, monospace;
-      padding: 2px 8px; border-radius: 6px;
-      background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
-    }
-    .ws-storage .btn-add {
-      background: transparent; border: 1px dashed var(--border); color: var(--text-dim);
-      padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer;
-    }
-    .ws-storage .btn-add:hover { color: var(--text); border-color: var(--accent); border-style: solid; }
-    .ws-storage .btn-add[disabled] { opacity: 0.5; cursor: progress; }
-    .ws-storage .copy, .ws-storage .reveal {
-      background: transparent; border: 1px solid var(--border); color: var(--text-dim);
-      padding: 2px 8px; border-radius: 6px; font-size: 11px; cursor: pointer;
-    }
-    .ws-storage .copy:hover, .ws-storage .reveal:hover { color: var(--text); border-color: var(--accent); }
-    .ws-storage .err { color: var(--err); }
-    /* Env vars block — sits between Storage and the SQL editor. Same
-       visual idiom as Storage so the workspace pane feels coherent. */
-    .ws-env {
-      border-bottom: 1px solid var(--border);
-      padding: 8px 16px 12px;
-      font-size: 12px; color: var(--text-dim);
-    }
-    .ws-env .head {
-      display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
-    }
-    .ws-env .head .label {
-      text-transform: uppercase; letter-spacing: 0.06em;
-      font-size: 10px; font-weight: 600; color: var(--text-dim);
-    }
-    .ws-env .head .hint { font-size: 10px; color: var(--text-dim); opacity: 0.7; }
-    .ws-env .head .spacer { flex: 1; }
-    .ws-env .btn-add {
-      background: transparent; border: 1px dashed var(--border); color: var(--text-dim);
-      padding: 2px 10px; border-radius: 6px; font-size: 11px; cursor: pointer;
-    }
-    .ws-env .btn-add:hover { color: var(--text); border-color: var(--accent); border-style: solid; }
-    .ws-env .rows { display: flex; flex-direction: column; gap: 4px; }
-    .ws-env .row {
-      display: grid;
-      grid-template-columns: 160px 1fr auto auto auto;
-      gap: 6px; align-items: center;
-    }
-    .ws-env .row input {
-      background: var(--panel-2); color: var(--text);
-      border: 1px solid var(--border); border-radius: 6px;
-      padding: 4px 8px; font-size: 11px;
-      font-family: ui-monospace, monospace;
-      min-width: 0;
-    }
-    .ws-env .row input:focus { outline: none; border-color: var(--accent); }
-    .ws-env .row input[readonly] { color: var(--text-dim); background: transparent; border-color: transparent; cursor: default; }
-    .ws-env .row .btn {
-      background: transparent; border: 1px solid var(--border); color: var(--text-dim);
-      padding: 2px 8px; border-radius: 6px; font-size: 11px; cursor: pointer;
-    }
-    .ws-env .row .btn:hover { color: var(--text); border-color: var(--accent); }
-    .ws-env .row .btn.danger:hover { color: var(--err); border-color: var(--err); }
-    .ws-env .row .btn.primary { background: var(--accent); color: #14171d; border-color: var(--accent); font-weight: 600; }
-    .ws-env .row .btn.primary:hover { filter: brightness(1.15); }
-    .ws-env .row .btn[disabled] { opacity: 0.4; cursor: not-allowed; }
-    .ws-env .empty { padding: 4px 0; font-style: italic; color: var(--text-dim); }
-    .ws-env .toast { font-size: 10px; color: var(--ok); margin-top: 4px; min-height: 12px; }
-    .ws-env .toast.err { color: var(--err); }
+    .panel-body { padding: 4px 0; }
+    .panel-body .empty { padding: 14px 16px; color: var(--text-dim); font-style: italic; font-size: 12px; }
 
-    /* Query editor area — flexes to fill remaining space above logs. */
-    .ws-query {
-      display: none; flex-direction: column;
-      flex: 1; min-height: 0;
-      border-bottom: 1px solid var(--border);
-    }
-    .ws-query.active { display: flex; }
-    .ws-query .editor {
-      padding: 10px 16px;
-      display: grid; grid-template-columns: 1fr auto; gap: 10px;
-    }
-    .ws-query textarea {
-      width: 100%; min-height: 70px; resize: vertical; max-height: 200px;
-      background: var(--panel-2); color: var(--text);
-      border: 1px solid var(--border); border-radius: 6px;
-      padding: 8px 10px;
-      font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.5;
-    }
-    .ws-query textarea:focus { outline: none; border-color: var(--accent); }
-    .ws-query .run {
-      background: var(--accent); color: #14171d; border: none;
-      padding: 6px 16px; border-radius: 6px; font-size: 12px; cursor: pointer;
-      align-self: start; font-weight: 600;
-    }
-    .ws-query .run[disabled] { opacity: 0.5; cursor: progress; }
-    .ws-query .run:hover:not([disabled]) { filter: brightness(1.15); }
-    .ws-query .result {
-      flex: 1; min-height: 0;
-      overflow: auto;
-      padding: 0 16px 12px;
-      font-size: 11px; color: var(--text-dim);
-      font-family: ui-monospace, monospace;
-    }
-    .ws-query .result .meta { padding: 4px 0 8px; }
-    .ws-query .result .meta .ok  { color: var(--ok); }
-    .ws-query .result .meta .err { color: var(--err); }
-    .ws-query .result table {
-      width: 100%; border-collapse: collapse;
-      background: var(--panel-2);
-      border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
-    }
-    .ws-query .result th, .ws-query .result td {
-      padding: 6px 10px; text-align: left;
-      border-bottom: 1px solid var(--border);
-      color: var(--text);
-      white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis;
-    }
-    .ws-query .result th {
-      background: var(--panel); color: var(--text-dim);
-      font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
-    }
-    .ws-query .result td.num { text-align: right; }
-    .ws-query .result tr:last-child td { border-bottom: none; }
-    .ws-query .result .null { color: var(--text-dim); font-style: italic; }
-    .project {
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      margin-bottom: 14px;
-      overflow: hidden;
-      background: var(--panel);
-    }
-    .project-head {
-      display: flex; align-items: center; gap: 12px;
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--border);
-    }
-    .project-head .slug { font-weight: 600; font-size: 14px; }
-    .project-head .repo { color: var(--text-dim); font-size: 12px; }
-    .project-head .branch {
-      font-size: 11px;
-      color: var(--text-dim);
-      padding: 2px 8px; border: 1px solid var(--border); border-radius: 20px;
-    }
-    .project-head .prod-link {
-      margin-left: auto;
-      font-size: 12px; color: var(--ok); font-family: ui-monospace, monospace;
-      padding: 2px 10px; border: 1px solid rgba(46, 204, 113, 0.4);
-      border-radius: 20px;
-    }
-    .project-head .prod-link:hover { background: rgba(46, 204, 113, 0.1); text-decoration: none; }
-    /* Storage panel — per-project Postgres binding ("Add Database"). */
-    .storage {
-      padding: 10px 16px;
-      border-bottom: 1px solid var(--border);
-      font-size: 12px;
-      color: var(--text-dim);
-      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-    }
-    .storage .label {
-      text-transform: uppercase; letter-spacing: 0.06em;
-      font-size: 10px; font-weight: 600; color: var(--text-dim);
-    }
-    .storage .pill {
-      font-family: ui-monospace, monospace;
-      padding: 2px 8px; border-radius: 6px;
-      background: var(--panel-2); border: 1px solid var(--border);
-      color: var(--text);
-    }
-    .storage .btn-add {
-      background: transparent; border: 1px dashed var(--border); color: var(--text-dim);
-      padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer;
-    }
-    .storage .btn-add:hover { color: var(--text); border-color: var(--accent); border-style: solid; }
-    .storage .btn-add[disabled] { opacity: 0.5; cursor: progress; }
-    .storage .copy {
-      background: transparent; border: 1px solid var(--border); color: var(--text-dim);
-      padding: 2px 8px; border-radius: 6px; font-size: 11px; cursor: pointer;
-    }
-    .storage .copy:hover { color: var(--text); border-color: var(--accent); }
-    .storage .reveal {
-      background: transparent; border: none; color: var(--text-dim);
-      cursor: pointer; font-size: 11px; padding: 0 4px;
-    }
-    .storage .reveal:hover { color: var(--text); }
-    .storage .err { color: var(--err); }
-
-    /* SQL console — collapsible per project, sits between storage panel and deployments. */
-    .sql-panel {
-      display: none;
-      border-bottom: 1px solid var(--border);
-      background: var(--panel-2);
-    }
-    .sql-panel.open { display: block; }
-    .sql-panel .editor {
-      padding: 10px 16px;
-      display: grid; grid-template-columns: 1fr auto; gap: 10px;
-    }
-    .sql-panel textarea {
-      width: 100%; min-height: 80px; resize: vertical;
-      background: var(--panel); color: var(--text);
-      border: 1px solid var(--border); border-radius: 6px;
-      padding: 8px 10px;
-      font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.5;
-    }
-    .sql-panel textarea:focus { outline: none; border-color: var(--accent); }
-    .sql-panel .run {
-      background: var(--accent); color: #fff; border: none;
-      padding: 6px 16px; border-radius: 6px; font-size: 12px; cursor: pointer;
-      align-self: start; font-weight: 600;
-    }
-    .sql-panel .run[disabled] { opacity: 0.5; cursor: progress; }
-    .sql-panel .run:hover:not([disabled]) { filter: brightness(1.15); }
-    .sql-panel .result {
-      padding: 0 16px 12px;
-      font-size: 11px; color: var(--text-dim);
-      font-family: ui-monospace, monospace;
-    }
-    .sql-panel .result .meta { padding: 4px 0 8px; }
-    .sql-panel .result .meta .ok { color: var(--ok); }
-    .sql-panel .result .meta .err { color: var(--err); }
-    .sql-panel .result table {
-      width: 100%; border-collapse: collapse;
-      background: var(--panel);
-      border: 1px solid var(--border); border-radius: 6px;
-      overflow: hidden;
-    }
-    .sql-panel .result th, .sql-panel .result td {
-      padding: 6px 10px; text-align: left;
-      border-bottom: 1px solid var(--border);
-      color: var(--text);
-      white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis;
-    }
-    .sql-panel .result th {
-      background: var(--panel-2); color: var(--text-dim);
-      font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
-    }
-    .sql-panel .result td.num { text-align: right; }
-    .sql-panel .result tr:last-child td { border-bottom: none; }
-    .sql-panel .result .null { color: var(--text-dim); font-style: italic; }
-    .storage .btn-query {
-      background: transparent; border: 1px solid var(--border); color: var(--text-dim);
-      padding: 2px 8px; border-radius: 6px; font-size: 11px; cursor: pointer;
-    }
-    .storage .btn-query:hover { color: var(--text); border-color: var(--accent); }
-    .storage .btn-query.active { color: var(--text); border-color: var(--accent); background: var(--panel-2); }
-
-    .deployments { padding: 4px 0; }
+    /* === Deployments list ================================================ */
     .deployment {
       display: grid;
-      grid-template-columns: 80px 110px 1fr auto auto;
+      grid-template-columns: 90px 1fr 100px auto auto;
       gap: 12px; align-items: center;
       padding: 8px 16px;
       cursor: pointer;
-      border-left: 3px solid transparent;
+      border-bottom: 1px solid var(--border-2);
+      font-size: 13px;
     }
+    .deployment:last-child { border-bottom: none; }
     .deployment:hover { background: var(--panel-2); }
-    .deployment.selected { border-left-color: var(--accent); background: var(--panel-2); }
-    .deployment .commit { font-family: ui-monospace, monospace; font-size: 12px; color: var(--text-dim); }
+    .deployment.selected { background: var(--accent-dim); }
+    .deployment .commit {
+      color: var(--text-dim); font-family: ui-monospace, monospace; font-size: 12px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
     .deployment .commit .sha { color: var(--text); }
-    .deployment .ago { color: var(--text-dim); font-size: 12px; }
+    .deployment .ago { color: var(--text-dim); font-size: 11px; }
     .badge {
-      display: inline-block; font-size: 11px; font-weight: 600;
+      display: inline-block; font-size: 10px; font-weight: 600;
       padding: 2px 8px; border-radius: 20px; text-transform: uppercase; letter-spacing: 0.04em;
+      text-align: center;
     }
     .badge.queued    { background: rgba(154, 161, 173, 0.15); color: var(--text-dim); }
     .badge.building  { background: rgba(91, 192, 222, 0.15); color: var(--building); }
@@ -381,152 +282,542 @@
     .url-link { font-size: 12px; }
     .btn-redeploy {
       background: transparent; border: 1px solid var(--border); color: var(--text-dim);
-      padding: 2px 8px; border-radius: 6px; font-size: 11px; cursor: pointer;
+      padding: 3px 10px; border-radius: 6px; font-size: 11px; cursor: pointer;
       font-family: inherit;
     }
     .btn-redeploy:hover { color: var(--text); border-color: var(--accent); }
     .btn-redeploy[disabled] { opacity: 0.4; cursor: not-allowed; }
-    .empty {
-      color: var(--text-dim); font-style: italic; padding: 12px 16px;
+
+    /* === Database page =================================================== */
+    .db-card {
+      display: grid; grid-template-columns: 140px 1fr; gap: 10px 16px;
+      padding: 16px;
+      font-size: 13px;
     }
-    /* Logs pane: small, anchored to the bottom of the aside. */
+    .db-card .k { color: var(--text-faint); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+    .db-card .v { font-family: ui-monospace, monospace; color: var(--text); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .db-card .v .pill {
+      padding: 2px 8px; background: var(--panel-2); border-radius: 6px; border: 1px solid var(--border);
+    }
+    .db-card .v button {
+      background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+      font-size: 11px; padding: 3px 10px; border-radius: 6px; cursor: pointer;
+    }
+    .db-card .v button:hover { color: var(--text); border-color: var(--accent); }
+    .db-empty {
+      padding: 32px; text-align: center;
+    }
+    .db-empty p { color: var(--text-dim); margin: 0 0 16px; font-size: 13px; }
+    .db-empty button {
+      background: var(--accent); color: #14171d; border: none;
+      padding: 9px 20px; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer;
+    }
+    .db-empty button:hover { filter: brightness(1.1); }
+    .db-empty button[disabled] { opacity: 0.5; cursor: progress; }
+
+    /* === SQL page ======================================================== */
+    .sql-editor {
+      padding: 14px 16px;
+      display: grid; grid-template-columns: 1fr auto; gap: 10px;
+    }
+    .sql-editor textarea {
+      width: 100%; min-height: 100px; resize: vertical; max-height: 320px;
+      background: var(--panel-2); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 10px 12px;
+      font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.5;
+    }
+    .sql-editor textarea:focus { outline: none; border-color: var(--accent); }
+    .sql-editor .run {
+      background: var(--accent); color: #14171d; border: none;
+      padding: 8px 20px; border-radius: 6px; font-size: 12px; cursor: pointer;
+      align-self: start; font-weight: 600;
+    }
+    .sql-editor .run[disabled] { opacity: 0.5; cursor: progress; }
+    .sql-editor .run:hover:not([disabled]) { filter: brightness(1.15); }
+    .sql-result {
+      padding: 0 16px 16px;
+      font-size: 11px; color: var(--text-dim);
+      font-family: ui-monospace, monospace;
+    }
+    .sql-result .meta { padding: 6px 0 10px; }
+    .sql-result .meta .ok  { color: var(--ok); }
+    .sql-result .meta .err { color: var(--err); }
+    .sql-result table {
+      width: 100%; border-collapse: collapse;
+      background: var(--panel-2);
+      border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+    }
+    .sql-result th, .sql-result td {
+      padding: 6px 10px; text-align: left;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+      white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis;
+    }
+    .sql-result th {
+      background: var(--panel); color: var(--text-dim);
+      font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .sql-result td.num { text-align: right; }
+    .sql-result tr:last-child td { border-bottom: none; }
+    .sql-result .null { color: var(--text-dim); font-style: italic; }
+
+    /* === Env vars page =================================================== */
+    .env-head {
+      padding: 14px 16px 8px;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .env-head .hint { font-size: 11px; color: var(--text-dim); }
+    .env-head .spacer { flex: 1; }
+    .env-head .btn-add {
+      background: transparent; border: 1px dashed var(--border); color: var(--text-dim);
+      padding: 4px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;
+    }
+    .env-head .btn-add:hover { color: var(--text); border-color: var(--accent); border-style: solid; }
+    .env-rows { display: flex; flex-direction: column; gap: 6px; padding: 0 16px 8px; }
+    .env-rows .row {
+      display: grid;
+      grid-template-columns: 200px 1fr auto auto auto;
+      gap: 8px; align-items: center;
+    }
+    .env-rows .row input {
+      background: var(--panel-2); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 6px 10px; font-size: 12px;
+      font-family: ui-monospace, monospace;
+      min-width: 0;
+    }
+    .env-rows .row input:focus { outline: none; border-color: var(--accent); }
+    .env-rows .row input[readonly] { color: var(--text-dim); background: transparent; border-color: transparent; cursor: default; }
+    .env-rows .row .btn {
+      background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+      padding: 4px 10px; border-radius: 6px; font-size: 11px; cursor: pointer;
+    }
+    .env-rows .row .btn:hover { color: var(--text); border-color: var(--accent); }
+    .env-rows .row .btn.danger:hover { color: var(--err); border-color: var(--err); }
+    .env-rows .row .btn.primary { background: var(--accent); color: #14171d; border-color: var(--accent); font-weight: 600; }
+    .env-rows .row .btn.primary:hover { filter: brightness(1.15); }
+    .env-rows .row .btn[disabled] { opacity: 0.4; cursor: not-allowed; }
+    .env-rows .empty { padding: 14px 0; font-style: italic; color: var(--text-dim); font-size: 12px; }
+    .env-toast { padding: 0 16px 14px; font-size: 11px; color: var(--ok); min-height: 14px; }
+    .env-toast.err { color: var(--err); }
+
+    /* === Logs page ======================================================= */
+    .logs-layout {
+      flex: 1; min-height: 0;
+      display: grid;
+      grid-template-columns: 300px 1fr;
+      gap: 1px;
+      background: var(--border);
+    }
+    .logs-deps {
+      background: var(--panel);
+      overflow-y: auto;
+    }
+    .logs-deps .empty { padding: 16px; color: var(--text-dim); font-style: italic; font-size: 12px; }
+    .logs-deps .dep-row {
+      display: grid; grid-template-columns: 70px 1fr 50px;
+      gap: 8px; align-items: center;
+      padding: 8px 12px;
+      cursor: pointer; border-bottom: 1px solid var(--border-2);
+      font-size: 12px;
+    }
+    .logs-deps .dep-row:hover { background: var(--panel-2); }
+    .logs-deps .dep-row.selected { background: var(--accent-dim); }
+    .logs-deps .dep-row .sha { font-family: ui-monospace, monospace; color: var(--text); }
+    .logs-deps .dep-row .ago { color: var(--text-faint); font-size: 11px; text-align: right; }
+
     .logs-pane {
-      flex: 0 0 240px;
       display: flex; flex-direction: column;
-      border-top: 1px solid var(--border);
-      background: #0e1116;
+      background: var(--bg-2);
+      min-height: 0;
     }
     .log-head {
       display: flex; align-items: center; gap: 10px;
-      padding: 8px 14px; border-bottom: 1px solid var(--border);
-      font-size: 11px;
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+      flex-shrink: 0;
     }
-    .log-head .title  { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
-    .log-head .commit { font-family: ui-monospace, monospace; color: var(--text); font-size: 11px; }
+    .log-head .title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
+    .log-head .commit { color: var(--text-dim); font-size: 11px; font-family: ui-monospace, monospace; }
     .log-head .spacer { flex: 1; }
-    .log-head button, .log-head a {
+    .log-head a, .log-head button {
       background: transparent; border: 1px solid var(--border); color: var(--text-dim);
-      padding: 2px 8px; border-radius: 6px; font-size: 11px; cursor: pointer; text-decoration: none;
+      padding: 3px 10px; border-radius: 6px; font-size: 11px; cursor: pointer;
+      text-decoration: none;
     }
-    .log-head button:hover, .log-head a:hover { color: var(--text); border-color: var(--accent); }
-    .log-tabs { display: inline-flex; gap: 4px; }
+    .log-head a:hover, .log-head button:hover { color: var(--text); border-color: var(--accent); text-decoration: none; }
+    .log-tabs { display: flex; gap: 4px; }
     .log-tabs .tab {
       background: transparent; border: 1px solid var(--border); color: var(--text-dim);
-      padding: 2px 10px; border-radius: 6px; font-size: 11px; cursor: pointer;
-      text-transform: uppercase; letter-spacing: 0.05em;
+      padding: 3px 12px; border-radius: 6px; font-size: 11px; cursor: pointer;
     }
-    .log-tabs .tab:hover { color: var(--text); border-color: var(--accent); }
-    .log-tabs .tab.active { color: var(--text); border-color: var(--accent); background: var(--panel-2); }
-    .log-line.app    .c { color: #88c0d0; }
-    .log-body {
-      flex: 1; overflow-y: auto;
-      padding: 8px 14px;
-      font-family: ui-monospace, monospace; font-size: 11px; line-height: 1.5;
-      white-space: pre-wrap; word-break: break-word;
-    }
+    .log-tabs .tab.active { background: var(--accent-dim); color: var(--text); border-color: var(--accent); }
     .log-line { display: grid; grid-template-columns: 64px 1fr; gap: 8px; }
     .log-line .c { color: var(--text-dim); font-weight: 600; user-select: none; }
     .log-line.kaniko .c { color: var(--building); }
     .log-line.clone  .c { color: #b48ead; }
     .log-line.system .c { color: var(--warn); }
+    .log-line.app    .c { color: #88c0d0; }
+    .log-body {
+      flex: 1; overflow-y: auto;
+      padding: 10px 14px;
+      font-family: ui-monospace, monospace; font-size: 11px; line-height: 1.55;
+      white-space: pre-wrap; word-break: break-word;
+    }
     .log-placeholder {
       color: var(--text-dim); font-style: italic; padding: 16px;
     }
+
+    /* === Telemetry / Traffic stub pages ==================================
+       Real metrics need a Prometheus/Loki sidecar. For now we surface what
+       the control-plane already knows (deployment counts, status, recency)
+       in a Grafana-ish layout so the wiring is in place for v2. */
+    .stub-banner {
+      background: linear-gradient(90deg, rgba(122, 162, 247, 0.12), transparent);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-bottom: 20px;
+    }
+    .stub-banner strong { color: var(--text); }
+    .charts {
+      display: grid; grid-template-columns: 2fr 1fr;
+      gap: 16px; margin-bottom: 16px;
+    }
+    @media (max-width: 900px) { .charts { grid-template-columns: 1fr; } }
+    .chart {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 8px; padding: 16px;
+      min-height: 200px;
+    }
+    .chart h4 { margin: 0 0 12px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); font-weight: 600; }
+    .spark {
+      display: flex; align-items: flex-end; gap: 3px; height: 80px;
+      padding: 8px 0;
+    }
+    .spark .bar {
+      flex: 1; background: var(--accent); opacity: 0.7;
+      border-radius: 2px 2px 0 0;
+      min-height: 2px;
+      transition: opacity 0.15s;
+    }
+    .spark .bar.failed { background: var(--err); }
+    .spark .bar:hover { opacity: 1; }
+    .recent-table {
+      width: 100%; border-collapse: collapse;
+      font-size: 12px;
+    }
+    .recent-table th, .recent-table td {
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border-2);
+      text-align: left;
+    }
+    .recent-table th {
+      color: var(--text-faint); font-size: 10px;
+      text-transform: uppercase; letter-spacing: 0.06em;
+      font-weight: 600;
+    }
+    .recent-table td.num { text-align: right; font-family: ui-monospace, monospace; }
+    .recent-table td.proj { color: var(--text-dim); font-family: ui-monospace, monospace; }
+    .recent-table tr:last-child td { border-bottom: none; }
+    /* (The old two-column layout CSS has been removed — superseded by the
+       sidebar + page-based system defined above.) */
+    /* === Legacy CSS removed below this marker ===
+       The next ~360 lines of old .ws-*, .project, .sql-panel, .storage,
+       inline .deployment and .log-* rules have been deleted. The new
+       observability layout above defines all the visuals; the DOM IDs
+       (ws-env-rows, ws-sql, ws-storage, etc.) are reused inside new
+       page containers so the existing JS handlers keep working without
+       modification. */
+    .legacy-marker { display: none; }
+    /* LEGACY_DELETE_START */
+    .__legacy_purge { display: none; }
+    /* LEGACY_DELETE_END */
+    /* LEGACY CSS BELOW THIS LINE HAS BEEN REMOVED — superseded by the new
+       sidebar + page system defined above. Old class names (.ws-storage,
+       .ws-query, .project, .sql-panel) and their visuals are gone; only the
+       DOM IDs (ws-env-rows, ws-sql, ws-storage[as a container], etc.) are
+       preserved in the new pages so the existing component JS still finds
+       them. */
   </style>
 </head>
 <body>
   <div class="app">
-    <header>
-      <h1>paas</h1>
-      <span class="meta" id="meta">loading…</span>
-      <span class="spacer"></span>
-      <span class="me" id="me"></span>
-      <button class="signout" id="signout">Sign out</button>
-    </header>
-    <main id="projects"><div class="empty">Loading projects…</div></main>
-    <aside>
-      <!-- Empty state: shown when no project is selected. -->
-      <div class="ws-empty" id="ws-empty">
-        Select a project to manage its database and view build logs.
+    <!-- =================================================================
+         Sidebar rail. Sections: Apps (project list) → optional sub-nav
+         for the active app → Monitoring (global views). User footer at
+         the bottom pinned via flex.
+         ================================================================= -->
+    <nav class="sidebar">
+      <div class="brand">
+        <span class="logo">P</span>
+        <span class="name">paas</span>
+        <span class="meta">v1</span>
       </div>
-      <!-- Active workspace: storage + SQL editor for the selected project. -->
-      <div class="ws" id="ws">
-        <div class="ws-head">
-          <span class="slug" id="ws-slug"></span>
-          <span class="repo" id="ws-repo"></span>
-          <span class="spacer"></span>
-          <button id="ws-close">close</button>
+      <div class="sidebar-scroll">
+        <div class="nav-section">
+          <div class="nav-section-title">Apps</div>
+          <ul class="nav-list" id="nav-apps">
+            <li class="nav-item" style="color: var(--text-faint); font-style: italic; font-size: 11px;"><span class="label">loading…</span></li>
+          </ul>
+          <a class="nav-install" id="nav-install"
+             href="https://github.com/apps/jamilshaikh-paas-v2/installations/new"
+             target="_blank" rel="noopener"
+             style="display:none">+ Install GitHub App</a>
         </div>
-        <div class="ws-storage" id="ws-storage">
-          <span class="label">Storage</span><span>loading…</span>
+
+        <!-- App sub-nav: only visible while a project is the active scope.
+             SQL viewer entry is hidden until we know the project has a DB. -->
+        <div class="nav-section" id="app-subnav" style="display:none">
+          <div class="nav-section-title" id="subnav-title">View</div>
+          <ul class="nav-list">
+            <li><a class="nav-item nav-subitem" data-subview="overview" href="#"><span class="label">Overview</span></a></li>
+            <li><a class="nav-item nav-subitem" data-subview="logs"     href="#"><span class="label">Logs</span></a></li>
+            <li><a class="nav-item nav-subitem" data-subview="database" href="#"><span class="label">Database</span></a></li>
+            <li id="subnav-sql" style="display:none"><a class="nav-item nav-subitem" data-subview="sql" href="#"><span class="label">SQL viewer</span></a></li>
+            <li><a class="nav-item nav-subitem" data-subview="env"      href="#"><span class="label">Env vars</span></a></li>
+          </ul>
         </div>
-        <div class="ws-env" id="ws-env">
-          <div class="head">
-            <span class="label">Env Vars</span>
-            <span class="hint">applied on next deploy</span>
-            <span class="spacer"></span>
-            <button class="btn-add" id="ws-env-add">+ Add variable</button>
+
+        <div class="nav-section">
+          <div class="nav-section-title">Monitoring</div>
+          <ul class="nav-list">
+            <li><a class="nav-item" data-globalview="telemetry" href="#/telemetry"><span class="label">Telemetry</span></a></li>
+            <li><a class="nav-item" data-globalview="traffic"   href="#/traffic"><span class="label">Traffic</span></a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="sidebar-footer">
+        <span class="me" id="me"></span>
+        <button class="signout" id="signout" title="Sign out">⏻</button>
+      </div>
+    </nav>
+
+    <!-- =================================================================
+         Content area. One <div class="page"> is .active at a time; the
+         router toggles them. The header shows a breadcrumb that reflects
+         the current route.
+         ================================================================= -->
+    <main class="content">
+      <header class="content-head">
+        <span class="crumbs" id="crumbs">Loading…</span>
+        <span class="spacer"></span>
+        <span class="meta" id="meta">loading…</span>
+      </header>
+      <div class="pages">
+
+        <!-- HOME: shown when nothing is selected. Either greets a user
+             with apps or shows the install CTA. -->
+        <div class="page" id="page-home">
+          <div class="page-inner">
+            <div class="install-cta" id="home-install" style="display:none">
+              <h3>Connect a GitHub repository</h3>
+              <p>Install the paas GitHub App on a repository to get your first deployment. Push to its default branch and we'll build &amp; serve it.</p>
+              <a class="btn" href="https://github.com/apps/jamilshaikh-paas-v2/installations/new" target="_blank" rel="noopener">Install GitHub App ↗</a>
+            </div>
+            <div id="home-summary"></div>
           </div>
-          <div class="rows" id="ws-env-rows"></div>
-          <div class="toast" id="ws-env-toast"></div>
         </div>
-        <div class="ws-query" id="ws-query">
-          <div class="editor">
-            <textarea id="ws-sql" spellcheck="false" placeholder="-- Try:  SELECT now();"></textarea>
-            <button class="run" id="ws-run">Run ⌘↵</button>
+
+        <!-- OVERVIEW: per-project landing page. Summary stats + deployments. -->
+        <div class="page" id="page-overview">
+          <div class="page-inner">
+            <div class="summary" id="overview-summary"></div>
+            <div class="panel">
+              <div class="panel-head">
+                <h3>Deployments</h3>
+                <span class="branch" id="overview-branch"></span>
+                <span class="spacer"></span>
+                <a class="prod-link" id="overview-prod" target="_blank" rel="noopener" style="display:none"></a>
+              </div>
+              <div class="panel-body" id="overview-deployments"></div>
+            </div>
           </div>
-          <div class="result" id="ws-result"></div>
         </div>
+
+        <!-- LOGS: split pane. Left = deployment picker (this project's
+             builds). Right = log viewer with Build/Runtime tabs. -->
+        <div class="page" id="page-logs">
+          <div class="logs-layout">
+            <div class="logs-deps" id="logs-deps"></div>
+            <div class="logs-pane">
+              <div class="log-head">
+                <span class="title" id="log-title">Logs</span>
+                <span class="log-tabs" id="log-tabs">
+                  <button class="tab active" data-mode="build">Build</button>
+                  <button class="tab" data-mode="runtime">Runtime</button>
+                </span>
+                <span class="commit" id="log-commit">— select a deployment</span>
+                <span class="spacer"></span>
+                <a id="log-url" target="_blank" rel="noopener" style="display:none">open ↗</a>
+              </div>
+              <div class="log-body" id="log-body">
+                <div class="log-placeholder">Pick a deployment on the left to tail its logs.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- DATABASE: provision or show connection details. -->
+        <div class="page" id="page-database">
+          <div class="page-inner">
+            <div class="panel">
+              <div class="panel-head">
+                <h3>Postgres</h3>
+                <span class="spacer"></span>
+                <span style="color:var(--text-dim);font-size:11px">per-project database</span>
+              </div>
+              <div id="ws-storage">loading…</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SQL VIEWER: only navigable when DB exists. -->
+        <div class="page" id="page-sql">
+          <div class="page-inner">
+            <div class="panel">
+              <div class="panel-head">
+                <h3>SQL viewer</h3>
+                <span class="spacer"></span>
+                <span style="color:var(--text-dim);font-size:11px">⌘+Enter to run</span>
+              </div>
+              <div class="sql-editor">
+                <textarea id="ws-sql" spellcheck="false" placeholder="-- Try:  SELECT now();"></textarea>
+                <button class="run" id="ws-run">Run ⌘↵</button>
+              </div>
+              <div class="sql-result" id="ws-result"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ENV VARS: per-project plaintext key/value pairs. Applied on next deploy. -->
+        <div class="page" id="page-env">
+          <div class="page-inner">
+            <div class="panel">
+              <div class="panel-head">
+                <h3>Environment variables</h3>
+                <span class="spacer"></span>
+                <span style="color:var(--text-dim);font-size:11px">applied on next deploy</span>
+              </div>
+              <div class="env-head">
+                <span class="spacer"></span>
+                <button class="btn-add" id="ws-env-add">+ Add variable</button>
+              </div>
+              <div class="env-rows" id="ws-env-rows"></div>
+              <div class="env-toast" id="ws-env-toast"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TELEMETRY: rolls up control-plane-known signals (build counts,
+             success rates, recent activity). Pod-level CPU/memory and
+             request rates require a Prometheus/Loki sidecar — surfaced as
+             a "coming next" banner so the user knows we're not stuck. -->
+        <div class="page" id="page-telemetry">
+          <div class="page-inner">
+            <div class="stub-banner">
+              <strong>Beta:</strong> Pod-level CPU/RAM and request rates need a Prometheus + Loki sidecar (next on the roadmap). For now this view rolls up what the control-plane already knows about your builds.
+            </div>
+            <div id="telemetry-content"></div>
+          </div>
+        </div>
+
+        <!-- TRAFFIC: per-app request counts. Requires the Traefik access
+             log to be shipped; placeholder for now using deployment counts. -->
+        <div class="page" id="page-traffic">
+          <div class="page-inner">
+            <div class="stub-banner">
+              <strong>Beta:</strong> Per-app request counts come from the Traefik access log, which we'll wire up after telemetry. For now this shows deployment activity per app.
+            </div>
+            <div id="traffic-content"></div>
+          </div>
+        </div>
+
       </div>
-      <!-- Compact logs pane. Always present; updates when a deployment row is clicked. -->
-      <div class="logs-pane">
-        <div class="log-head">
-          <span class="title" id="log-title">Logs</span>
-          <span class="log-tabs" id="log-tabs" style="display:none">
-            <button class="tab active" data-mode="build">Build</button>
-            <button class="tab" data-mode="runtime">Runtime</button>
-          </span>
-          <span class="commit" id="log-commit">— select a deployment</span>
-          <span class="spacer"></span>
-          <a id="log-url" target="_blank" rel="noopener" style="display:none">open ↗</a>
-          <button id="log-close" style="display:none">close</button>
-        </div>
-        <div class="log-body" id="log-body">
-          <div class="log-placeholder">Click a deployment row to stream its build logs here.</div>
-        </div>
-      </div>
-    </aside>
+    </main>
   </div>
 
 <script>
+// =========================================================================
+// Dashboard SPA — observability-style sidebar layout
+//
+// State model:
+//   ROUTE   = {scope: 'home' | 'project' | 'global', projectID?, view?}
+//   DATA    = last loaded /v1/projects payload (rendered into sidebar + pages)
+//
+// Routing is hash-based so deep links survive refresh and so the GitHub
+// status-check target_url (`#d=<uuid>`) keeps working.
+//
+// Hash format:
+//   ''                     → home (overview list, or install CTA when empty)
+//   #/                     → same as ''
+//   #/p/<uuid>             → project overview
+//   #/p/<uuid>/overview    → same
+//   #/p/<uuid>/logs        → project logs page
+//   #/p/<uuid>/database    → project DB management
+//   #/p/<uuid>/sql         → project SQL viewer (hidden in subnav if no DB)
+//   #/p/<uuid>/env         → project env vars
+//   #/telemetry            → global telemetry (rolled-up build stats)
+//   #/traffic              → global traffic (build activity per app)
+//   #d=<uuid>              → legacy deep-link: auto-route to that deployment's logs
+//
+// The component functions (loadEnv, runQuery, streamLogsFor, redeployFromButton,
+// addDatabase) are kept verbatim from the old dashboard — they reference
+// DOM IDs (ws-env-rows, ws-sql, ws-result, log-body, etc.) that now live
+// inside the new page containers, so they work without modification.
+// =========================================================================
+
 const $ = (id) => document.getElementById(id);
-const projectsEl = $('projects');
-const logBody    = $('log-body');
-const logTitle   = $('log-title');
-const logCommit  = $('log-commit');
-const logUrl     = $('log-url');
-const logClose   = $('log-close');
-const meta       = $('meta');
 
-let currentES = null;
-let selectedId = null;
-// 'build' (default) tails the kaniko build pod; 'runtime' tails the live
-// tenant pod. Persisted across deployment selections so a user who
-// clicked Runtime once stays in runtime mode for subsequent rows.
-let logMode = 'build';
-const logTabs = $('log-tabs');
+// --- DOM handles (sidebar + pages) ---
+const navAppsEl     = $('nav-apps');
+const navInstallEl  = $('nav-install');
+const appSubnavEl   = $('app-subnav');
+const subnavTitleEl = $('subnav-title');
+const subnavSqlEl   = $('subnav-sql');
+const crumbsEl      = $('crumbs');
+const meta          = $('meta');
 
-// Endpoint + 'no logs yet' placeholder vary by mode. Keeping them in
-// one map makes openLogs symmetric for the two modes.
-const LOG_SOURCES = {
-  build:   { path: 'logs',         empty: 'Click a deployment row to stream its build logs here.' },
-  runtime: { path: 'runtime-logs', empty: 'Streaming runtime output from the live tenant pod…'   },
+const pageEls = {
+  home:      $('page-home'),
+  overview:  $('page-overview'),
+  logs:      $('page-logs'),
+  database:  $('page-database'),
+  sql:       $('page-sql'),
+  env:       $('page-env'),
+  telemetry: $('page-telemetry'),
+  traffic:   $('page-traffic'),
 };
-// Per-project SQL console state preserved across refresh() re-renders.
-// Without this the 10s background poll wipes the user's textarea +
-// closes the panel mid-edit.
-//   { open: bool, sql: string, resultHTML: string }
+// Logs-page DOM (shared with stream logic below).
+const logBody   = $('log-body');
+const logTitle  = $('log-title');
+const logCommit = $('log-commit');
+const logUrl    = $('log-url');
+const logTabs   = $('log-tabs');
+const logsDeps  = $('logs-deps');
+
+// --- State ---
+let DATA  = { projects: [] };     // last /v1/projects payload
+let ROUTE = { scope: 'home' };    // current navigation
+let currentES = null;             // active SSE EventSource
+let selectedDeploymentID = null;  // currently-tailed deployment on the logs page
+let logMode = 'build';            // build | runtime — persisted across deployment swaps
+// Per-project SQL console state preserved across refresh() re-renders so the
+// 10s background poll doesn't wipe the user's textarea or result table.
 const sqlState = {};
+
+// Endpoint + placeholder per log-mode. Keeps streamLogsFor symmetric.
+const LOG_SOURCES = {
+  build:   { path: 'logs',         empty: 'Pick a deployment on the left to tail its build logs.' },
+  runtime: { path: 'runtime-logs', empty: 'Pick a deployment on the left to tail runtime output.' },
+};
+
+// ----- Utility -----------------------------------------------------------
 
 function timeAgo(iso) {
   const t = new Date(iso).getTime();
@@ -571,284 +862,513 @@ document.getElementById('signout').addEventListener('click', async () => {
   window.location.href = '/login';
 });
 
+// ----- Data load + refresh -----------------------------------------------
+
 async function refresh() {
   try {
-    const data = await fetchJSON('/v1/projects');
-    render(data);
-    const n = (data.projects || []).length;
+    DATA = await fetchJSON('/v1/projects');
+    const n = (DATA.projects || []).length;
     meta.textContent = (n === 1 ? '1 project' : n + ' projects') + ' · updated ' + new Date().toLocaleTimeString();
+    renderUI();
   } catch (e) {
     if (e.message === 'unauthenticated') return;
-    projectsEl.innerHTML = '<div class="empty">Failed to load projects: ' + escapeHTML(e.message) + '</div>';
+    crumbsEl.textContent = 'Failed to load: ' + e.message;
   }
 }
 
-function render(data) {
-  if (!data.projects.length) {
-    projectsEl.innerHTML = `
-      <div class="install-cta">
-        <h3>Connect a GitHub repository</h3>
-        <p>Install the paas GitHub App on a repository to get your first deployment. Push to its default branch and we'll build &amp; serve it.</p>
-        <a class="btn" href="https://github.com/apps/jamilshaikh-paas-v2/installations/new" target="_blank" rel="noopener">Install GitHub App ↗</a>
-      </div>`;
+// ----- Router ------------------------------------------------------------
+// Hash format documented at the top of the script.
+
+function parseHash() {
+  const raw = window.location.hash.replace(/^#\/?/, '');
+  if (!raw) return { scope: 'home' };
+
+  // Legacy: #d=<uuid> → find owning project, route to its logs.
+  const dMatch = raw.match(/^d=([0-9a-fA-F-]{36})$/);
+  if (dMatch) {
+    const dep = findDeployment(dMatch[1]);
+    if (dep) return { scope: 'project', projectID: dep.projectID, view: 'logs', deploymentID: dMatch[1] };
+    return { scope: 'home', pendingDeploymentID: dMatch[1] };
+  }
+
+  // #/p/<uuid>[/<view>]
+  const pMatch = raw.match(/^p\/([0-9a-fA-F-]+)(?:\/([a-z]+))?$/);
+  if (pMatch) {
+    const view = pMatch[2] || 'overview';
+    if (!['overview','logs','database','sql','env'].includes(view)) {
+      return { scope: 'project', projectID: pMatch[1], view: 'overview' };
+    }
+    return { scope: 'project', projectID: pMatch[1], view };
+  }
+
+  // #/telemetry or #/traffic
+  if (raw === 'telemetry' || raw === 'traffic') return { scope: 'global', view: raw };
+
+  return { scope: 'home' };
+}
+
+// Walk DATA looking for a deployment by ID — returns {projectID, deployment} or null.
+function findDeployment(depID) {
+  for (const p of (DATA.projects || [])) {
+    for (const d of (p.deployments || [])) {
+      if (d.id === depID) return { projectID: p.id, deployment: d };
+    }
+  }
+  return null;
+}
+
+function findProject(projectID) {
+  return (DATA.projects || []).find(p => p.id === projectID) || null;
+}
+
+function navigate(hash) {
+  // Setting window.location.hash fires hashchange which runs applyRoute.
+  if (window.location.hash === hash) {
+    applyRoute();          // same hash: still re-render in case state changed
+  } else {
+    window.location.hash = hash;
+  }
+}
+
+// Track which deployment a deep-link asked for so we can auto-open its
+// logs the moment DATA contains it (between page-load and first refresh).
+let pendingDeploymentID = null;
+
+function applyRoute() {
+  closeStream();           // any page swap kills the SSE — we'll reopen if needed
+  ROUTE = parseHash();
+  if (ROUTE.pendingDeploymentID) {
+    pendingDeploymentID = ROUTE.pendingDeploymentID;
+    delete ROUTE.pendingDeploymentID;
+  }
+  renderUI();
+}
+
+window.addEventListener('hashchange', applyRoute);
+
+// ----- Top-level render --------------------------------------------------
+// Called by both applyRoute (route change) and refresh (data change).
+
+function renderUI() {
+  renderSidebar();
+  renderCrumbs();
+  showPage();
+
+  // If a deep-link is pending and the deployment has now arrived in DATA,
+  // route to its logs.
+  if (pendingDeploymentID) {
+    const hit = findDeployment(pendingDeploymentID);
+    if (hit) {
+      const id = pendingDeploymentID;
+      pendingDeploymentID = null;
+      navigate('#/p/' + hit.projectID + '/logs');
+      selectedDeploymentID = id;       // tells renderLogs() to auto-select on its next pass
+    }
+  }
+}
+
+// Render the apps list + sub-nav for the active project + active state on
+// monitoring entries. Idempotent — safe to call repeatedly on data poll.
+function renderSidebar() {
+  const projects = DATA.projects || [];
+
+  // Apps list: one nav-item per project, with a status pill showing the
+  // most-recent deployment's state. Clicking routes to its overview.
+  if (projects.length === 0) {
+    navAppsEl.innerHTML = `<li class="nav-item" style="color:var(--text-faint);font-style:italic;font-size:11px;"><span class="label">no apps yet</span></li>`;
+    navInstallEl.style.display = '';
+  } else {
+    navAppsEl.innerHTML = projects.map(p => {
+      const latest = (p.deployments || [])[0];
+      const pillCls = latest ? latest.status : '';
+      const pillTxt = latest ? latest.status : '—';
+      const active  = ROUTE.scope === 'project' && ROUTE.projectID === p.id;
+      return `
+        <li><a class="nav-item ${active ? 'active' : ''}"
+               href="#/p/${p.id}"
+               data-project-id="${p.id}">
+          <span class="label">${escapeHTML(p.slug)}</span>
+          <span class="pill ${pillCls}">${pillTxt}</span>
+        </a></li>`;
+    }).join('');
+    navInstallEl.style.display = 'none';
+  }
+
+  // Project sub-nav: only when scope is 'project'. SQL viewer entry is
+  // hidden by default; loadStorage() reveals it when a DB is found.
+  if (ROUTE.scope === 'project') {
+    const proj = findProject(ROUTE.projectID);
+    appSubnavEl.style.display = '';
+    subnavTitleEl.textContent = proj ? proj.slug : 'App';
+    appSubnavEl.querySelectorAll('a[data-subview]').forEach(a => {
+      const target = `#/p/${ROUTE.projectID}/${a.dataset.subview}`;
+      a.href = target;
+      a.classList.toggle('active', ROUTE.view === a.dataset.subview);
+    });
+  } else {
+    appSubnavEl.style.display = 'none';
+  }
+
+  // Monitoring entries: active when scope is 'global'.
+  document.querySelectorAll('a[data-globalview]').forEach(a => {
+    a.classList.toggle('active', ROUTE.scope === 'global' && ROUTE.view === a.dataset.globalview);
+  });
+}
+
+function renderCrumbs() {
+  if (ROUTE.scope === 'home') {
+    crumbsEl.innerHTML = `<strong>Overview</strong>`;
     return;
   }
-  const html = data.projects.map(p => {
-    const deps = (p.deployments || []);
-    const depHTML = deps.length ? deps.map(d => `
-      <div class="deployment" data-id="${d.id}" data-commit="${d.commit_sha}" data-status="${d.status}" data-url="${d.url || ''}">
-        <span class="badge ${d.status}">${d.status}</span>
-        <span class="commit"><span class="sha">${d.commit_sha.slice(0,8)}</span> · ${d.ref.replace('refs/heads/','')}</span>
-        <span class="ago" title="${d.created_at}">${timeAgo(d.created_at)}</span>
-        ${d.url ? `<a class="url-link" href="${d.url}" target="_blank" rel="noopener" onclick="event.stopPropagation()">open ↗</a>` : '<span></span>'}
-        <button class="btn-redeploy"
-                data-deployment-id="${d.id}"
-                data-commit="${d.commit_sha}"
-                ${(d.status === 'queued' || d.status === 'building' || d.status === 'deploying') ? 'disabled title="already in flight"' : 'title="Re-run the build for this commit (rollback or apply new env vars)"'}
-                onclick="event.stopPropagation()">redeploy</button>
+  if (ROUTE.scope === 'global') {
+    const label = ROUTE.view === 'telemetry' ? 'Telemetry' : 'Traffic';
+    crumbsEl.innerHTML = `Monitoring <span class="sep">/</span> <strong>${label}</strong>`;
+    return;
+  }
+  const proj = findProject(ROUTE.projectID);
+  const viewLabel = ({
+    overview: 'Overview', logs: 'Logs', database: 'Database',
+    sql: 'SQL viewer', env: 'Env vars'
+  })[ROUTE.view] || ROUTE.view;
+  crumbsEl.innerHTML = `Apps <span class="sep">/</span> <strong>${escapeHTML(proj ? proj.slug : '?')}</strong> <span class="sep">/</span> ${escapeHTML(viewLabel)}`;
+}
+
+// Show the page matching ROUTE; hide all others. Then call the page's
+// render function so its content reflects current DATA + route.
+function showPage() {
+  const pageKey =
+    ROUTE.scope === 'home' ? 'home' :
+    ROUTE.scope === 'global' ? ROUTE.view :
+    ROUTE.view || 'overview';
+
+  Object.entries(pageEls).forEach(([k, el]) => {
+    el.classList.toggle('active', k === pageKey);
+  });
+
+  switch (pageKey) {
+    case 'home':      return renderHome();
+    case 'overview':  return renderOverview();
+    case 'logs':      return renderLogsPage();
+    case 'database':  return renderDatabasePage();
+    case 'sql':       return renderSQLPage();
+    case 'env':       return renderEnvPage();
+    case 'telemetry': return renderTelemetry();
+    case 'traffic':   return renderTraffic();
+  }
+}
+
+// ----- Pages -------------------------------------------------------------
+
+function renderHome() {
+  const projects = DATA.projects || [];
+  const installEl = $('home-install');
+  const summaryEl = $('home-summary');
+
+  if (projects.length === 0) {
+    installEl.style.display = '';
+    summaryEl.innerHTML = '';
+    return;
+  }
+  installEl.style.display = 'none';
+
+  // Friendly grid of apps with their latest status. Click → go to project.
+  summaryEl.innerHTML = `
+    <div class="summary">
+      <div class="stat">
+        <div class="label">Apps</div>
+        <div class="value">${projects.length}</div>
+        <div class="sub">connected GitHub repos</div>
       </div>
-    `).join('') : '<div class="empty">No deployments yet.</div>';
-
-    // Production URL is live as soon as any deployment on the production
-    // branch has reached ready — the prod-<slug> IngressRoute is in place.
-    const prodRef = 'refs/heads/' + p.production_branch;
-    const hasProd = deps.some(d => d.status === 'ready' && d.ref === prodRef);
-    const prodHost = `${p.slug}.jamilshaikh.in`;
-    const prodLink = hasProd
-      ? `<a class="prod-link" href="https://${prodHost}" target="_blank" rel="noopener" title="Production alias">${prodHost} ↗</a>`
-      : '';
-
-    // The project's full payload is JSON-encoded into a data attribute
-    // on the header so the click handler can hand it straight to the
-    // workspace opener without another round-trip.
-    const projJSON = escapeHTML(JSON.stringify(p));
-    return `
-      <div class="project" data-project-id="${p.id}">
-        <div class="project-head" data-open-ws='${projJSON}' style="cursor:pointer">
-          <span class="slug">${escapeHTML(p.slug)}</span>
-          <span class="repo">${escapeHTML(p.full_name)}</span>
-          ${prodLink}
-          <span class="branch">${escapeHTML(p.production_branch)}</span>
-        </div>
-        <div class="deployments">${depHTML}</div>
+      <div class="stat">
+        <div class="label">Total deployments</div>
+        <div class="value">${projects.reduce((n, p) => n + (p.deployments || []).length, 0)}</div>
       </div>
-    `;
-  }).join('');
-  projectsEl.innerHTML = html;
+      <div class="stat">
+        <div class="label">Live</div>
+        <div class="value ok">${projects.filter(p => (p.deployments || [])[0] && (p.deployments || [])[0].status === 'ready').length}</div>
+        <div class="sub">apps with READY production</div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h3>Your apps</h3></div>
+      <div class="panel-body">
+        ${projects.map(p => {
+          const latest = (p.deployments || [])[0];
+          const status = latest ? latest.status : 'none';
+          return `
+            <div class="deployment" onclick="navigate('#/p/${p.id}')" style="cursor:pointer">
+              <span class="badge ${status}">${status}</span>
+              <span class="commit"><span class="sha">${escapeHTML(p.slug)}</span> · ${escapeHTML(p.full_name)}</span>
+              <span class="ago">${latest ? timeAgo(latest.created_at) : ''}</span>
+              <span></span>
+              <span></span>
+            </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+}
 
-  // Wire project-header clicks to open the per-project workspace on the right.
-  projectsEl.querySelectorAll('.project-head').forEach(el => {
-    el.addEventListener('click', () => {
-      const p = JSON.parse(el.dataset.openWs);
-      openWorkspace(p);
+function renderOverview() {
+  const proj = findProject(ROUTE.projectID);
+  if (!proj) {
+    $('overview-summary').innerHTML = '<div class="empty">Project not found.</div>';
+    $('overview-deployments').innerHTML = '';
+    return;
+  }
+  const deps = proj.deployments || [];
+  const ready = deps.filter(d => d.status === 'ready').length;
+  const failed = deps.filter(d => d.status === 'failed').length;
+  const latest = deps[0];
+  const prodRef = 'refs/heads/' + proj.production_branch;
+  const hasProd = deps.some(d => d.status === 'ready' && d.ref === prodRef);
+  const prodHost = `${proj.slug}.jamilshaikh.in`;
+
+  $('overview-summary').innerHTML = `
+    <div class="stat">
+      <div class="label">Deployments</div>
+      <div class="value">${deps.length}</div>
+    </div>
+    <div class="stat">
+      <div class="label">Ready</div>
+      <div class="value ok">${ready}</div>
+    </div>
+    <div class="stat">
+      <div class="label">Failed</div>
+      <div class="value ${failed ? 'err' : ''}">${failed}</div>
+    </div>
+    <div class="stat">
+      <div class="label">Latest</div>
+      <div class="value" style="font-size:14px;font-family:ui-monospace,monospace;">${latest ? latest.status : '—'}</div>
+      <div class="sub">${latest ? timeAgo(latest.created_at) : 'no deployments yet'}</div>
+    </div>`;
+
+  $('overview-branch').textContent = proj.production_branch;
+  const prodLink = $('overview-prod');
+  if (hasProd) {
+    prodLink.href = `https://${prodHost}`;
+    prodLink.textContent = `${prodHost} ↗`;
+    prodLink.style.display = '';
+  } else {
+    prodLink.style.display = 'none';
+  }
+
+  const list = $('overview-deployments');
+  if (deps.length === 0) {
+    list.innerHTML = '<div class="empty">No deployments yet. Push a commit to ' + escapeHTML(proj.production_branch) + ' to trigger one.</div>';
+    return;
+  }
+  list.innerHTML = deps.map(d => renderDeploymentRow(d, proj.id)).join('');
+  list.querySelectorAll('.btn-redeploy').forEach(b => b.addEventListener('click', () => redeployFromButton(b)));
+  list.querySelectorAll('.deployment').forEach(el => {
+    el.addEventListener('click', (ev) => {
+      // Don't navigate when clicking an inner link/button.
+      if (ev.target.closest('button,a')) return;
+      selectedDeploymentID = el.dataset.id;
+      navigate('#/p/' + proj.id + '/logs');
+    });
+  });
+}
+
+function renderDeploymentRow(d, projectID) {
+  const inFlight = (d.status === 'queued' || d.status === 'building' || d.status === 'deploying');
+  return `
+    <div class="deployment" data-id="${d.id}" data-commit="${d.commit_sha}" data-status="${d.status}" data-url="${d.url || ''}">
+      <span class="badge ${d.status}">${d.status}</span>
+      <span class="commit"><span class="sha">${d.commit_sha.slice(0,8)}</span> · ${d.ref.replace('refs/heads/','')}</span>
+      <span class="ago" title="${d.created_at}">${timeAgo(d.created_at)}</span>
+      ${d.url ? `<a class="url-link" href="${d.url}" target="_blank" rel="noopener" onclick="event.stopPropagation()">open ↗</a>` : '<span></span>'}
+      <button class="btn-redeploy"
+              data-deployment-id="${d.id}"
+              data-commit="${d.commit_sha}"
+              ${inFlight ? 'disabled title="already in flight"' : 'title="Re-run this build (rollback or apply env vars)"'}
+              onclick="event.stopPropagation()">redeploy</button>
+    </div>`;
+}
+
+// ----- Logs page ---------------------------------------------------------
+
+function renderLogsPage() {
+  const proj = findProject(ROUTE.projectID);
+  if (!proj) {
+    logsDeps.innerHTML = '<div class="empty">Project not found.</div>';
+    return;
+  }
+  const deps = proj.deployments || [];
+  if (deps.length === 0) {
+    logsDeps.innerHTML = '<div class="empty">No deployments yet.</div>';
+    return;
+  }
+  logsDeps.innerHTML = deps.map(d => `
+    <div class="dep-row" data-id="${d.id}" data-commit="${d.commit_sha}" data-url="${d.url || ''}">
+      <span class="badge ${d.status}">${d.status}</span>
+      <span class="sha">${d.commit_sha.slice(0,8)}</span>
+      <span class="ago">${timeAgo(d.created_at)}</span>
+    </div>`).join('');
+  logsDeps.querySelectorAll('.dep-row').forEach(row => {
+    row.addEventListener('click', () => {
+      logsDeps.querySelectorAll('.dep-row.selected').forEach(x => x.classList.remove('selected'));
+      row.classList.add('selected');
+      selectedDeploymentID = row.dataset.id;
+      streamSelectedDeployment();
     });
   });
 
-  // Re-highlight the previously-selected row, if it's still in the list.
-  if (selectedId) {
-    const el = projectsEl.querySelector(`.deployment[data-id="${selectedId}"]`);
-    if (el) el.classList.add('selected');
-  }
-
-  projectsEl.querySelectorAll('.deployment').forEach(el => {
-    el.addEventListener('click', () => openLogs(el));
-  });
-
-  // Per-row redeploy buttons. The button already stops propagation in
-  // its onclick attribute so this listener only handles the POST.
-  projectsEl.querySelectorAll('.btn-redeploy').forEach(btn => {
-    btn.addEventListener('click', () => redeployFromButton(btn));
-  });
-}
-
-async function redeployFromButton(btn) {
-  const id = btn.dataset.deploymentId;
-  const sha = (btn.dataset.commit || '').slice(0, 8);
-  if (btn.disabled) return;
-  if (!confirm('Redeploy commit ' + sha + '?\n\nThis enqueues a fresh build for the same commit. ' +
-               'Use it to apply env-var changes or to roll back to a previous version.')) {
-    return;
-  }
-  btn.disabled = true;
-  const orig = btn.textContent;
-  btn.textContent = 'queueing…';
-  try {
-    const r = await fetch('/v1/deployments/' + id + '/redeploy', {
-      method: 'POST',
-      cache: 'no-store', credentials: 'same-origin',
-    });
-    if (r.status === 401) { window.location.href = '/login'; return; }
-    if (!r.ok) {
-      alert('Redeploy failed: ' + ((await r.text()).trim() || ('HTTP ' + r.status)));
-      btn.disabled = false;
-      btn.textContent = orig;
-      return;
-    }
-    const data = await r.json();
-    // Deep-link to the new deployment so the log stream auto-opens when
-    // render() picks up the queued row on its next refresh.
-    if (data.deployment_id) {
-      pendingDeepLink = data.deployment_id;
-      window.location.hash = 'd=' + data.deployment_id;
-    }
-    refresh();
-  } catch (e) {
-    alert('Redeploy failed: ' + e);
-    btn.disabled = false;
-    btn.textContent = orig;
+  // Auto-select: deep-link target, or previously-selected, or the most recent.
+  const targetID = selectedDeploymentID || deps[0].id;
+  const targetRow = logsDeps.querySelector(`.dep-row[data-id="${targetID}"]`);
+  if (targetRow) {
+    targetRow.classList.add('selected');
+    selectedDeploymentID = targetID;
+    streamSelectedDeployment();
   }
 }
 
-// === Workspace (right-pane) singletons ===
-// One DOM workspace serves every project; switching is just a state swap.
-const wsEmpty   = $('ws-empty');
-const wsEl      = $('ws');
-const wsSlug    = $('ws-slug');
-const wsRepo    = $('ws-repo');
-const wsStorage = $('ws-storage');
-const wsQueryEl = $('ws-query');
-const wsSql     = $('ws-sql');
-const wsRun     = $('ws-run');
-const wsResult  = $('ws-result');
-const wsCloseBtn = $('ws-close');
-const wsEnvRows  = $('ws-env-rows');
-const wsEnvAdd   = $('ws-env-add');
-const wsEnvToast = $('ws-env-toast');
-let   wsProjectID = null;
+function streamSelectedDeployment() {
+  if (!selectedDeploymentID) return;
+  const row = logsDeps.querySelector(`.dep-row[data-id="${selectedDeploymentID}"]`);
+  if (!row) return;
+  const url = row.dataset.url;
+  if (url) {
+    logUrl.textContent = 'open ↗';
+    logUrl.href = url;
+    logUrl.style.display = '';
+  } else {
+    logUrl.style.display = 'none';
+  }
+  // Sync tab strip with current mode.
+  logTabs.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.mode === logMode));
+  streamLogsFor(selectedDeploymentID, row.dataset.commit, logMode);
+}
 
-// Snapshot the in-flight editor state for the currently-open project
-// before swapping to a new one (or closing). Without this, the user's
-// typed SQL is lost when switching projects or on the 10s poll.
-function snapshotWorkspaceState() {
-  if (!wsProjectID) return;
-  sqlState[wsProjectID] = {
-    sql: wsSql.value,
-    resultHTML: wsResult.innerHTML,
+// Tab strip: re-stream in new mode.
+logTabs.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => {
+    const mode = t.dataset.mode;
+    if (mode === logMode) return;
+    logMode = mode;
+    logTabs.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
+    streamSelectedDeployment();
+  });
+});
+
+// streamLogsFor opens an SSE stream. Safe to call repeatedly — always
+// closes the previous EventSource first.
+function streamLogsFor(id, commit, mode) {
+  closeStream();
+  logBody.innerHTML = '';
+  logTitle.textContent = mode === 'runtime' ? 'Runtime' : 'Build';
+  logCommit.textContent = commit.slice(0, 8) + ' · streaming…';
+
+  const path = LOG_SOURCES[mode].path;
+  const es = new EventSource('/v1/deployments/' + id + '/' + path);
+  currentES = es;
+
+  es.addEventListener('status', (ev) => {
+    const d = JSON.parse(ev.data);
+    logCommit.textContent = commit.slice(0, 8) + ' · ' + (d.status || (mode === 'runtime' ? 'live' : 'streaming'));
+    if (d.url) { logUrl.textContent = 'open ↗'; logUrl.href = d.url; logUrl.style.display = ''; }
+  });
+  es.addEventListener('log', (ev) => {
+    const d = JSON.parse(ev.data);
+    appendLine(d.c, stripAnsi(d.m));
+  });
+  es.addEventListener('end', (ev) => {
+    const d = JSON.parse(ev.data);
+    logCommit.textContent = commit.slice(0, 8) + ' · ' + (d.status || d.reason || 'ended');
+    closeStream();
+    if (mode === 'build') refresh();    // build finished → re-fetch project list
+  });
+  es.onerror = () => {
+    appendLine('system', '[stream] connection closed');
+    closeStream();
   };
 }
 
-function openWorkspace(project) {
-  if (wsProjectID === project.id) return; // already active
-  snapshotWorkspaceState();
-
-  wsProjectID = project.id;
-  wsSlug.textContent = project.slug;
-  wsRepo.textContent = project.full_name;
-  wsEmpty.style.display = 'none';
-  wsEl.classList.add('active');
-
-  // Hide the query editor until storage is known to be provisioned.
-  wsQueryEl.classList.remove('active');
-  wsResult.innerHTML = '';
-
-  // Restore SQL editor state for this project (if previously open).
-  const saved = sqlState[project.id];
-  wsSql.value = (saved && saved.sql) ? saved.sql : '';
-  if (saved && saved.resultHTML) wsResult.innerHTML = saved.resultHTML;
-
-  // Highlight the selected project card.
-  projectsEl.querySelectorAll('.project').forEach(el => {
-    el.classList.toggle('active', el.dataset.projectId === project.id);
-  });
-
-  loadStorage(project.id);
-  loadEnv(project.id);
+function appendLine(container, msg) {
+  const div = document.createElement('div');
+  div.className = 'log-line ' + container;
+  const c = document.createElement('span'); c.className = 'c'; c.textContent = container;
+  const m = document.createElement('span'); m.textContent = msg;
+  div.appendChild(c); div.appendChild(m);
+  const nearBottom = logBody.scrollTop + logBody.clientHeight >= logBody.scrollHeight - 40;
+  logBody.appendChild(div);
+  if (nearBottom) logBody.scrollTop = logBody.scrollHeight;
 }
 
-function closeWorkspace() {
-  snapshotWorkspaceState();
-  wsProjectID = null;
-  wsEl.classList.remove('active');
-  wsQueryEl.classList.remove('active');
-  wsEmpty.style.display = '';
-  projectsEl.querySelectorAll('.project.active').forEach(el => el.classList.remove('active'));
+function closeStream() {
+  if (currentES) {
+    currentES.close();
+    currentES = null;
+  }
 }
-wsCloseBtn.addEventListener('click', closeWorkspace);
 
-async function loadStorage(projectID) {
-  wsStorage.innerHTML = `<span class="label">Storage</span><span>loading…</span>`;
+// ----- Database page -----------------------------------------------------
+
+async function renderDatabasePage() {
+  const proj = findProject(ROUTE.projectID);
+  if (!proj) {
+    $('ws-storage').innerHTML = '<div class="empty">Project not found.</div>';
+    return;
+  }
+  $('ws-storage').innerHTML = '<div class="empty">loading…</div>';
   try {
-    const r = await fetch('/v1/projects/' + projectID + '/database', {
+    const r = await fetch('/v1/projects/' + proj.id + '/database', {
       cache: 'no-store', credentials: 'same-origin',
     });
     if (r.status === 401) { window.location.href = '/login'; return; }
-    if (projectID !== wsProjectID) return; // user switched away mid-flight
+    if (ROUTE.projectID !== proj.id) return;
     if (!r.ok) {
-      wsStorage.innerHTML = `<span class="label">Storage</span><span class="err">unavailable</span>`;
+      $('ws-storage').innerHTML = '<div class="empty err">failed to load database details</div>';
       return;
     }
     const data = await r.json();
-    renderStorage(projectID, data.database);
+    renderStorage(proj.id, data.database);
   } catch (e) {
-    if (projectID !== wsProjectID) return;
-    wsStorage.innerHTML = `<span class="label">Storage</span><span class="err">${escapeHTML(String(e))}</span>`;
+    if (ROUTE.projectID !== proj.id) return;
+    $('ws-storage').innerHTML = `<div class="empty err">${escapeHTML(String(e))}</div>`;
   }
 }
 
 function renderStorage(projectID, db) {
+  const host = $('ws-storage');
   if (!db) {
-    wsStorage.innerHTML = `
-      <span class="label">Storage</span>
-      <button class="btn-add" data-add-db>+ Add Postgres</button>
-      <span style="font-size:11px;">Connect a per-project Postgres database. The next deploy will receive <code>DATABASE_URL</code> as an env var.</span>
-    `;
-    wsStorage.querySelector('[data-add-db]').addEventListener('click', (ev) => {
-      addDatabase(projectID, ev.currentTarget);
-    });
-    wsQueryEl.classList.remove('active');
+    // Hide SQL viewer in the sub-nav.
+    subnavSqlEl.style.display = 'none';
+    host.innerHTML = `
+      <div class="db-empty">
+        <p>Connect a per-project Postgres database. The next deploy will receive <code>DATABASE_URL</code> as an env var.</p>
+        <button data-add-db>+ Add Postgres</button>
+      </div>`;
+    host.querySelector('[data-add-db]').addEventListener('click', (ev) => addDatabase(projectID, ev.currentTarget));
     return;
   }
-  // Provisioned. Show readable summary + Copy URI + Reveal password.
-  wsStorage.innerHTML = `
-    <span class="label">Postgres</span>
-    <span class="pill">${escapeHTML(db.db_name)}</span>
-    <span style="font-size:11px;">user <span class="pill">${escapeHTML(db.role_name)}</span></span>
-    <span style="font-size:11px;">host <span class="pill">${escapeHTML(db.host)}:${db.port}</span></span>
-    <span style="font-size:11px; color: var(--text-dim);">env: <code>DATABASE_URL</code></span>
-    <button class="copy" data-copy-uri>Copy URI</button>
-    <button class="reveal" data-reveal-pw>Reveal password</button>
-    <span class="pill" data-pw-slot style="display:none;"></span>
-  `;
-  wsStorage.querySelector('[data-copy-uri]').addEventListener('click', async (ev) => {
+  // DB exists → reveal SQL viewer nav entry.
+  subnavSqlEl.style.display = '';
+  host.innerHTML = `
+    <div class="db-card">
+      <div class="k">database</div>     <div class="v"><span class="pill">${escapeHTML(db.db_name)}</span></div>
+      <div class="k">role</div>         <div class="v"><span class="pill">${escapeHTML(db.role_name)}</span></div>
+      <div class="k">host</div>         <div class="v"><span class="pill">${escapeHTML(db.host)}:${db.port}</span></div>
+      <div class="k">env var</div>      <div class="v">injected into the pod as <code>DATABASE_URL</code></div>
+      <div class="k">connection</div>   <div class="v"><button data-copy-uri>Copy URI</button><button data-reveal-pw>Reveal password</button><span class="pill" data-pw-slot style="display:none"></span></div>
+    </div>`;
+  host.querySelector('[data-copy-uri]').addEventListener('click', async (ev) => {
     try {
       await navigator.clipboard.writeText(db.uri);
       ev.currentTarget.textContent = 'Copied ✓';
       setTimeout(() => { ev.currentTarget.textContent = 'Copy URI'; }, 1500);
-    } catch (_) {
-      ev.currentTarget.textContent = 'Copy failed';
-    }
+    } catch (_) { ev.currentTarget.textContent = 'Copy failed'; }
   });
-  const pwBtn  = wsStorage.querySelector('[data-reveal-pw]');
-  const pwSlot = wsStorage.querySelector('[data-pw-slot]');
+  const pwBtn = host.querySelector('[data-reveal-pw]');
+  const pwSlot = host.querySelector('[data-pw-slot]');
   pwBtn.addEventListener('click', () => {
     if (pwSlot.style.display === 'none') {
-      pwSlot.textContent = db.password;
-      pwSlot.style.display = '';
-      pwBtn.textContent = 'Hide';
+      pwSlot.textContent = db.password; pwSlot.style.display = ''; pwBtn.textContent = 'Hide';
     } else {
-      pwSlot.style.display = 'none';
-      pwSlot.textContent = '';
-      pwBtn.textContent = 'Reveal password';
+      pwSlot.style.display = 'none'; pwSlot.textContent = ''; pwBtn.textContent = 'Reveal password';
     }
   });
-
-  // DB is live → show the SQL editor.
-  wsQueryEl.classList.add('active');
 }
-
-// SQL run button + Cmd/Ctrl+Enter — wired ONCE since the workspace is a singleton.
-wsRun.addEventListener('click', () => {
-  if (wsProjectID) runQuery(wsProjectID, wsSql, wsRun, wsResult);
-});
-wsSql.addEventListener('keydown', (ev) => {
-  if ((ev.metaKey || ev.ctrlKey) && ev.key === 'Enter') {
-    ev.preventDefault();
-    if (wsProjectID) runQuery(wsProjectID, wsSql, wsRun, wsResult);
-  }
-});
-wsSql.addEventListener('input', () => {
-  if (wsProjectID) sqlState[wsProjectID] = { ...(sqlState[wsProjectID] || {}), sql: wsSql.value };
-});
 
 async function addDatabase(projectID, btn) {
   btn.disabled = true;
@@ -856,14 +1376,12 @@ async function addDatabase(projectID, btn) {
   btn.textContent = 'Provisioning…';
   try {
     const r = await fetch('/v1/projects/' + projectID + '/database', {
-      method: 'POST',
-      cache: 'no-store', credentials: 'same-origin',
+      method: 'POST', cache: 'no-store', credentials: 'same-origin',
     });
     if (r.status === 401) { window.location.href = '/login'; return; }
-    if (projectID !== wsProjectID) return;
     if (!r.ok) {
       const msg = await r.text();
-      wsStorage.innerHTML = `<span class="label">Storage</span><span class="err">${escapeHTML(msg.trim() || 'failed')}</span>`;
+      $('ws-storage').innerHTML = `<div class="empty err">${escapeHTML(msg.trim() || 'failed')}</div>`;
       return;
     }
     const data = await r.json();
@@ -875,214 +1393,32 @@ async function addDatabase(projectID, btn) {
   }
 }
 
-// === Env vars ============================================================
-// Per-project env vars. Persisted via the /v1/projects/{id}/env API; the
-// build worker materialises them into a Secret on each deploy. Effect
-// timing is "next deploy" — we surface this in the inline hint so users
-// don't expect a live change.
-//
-// UX notes:
-//  * Each existing var is one row with a read-only KEY and an editable
-//    VALUE (renaming a var = delete + create, intentionally).
-//  * New-row affordance lives outside the rows list (the "+ Add variable"
-//    button) and inserts an editable row when clicked.
-//  * Values are masked by default (type=password) with an eye-toggle.
-//  * Save is enabled only when the row is dirty.
+// ----- SQL page ----------------------------------------------------------
+// Wired ONCE since the workspace pane is a singleton DOM element.
 
-const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
+const wsSql    = $('ws-sql');
+const wsRun    = $('ws-run');
+const wsResult = $('ws-result');
 
-function envToast(msg, isErr) {
-  wsEnvToast.textContent = msg || '';
-  wsEnvToast.classList.toggle('err', !!isErr);
-  if (msg) {
-    setTimeout(() => {
-      if (wsEnvToast.textContent === msg) wsEnvToast.textContent = '';
-    }, 4000);
-  }
-}
-
-async function loadEnv(projectID) {
-  wsEnvRows.innerHTML = `<div class="empty">loading…</div>`;
-  wsEnvToast.textContent = '';
-  try {
-    const r = await fetch('/v1/projects/' + projectID + '/env', {
-      cache: 'no-store', credentials: 'same-origin',
-    });
-    if (r.status === 401) { window.location.href = '/login'; return; }
-    if (projectID !== wsProjectID) return;
-    if (!r.ok) {
-      wsEnvRows.innerHTML = `<div class="empty err">failed to load env vars</div>`;
-      return;
-    }
-    const data = await r.json();
-    renderEnvRows(projectID, data.vars || []);
-  } catch (e) {
-    if (projectID !== wsProjectID) return;
-    wsEnvRows.innerHTML = `<div class="empty err">${escapeHTML(String(e))}</div>`;
-  }
-}
-
-function renderEnvRows(projectID, vars) {
-  wsEnvRows.innerHTML = '';
-  if (vars.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'empty';
-    empty.textContent = 'No env vars set. Click + Add variable to create one.';
-    wsEnvRows.appendChild(empty);
-    return;
-  }
-  vars.forEach(v => wsEnvRows.appendChild(buildEnvRow(projectID, v)));
-}
-
-// buildEnvRow renders one existing var. For new (unsaved) rows pass
-// {name: '', value: '', isNew: true} — the KEY input becomes editable
-// and the Save button creates instead of updates.
-function buildEnvRow(projectID, v) {
-  const row = document.createElement('div');
-  row.className = 'row';
-
-  const keyInput = document.createElement('input');
-  keyInput.type = 'text';
-  keyInput.placeholder = 'KEY_NAME';
-  keyInput.value = v.name || '';
-  if (!v.isNew) keyInput.readOnly = true;
-  else keyInput.spellcheck = false;
-
-  const valInput = document.createElement('input');
-  valInput.type = 'password';
-  valInput.placeholder = 'value';
-  valInput.value = v.value || '';
-  valInput.spellcheck = false;
-  valInput.autocomplete = 'off';
-
-  const eyeBtn = document.createElement('button');
-  eyeBtn.className = 'btn';
-  eyeBtn.type = 'button';
-  eyeBtn.textContent = 'show';
-  eyeBtn.title = 'Reveal value';
-  eyeBtn.addEventListener('click', () => {
-    const masked = valInput.type === 'password';
-    valInput.type = masked ? 'text' : 'password';
-    eyeBtn.textContent = masked ? 'hide' : 'show';
-  });
-
-  const saveBtn = document.createElement('button');
-  saveBtn.className = 'btn primary';
-  saveBtn.type = 'button';
-  saveBtn.textContent = v.isNew ? 'Add' : 'Save';
-  saveBtn.disabled = !v.isNew;
-
-  const delBtn = document.createElement('button');
-  delBtn.className = 'btn danger';
-  delBtn.type = 'button';
-  delBtn.textContent = v.isNew ? 'cancel' : '×';
-  delBtn.title = v.isNew ? 'Discard' : 'Delete variable';
-
-  // Dirty tracking: enable Save when either field changes from the
-  // server-confirmed baseline. For new rows the Save stays enabled
-  // as long as the row has any content.
-  const baseName = v.name || '';
-  const baseValue = v.value || '';
-  const recompute = () => {
-    if (v.isNew) {
-      saveBtn.disabled = !(keyInput.value.trim() && valInput.value.length > 0);
-    } else {
-      saveBtn.disabled = (valInput.value === baseValue);
-    }
-  };
-  keyInput.addEventListener('input', recompute);
-  valInput.addEventListener('input', recompute);
-
-  // Enter key submits the row when Save is enabled.
-  const submitOnEnter = (ev) => {
-    if (ev.key === 'Enter' && !saveBtn.disabled) {
-      ev.preventDefault();
-      saveBtn.click();
-    }
-  };
-  keyInput.addEventListener('keydown', submitOnEnter);
-  valInput.addEventListener('keydown', submitOnEnter);
-
-  saveBtn.addEventListener('click', async () => {
-    const name = (v.isNew ? keyInput.value.trim() : baseName).toUpperCase();
-    const value = valInput.value;
-    if (!ENV_NAME_RE.test(name) || name.length > 128) {
-      envToast('Name must match ^[A-Z_][A-Z0-9_]*$ and be ≤128 chars', true);
-      return;
-    }
-    saveBtn.disabled = true;
-    const orig = saveBtn.textContent;
-    saveBtn.textContent = 'Saving…';
-    try {
-      const r = await fetch('/v1/projects/' + projectID + '/env/' + encodeURIComponent(name), {
-        method: 'PUT',
-        cache: 'no-store', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ value }),
-      });
-      if (r.status === 401) { window.location.href = '/login'; return; }
-      if (!r.ok) {
-        const msg = (await r.text()).trim() || ('HTTP ' + r.status);
-        envToast(msg, true);
-        saveBtn.disabled = false;
-        saveBtn.textContent = orig;
-        return;
-      }
-      envToast('Saved ' + name + '. Takes effect on next deploy.');
-      await loadEnv(projectID);
-    } catch (e) {
-      envToast(String(e), true);
-      saveBtn.disabled = false;
-      saveBtn.textContent = orig;
-    }
-  });
-
-  delBtn.addEventListener('click', async () => {
-    if (v.isNew) {
-      row.remove();
-      // If we just discarded the only row in an empty list, restore
-      // the placeholder.
-      if (wsEnvRows.children.length === 0) renderEnvRows(projectID, []);
-      return;
-    }
-    if (!confirm('Delete env var ' + baseName + '? Takes effect on next deploy.')) return;
-    delBtn.disabled = true;
-    try {
-      const r = await fetch('/v1/projects/' + projectID + '/env/' + encodeURIComponent(baseName), {
-        method: 'DELETE',
-        cache: 'no-store', credentials: 'same-origin',
-      });
-      if (r.status === 401) { window.location.href = '/login'; return; }
-      if (!r.ok) {
-        envToast((await r.text()).trim() || ('HTTP ' + r.status), true);
-        delBtn.disabled = false;
-        return;
-      }
-      envToast('Deleted ' + baseName + '. Takes effect on next deploy.');
-      await loadEnv(projectID);
-    } catch (e) {
-      envToast(String(e), true);
-      delBtn.disabled = false;
-    }
-  });
-
-  row.appendChild(keyInput);
-  row.appendChild(valInput);
-  row.appendChild(eyeBtn);
-  row.appendChild(saveBtn);
-  row.appendChild(delBtn);
-  return row;
-}
-
-wsEnvAdd.addEventListener('click', () => {
-  if (!wsProjectID) return;
-  // Strip any "empty" placeholder before appending the new editable row.
-  const empty = wsEnvRows.querySelector('.empty');
-  if (empty) empty.remove();
-  const row = buildEnvRow(wsProjectID, { name: '', value: '', isNew: true });
-  wsEnvRows.appendChild(row);
-  row.querySelector('input').focus();
+wsRun.addEventListener('click', () => {
+  if (ROUTE.projectID) runQuery(ROUTE.projectID, wsSql, wsRun, wsResult);
 });
+wsSql.addEventListener('keydown', (ev) => {
+  if ((ev.metaKey || ev.ctrlKey) && ev.key === 'Enter') {
+    ev.preventDefault();
+    if (ROUTE.projectID) runQuery(ROUTE.projectID, wsSql, wsRun, wsResult);
+  }
+});
+wsSql.addEventListener('input', () => {
+  if (ROUTE.projectID) sqlState[ROUTE.projectID] = { ...(sqlState[ROUTE.projectID] || {}), sql: wsSql.value };
+});
+
+function renderSQLPage() {
+  // Restore per-project SQL editor state.
+  const saved = sqlState[ROUTE.projectID];
+  wsSql.value = (saved && saved.sql) ? saved.sql : '';
+  wsResult.innerHTML = (saved && saved.resultHTML) ? saved.resultHTML : '';
+}
 
 async function runQuery(projectID, ta, btn, resEl) {
   const sql = ta.value.trim();
@@ -1093,8 +1429,7 @@ async function runQuery(projectID, ta, btn, resEl) {
   resEl.innerHTML = `<div class="meta">running…</div>`;
   try {
     const r = await fetch('/v1/projects/' + projectID + '/database/query', {
-      method: 'POST',
-      cache: 'no-store', credentials: 'same-origin',
+      method: 'POST', cache: 'no-store', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sql }),
     });
@@ -1131,13 +1466,10 @@ function renderQueryResult(resEl, data) {
   const ms   = data.elapsed_ms || 0;
   const rows = data.rows || [];
   const cols = data.columns || [];
-
-  const summary =
-    cmd === 'SELECT'
-      ? `${rows.length} row${rows.length === 1 ? '' : 's'}`
-      : `${cmd} ${data.row_count || 0}`;
+  const summary = cmd === 'SELECT'
+    ? `${rows.length} row${rows.length === 1 ? '' : 's'}`
+    : `${cmd} ${data.row_count || 0}`;
   const trunc = data.truncated ? ` <span class="err">(truncated at 1000)</span>` : '';
-
   let table = '';
   if (cols.length > 0) {
     const numTypes = new Set(['int', 'numeric']);
@@ -1155,155 +1487,348 @@ function renderQueryResult(resEl, data) {
   resEl.innerHTML = `<div class="meta"><span class="ok">${summary}</span>${trunc} <span style="color:var(--text-dim);">· ${ms}ms</span></div>${table}`;
 }
 
-function openLogs(el) {
-  const id     = el.dataset.id;
-  const commit = el.dataset.commit;
-  const url    = el.dataset.url;
+// ----- Env vars page -----------------------------------------------------
 
-  // Clicking a deployment also activates that project's workspace on
-  // the right so DB + SQL are right there alongside the build logs.
-  const projectEl = el.closest('.project');
-  if (projectEl) {
-    const headEl = projectEl.querySelector('.project-head');
-    if (headEl && headEl.dataset.openWs) {
-      openWorkspace(JSON.parse(headEl.dataset.openWs));
-    }
+const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
+const wsEnvRows  = $('ws-env-rows');
+const wsEnvAdd   = $('ws-env-add');
+const wsEnvToast = $('ws-env-toast');
+
+function envToast(msg, isErr) {
+  wsEnvToast.textContent = msg || '';
+  wsEnvToast.classList.toggle('err', !!isErr);
+  if (msg) {
+    setTimeout(() => {
+      if (wsEnvToast.textContent === msg) wsEnvToast.textContent = '';
+    }, 4000);
   }
-
-  // Mark selection.
-  projectsEl.querySelectorAll('.deployment.selected').forEach(x => x.classList.remove('selected'));
-  el.classList.add('selected');
-  selectedId = id;
-
-  // Reveal the tab strip + close button now that a deployment is
-  // selected; sync the active tab to the current logMode.
-  logTabs.style.display = '';
-  logTabs.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.mode === logMode));
-  logClose.style.display = '';
-  if (url) {
-    logUrl.textContent = 'open ↗';
-    logUrl.href = url;
-    logUrl.style.display = '';
-  } else {
-    logUrl.style.display = 'none';
-  }
-
-  streamLogsFor(id, commit, logMode);
 }
 
-// streamLogsFor opens the SSE stream for one deployment in the requested
-// mode ('build' or 'runtime'). Safe to call repeatedly — it always closes
-// the previous EventSource first.
-function streamLogsFor(id, commit, mode) {
-  closeStream();
-  logBody.innerHTML = '';
-  logTitle.textContent = mode === 'runtime' ? 'Runtime' : 'Build';
-  logCommit.textContent = commit.slice(0, 8) + ' · streaming…';
+function renderEnvPage() {
+  loadEnv(ROUTE.projectID);
+}
 
-  const path = LOG_SOURCES[mode].path;
-  const es = new EventSource('/v1/deployments/' + id + '/' + path);
-  currentES = es;
+async function loadEnv(projectID) {
+  if (!projectID) return;
+  wsEnvRows.innerHTML = `<div class="empty">loading…</div>`;
+  wsEnvToast.textContent = '';
+  try {
+    const r = await fetch('/v1/projects/' + projectID + '/env', {
+      cache: 'no-store', credentials: 'same-origin',
+    });
+    if (r.status === 401) { window.location.href = '/login'; return; }
+    if (ROUTE.projectID !== projectID) return;
+    if (!r.ok) {
+      wsEnvRows.innerHTML = `<div class="empty err">failed to load env vars</div>`;
+      return;
+    }
+    const data = await r.json();
+    renderEnvRows(projectID, data.vars || []);
+  } catch (e) {
+    if (ROUTE.projectID !== projectID) return;
+    wsEnvRows.innerHTML = `<div class="empty err">${escapeHTML(String(e))}</div>`;
+  }
+}
 
-  es.addEventListener('status', (ev) => {
-    const d = JSON.parse(ev.data);
-    logCommit.textContent = commit.slice(0, 8) + ' · ' + (d.status || (mode === 'runtime' ? 'live' : 'streaming'));
-    if (d.url) { logUrl.textContent = 'open ↗'; logUrl.href = d.url; logUrl.style.display = ''; }
+function renderEnvRows(projectID, vars) {
+  wsEnvRows.innerHTML = '';
+  if (vars.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'No env vars set. Click + Add variable to create one.';
+    wsEnvRows.appendChild(empty);
+    return;
+  }
+  vars.forEach(v => wsEnvRows.appendChild(buildEnvRow(projectID, v)));
+}
+
+function buildEnvRow(projectID, v) {
+  const row = document.createElement('div');
+  row.className = 'row';
+
+  const keyInput = document.createElement('input');
+  keyInput.type = 'text';
+  keyInput.placeholder = 'KEY_NAME';
+  keyInput.value = v.name || '';
+  if (!v.isNew) keyInput.readOnly = true;
+  else keyInput.spellcheck = false;
+
+  const valInput = document.createElement('input');
+  valInput.type = 'password';
+  valInput.placeholder = 'value';
+  valInput.value = v.value || '';
+  valInput.spellcheck = false;
+  valInput.autocomplete = 'off';
+
+  const eyeBtn = document.createElement('button');
+  eyeBtn.className = 'btn';
+  eyeBtn.type = 'button';
+  eyeBtn.textContent = 'show';
+  eyeBtn.addEventListener('click', () => {
+    const masked = valInput.type === 'password';
+    valInput.type = masked ? 'text' : 'password';
+    eyeBtn.textContent = masked ? 'hide' : 'show';
   });
-  es.addEventListener('log', (ev) => {
-    const d = JSON.parse(ev.data);
-    appendLine(d.c, stripAnsi(d.m));
-  });
-  es.addEventListener('end', (ev) => {
-    const d = JSON.parse(ev.data);
-    logCommit.textContent = commit.slice(0, 8) + ' · ' + (d.status || d.reason || 'ended');
-    closeStream();
-    if (mode === 'build') refresh();
-  });
-  es.onerror = () => {
-    appendLine('system', '[stream] connection closed');
-    closeStream();
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'btn primary';
+  saveBtn.type = 'button';
+  saveBtn.textContent = v.isNew ? 'Add' : 'Save';
+  saveBtn.disabled = !v.isNew;
+
+  const delBtn = document.createElement('button');
+  delBtn.className = 'btn danger';
+  delBtn.type = 'button';
+  delBtn.textContent = v.isNew ? 'cancel' : '×';
+  delBtn.title = v.isNew ? 'Discard' : 'Delete variable';
+
+  const baseName  = v.name  || '';
+  const baseValue = v.value || '';
+  const recompute = () => {
+    if (v.isNew) saveBtn.disabled = !(keyInput.value.trim() && valInput.value.length > 0);
+    else         saveBtn.disabled = (valInput.value === baseValue);
   };
-}
+  keyInput.addEventListener('input', recompute);
+  valInput.addEventListener('input', recompute);
 
-// Tab switch: re-stream the currently-selected deployment in the new mode.
-logTabs.querySelectorAll('.tab').forEach(t => {
-  t.addEventListener('click', () => {
-    const mode = t.dataset.mode;
-    if (mode === logMode) return;
-    logMode = mode;
-    logTabs.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
-    if (!selectedId) return;
-    const sel = projectsEl.querySelector(`.deployment[data-id="${selectedId}"]`);
-    if (sel) streamLogsFor(selectedId, sel.dataset.commit, mode);
-  });
-});
+  const submitOnEnter = (ev) => {
+    if (ev.key === 'Enter' && !saveBtn.disabled) { ev.preventDefault(); saveBtn.click(); }
+  };
+  keyInput.addEventListener('keydown', submitOnEnter);
+  valInput.addEventListener('keydown', submitOnEnter);
 
-function appendLine(container, msg) {
-  const div = document.createElement('div');
-  div.className = 'log-line ' + container;
-  const c = document.createElement('span'); c.className = 'c'; c.textContent = container;
-  const m = document.createElement('span'); m.textContent = msg;
-  div.appendChild(c); div.appendChild(m);
-  const nearBottom = logBody.scrollTop + logBody.clientHeight >= logBody.scrollHeight - 40;
-  logBody.appendChild(div);
-  if (nearBottom) logBody.scrollTop = logBody.scrollHeight;
-}
-
-function closeStream() {
-  if (currentES) {
-    currentES.close();
-    currentES = null;
-  }
-}
-
-logClose.addEventListener('click', () => {
-  closeStream();
-  selectedId = null;
-  projectsEl.querySelectorAll('.deployment.selected').forEach(x => x.classList.remove('selected'));
-  logTitle.textContent = 'Logs';
-  logCommit.textContent = '— select a deployment';
-  logUrl.style.display = 'none';
-  logClose.style.display = 'none';
-  logTabs.style.display = 'none';
-  logBody.innerHTML = '<div class="log-placeholder">' + LOG_SOURCES[logMode].empty + '</div>';
-});
-
-// Deep-link support: GitHub status check target_url is `/#d=<deployment-id>`.
-// Auto-open that deployment's logs as soon as it shows up in the project list.
-function deepLinkID() {
-  const m = window.location.hash.match(/d=([0-9a-fA-F-]{36})/);
-  return m ? m[1] : null;
-}
-let pendingDeepLink = deepLinkID();
-
-const origRender = render;
-render = function(data) {
-  origRender(data);
-  if (pendingDeepLink) {
-    const el = projectsEl.querySelector(`.deployment[data-id="${pendingDeepLink}"]`);
-    if (el) {
-      el.scrollIntoView({ block: 'center' });
-      openLogs(el);
-      pendingDeepLink = null;
+  saveBtn.addEventListener('click', async () => {
+    const name = (v.isNew ? keyInput.value.trim() : baseName).toUpperCase();
+    const value = valInput.value;
+    if (!ENV_NAME_RE.test(name) || name.length > 128) {
+      envToast('Name must match ^[A-Z_][A-Z0-9_]*$ and be ≤128 chars', true);
+      return;
     }
-  }
-};
+    saveBtn.disabled = true;
+    const orig = saveBtn.textContent;
+    saveBtn.textContent = 'Saving…';
+    try {
+      const r = await fetch('/v1/projects/' + projectID + '/env/' + encodeURIComponent(name), {
+        method: 'PUT', cache: 'no-store', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value }),
+      });
+      if (r.status === 401) { window.location.href = '/login'; return; }
+      if (!r.ok) {
+        envToast((await r.text()).trim() || ('HTTP ' + r.status), true);
+        saveBtn.disabled = false; saveBtn.textContent = orig;
+        return;
+      }
+      envToast('Saved ' + name + '. Takes effect on next deploy.');
+      await loadEnv(projectID);
+    } catch (e) {
+      envToast(String(e), true);
+      saveBtn.disabled = false; saveBtn.textContent = orig;
+    }
+  });
 
-window.addEventListener('hashchange', () => {
-  const id = deepLinkID();
-  if (!id) return;
-  const el = projectsEl.querySelector(`.deployment[data-id="${id}"]`);
-  if (el) openLogs(el);
-  else pendingDeepLink = id;
+  delBtn.addEventListener('click', async () => {
+    if (v.isNew) {
+      row.remove();
+      if (wsEnvRows.children.length === 0) renderEnvRows(projectID, []);
+      return;
+    }
+    if (!confirm('Delete env var ' + baseName + '? Takes effect on next deploy.')) return;
+    delBtn.disabled = true;
+    try {
+      const r = await fetch('/v1/projects/' + projectID + '/env/' + encodeURIComponent(baseName), {
+        method: 'DELETE', cache: 'no-store', credentials: 'same-origin',
+      });
+      if (r.status === 401) { window.location.href = '/login'; return; }
+      if (!r.ok) {
+        envToast((await r.text()).trim() || ('HTTP ' + r.status), true);
+        delBtn.disabled = false;
+        return;
+      }
+      envToast('Deleted ' + baseName + '. Takes effect on next deploy.');
+      await loadEnv(projectID);
+    } catch (e) {
+      envToast(String(e), true);
+      delBtn.disabled = false;
+    }
+  });
+
+  row.appendChild(keyInput);
+  row.appendChild(valInput);
+  row.appendChild(eyeBtn);
+  row.appendChild(saveBtn);
+  row.appendChild(delBtn);
+  return row;
+}
+
+wsEnvAdd.addEventListener('click', () => {
+  if (!ROUTE.projectID) return;
+  const empty = wsEnvRows.querySelector('.empty');
+  if (empty) empty.remove();
+  const row = buildEnvRow(ROUTE.projectID, { name: '', value: '', isNew: true });
+  wsEnvRows.appendChild(row);
+  row.querySelector('input').focus();
 });
+
+// ----- Redeploy ----------------------------------------------------------
+
+async function redeployFromButton(btn) {
+  const id  = btn.dataset.deploymentId;
+  const sha = (btn.dataset.commit || '').slice(0, 8);
+  if (btn.disabled) return;
+  if (!confirm('Redeploy commit ' + sha + '?\n\nThis enqueues a fresh build for the same commit. ' +
+               'Use it to apply env-var changes or to roll back to a previous version.')) {
+    return;
+  }
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = 'queueing…';
+  try {
+    const r = await fetch('/v1/deployments/' + id + '/redeploy', {
+      method: 'POST', cache: 'no-store', credentials: 'same-origin',
+    });
+    if (r.status === 401) { window.location.href = '/login'; return; }
+    if (!r.ok) {
+      alert('Redeploy failed: ' + ((await r.text()).trim() || ('HTTP ' + r.status)));
+      btn.disabled = false; btn.textContent = orig;
+      return;
+    }
+    const data = await r.json();
+    if (data.deployment_id) {
+      // Stay on the logs page for this project + auto-select the new row
+      // as soon as it appears in refresh()'s data.
+      selectedDeploymentID = data.deployment_id;
+      if (ROUTE.projectID) navigate('#/p/' + ROUTE.projectID + '/logs');
+    }
+    refresh();
+  } catch (e) {
+    alert('Redeploy failed: ' + e);
+    btn.disabled = false; btn.textContent = orig;
+  }
+}
+
+// ----- Telemetry / Traffic (stub pages) ----------------------------------
+// Roll up control-plane-known signals while we wait for prometheus/loki.
+
+function renderTelemetry() {
+  const projects = DATA.projects || [];
+  const allDeps = projects.flatMap(p => (p.deployments || []).map(d => ({ ...d, projectSlug: p.slug })));
+  const totals = {
+    all:       allDeps.length,
+    ready:     allDeps.filter(d => d.status === 'ready').length,
+    failed:    allDeps.filter(d => d.status === 'failed').length,
+    building:  allDeps.filter(d => d.status === 'building' || d.status === 'queued' || d.status === 'deploying').length,
+  };
+  // Last-24h bar (one bar per hour, height proportional to deploy count;
+  // failures coloured red).
+  const now = Date.now();
+  const bars = Array(24).fill(0).map((_, i) => ({ total: 0, failed: 0 }));
+  allDeps.forEach(d => {
+    const ageH = (now - new Date(d.created_at).getTime()) / 3600000;
+    const idx = 23 - Math.floor(ageH);
+    if (idx >= 0 && idx < 24) {
+      bars[idx].total += 1;
+      if (d.status === 'failed') bars[idx].failed += 1;
+    }
+  });
+  const maxH = Math.max(1, ...bars.map(b => b.total));
+  const sparkHTML = bars.map(b => {
+    const h = (b.total / maxH) * 100;
+    const cls = b.failed > 0 ? 'failed' : '';
+    return `<div class="bar ${cls}" style="height:${h}%" title="${b.total} build${b.total === 1 ? '' : 's'}"></div>`;
+  }).join('');
+  const recentDeps = allDeps.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 10);
+
+  $('telemetry-content').innerHTML = `
+    <div class="summary">
+      <div class="stat"><div class="label">Total builds</div><div class="value">${totals.all}</div></div>
+      <div class="stat"><div class="label">Ready</div><div class="value ok">${totals.ready}</div></div>
+      <div class="stat"><div class="label">Failed</div><div class="value ${totals.failed ? 'err' : ''}">${totals.failed}</div></div>
+      <div class="stat"><div class="label">In flight</div><div class="value">${totals.building}</div></div>
+    </div>
+    <div class="charts">
+      <div class="chart">
+        <h4>Builds — last 24h</h4>
+        <div class="spark">${sparkHTML}</div>
+        <div style="font-size:10px;color:var(--text-faint);text-align:right;margin-top:6px;">red = had failures</div>
+      </div>
+      <div class="chart">
+        <h4>Success rate</h4>
+        <div style="font-size:28px;font-weight:700;color:var(--ok);">${totals.all ? Math.round((totals.ready / totals.all) * 100) : 0}%</div>
+        <div style="font-size:11px;color:var(--text-dim);margin-top:6px;">${totals.ready}/${totals.all} deploys reached READY</div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h3>Recent activity</h3></div>
+      <table class="recent-table">
+        <thead><tr><th>App</th><th>Commit</th><th>Status</th><th>When</th></tr></thead>
+        <tbody>
+          ${recentDeps.length === 0 ? '<tr><td colspan="4" style="color:var(--text-dim);font-style:italic;">no activity yet</td></tr>' :
+            recentDeps.map(d => `
+              <tr>
+                <td class="proj">${escapeHTML(d.projectSlug)}</td>
+                <td><code style="color:var(--text);">${d.commit_sha.slice(0,8)}</code></td>
+                <td><span class="badge ${d.status}">${d.status}</span></td>
+                <td>${timeAgo(d.created_at)}</td>
+              </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function renderTraffic() {
+  const projects = DATA.projects || [];
+  const rows = projects.map(p => {
+    const deps = p.deployments || [];
+    const latest = deps[0];
+    const ready = deps.filter(d => d.status === 'ready').length;
+    return { slug: p.slug, full: p.full_name, deps: deps.length, ready, latest };
+  }).sort((a, b) => b.deps - a.deps);
+
+  $('traffic-content').innerHTML = `
+    <div class="panel">
+      <div class="panel-head"><h3>Activity per app</h3></div>
+      <table class="recent-table">
+        <thead><tr><th>App</th><th>Repo</th><th class="num">Deployments</th><th class="num">Ready</th><th>Latest</th></tr></thead>
+        <tbody>
+          ${rows.length === 0 ? '<tr><td colspan="5" style="color:var(--text-dim);font-style:italic;">no apps yet</td></tr>' :
+            rows.map(r => `
+              <tr>
+                <td><a href="#/p/${(DATA.projects.find(p => p.slug === r.slug) || {}).id}">${escapeHTML(r.slug)}</a></td>
+                <td class="proj">${escapeHTML(r.full)}</td>
+                <td class="num">${r.deps}</td>
+                <td class="num">${r.ready}</td>
+                <td>${r.latest ? timeAgo(r.latest.created_at) : '—'}</td>
+              </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+// ----- Signout + bootstrap -----------------------------------------------
+
+document.getElementById('signout').addEventListener('click', async () => {
+  try { await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch (_) {}
+  window.location.href = '/login';
+});
+
+// Make navigate() globally accessible for inline onclick handlers in
+// renderHome (which is a small list of project cards).
+window.navigate = navigate;
 
 loadMe();
+applyRoute();
 refresh();
-// Background poll — every 10s when no live stream so the deployment list
-// stays fresh after another browser (or webhook) triggers a build.
+
+// Background poll — every 10s when no live stream so deployment lists
+// stay fresh after a webhook or another browser triggers a build.
 setInterval(() => {
   if (!currentES) refresh();
 }, 10000);
+// ----- end of dashboard.js -----------------------------------------------
+// (Old function render() and its 700-line tail were deleted as part of the
+//  sidebar-layout refactor; everything they did is now handled by the
+//  per-page render functions above.)
 </script>
 </body>
 </html>
