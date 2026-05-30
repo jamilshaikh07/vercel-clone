@@ -168,6 +168,9 @@ func main() {
 		"GET /v1/projects/{id}/database":        s.handleGetProjectDatabase,
 		"POST /v1/projects/{id}/database":       s.handleCreateProjectDatabase,
 		"POST /v1/projects/{id}/database/query": s.handleRunQuery,
+		"GET /v1/projects/{id}/env":             s.handleListProjectEnv,
+		"PUT /v1/projects/{id}/env/{name}":      s.handleUpsertProjectEnv,
+		"DELETE /v1/projects/{id}/env/{name}":   s.handleDeleteProjectEnv,
 	}
 	for pat, h := range apiHandlers {
 		mux.Handle(pat, s.requireUser(h, "json"))

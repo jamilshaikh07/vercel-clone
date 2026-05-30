@@ -243,17 +243,46 @@ func (w *worker) runOne(ctx context.Context, c *claimedDeployment) error {
 		dbSecretName = pdb.SecretName
 	}
 
+	// Project env vars: materialise into a per-project Secret named
+	// paas-env-<slug> in the tenant namespace. We re-apply on every
+	// deploy even when the map is empty, because (a) the user may have
+	// just deleted the last var and we need the pod to no longer see
+	// it, and (b) applySecret is idempotent so the warm path is just
+	// a PUT that resolves to "no change". The Deployment manifest
+	// references the Secret with optional=true so a missing Secret
+	// (e.g. user manually deleted it via kubectl) is non-fatal.
+	envMap, err := w.store.MapProjectEnv(ctx, c.ProjectID)
+	if err != nil {
+		// Don't fail the deploy on a transient DB hiccup — log and
+		// proceed with whatever env Secret is already in the cluster.
+		w.log.Error("lookup project env failed", "deployment_id", c.DeploymentID, "err", err)
+		envMap = nil
+	}
+	envSecretName := "paas-env-" + c.Slug
+	if envMap != nil {
+		if err := w.k8s.applySecret(ctx, tenantNS, envSecretName, envMap,
+			map[string]string{
+				"app.kubernetes.io/managed-by": "control-plane",
+				"app.kubernetes.io/component":  "tenant-env",
+				"paas.project":                 c.Slug,
+			},
+		); err != nil {
+			return fmt.Errorf("apply env secret: %w", err)
+		}
+	}
+
 	if err := w.k8s.applyDeployment(ctx, tenantNS, deployName,
 		deploymentManifest(deployInput{
-			Name:         deployName,
-			Namespace:    tenantNS,
-			Slug:         c.Slug,
-			ShortSHA:     shortSHA,
-			Image:        pullImage,
-			DeploymentID: c.DeploymentID,
-			CommitSHA:    c.CommitSHA,
-			Port:         tenantPort,
-			DBSecretName: dbSecretName,
+			Name:          deployName,
+			Namespace:     tenantNS,
+			Slug:          c.Slug,
+			ShortSHA:      shortSHA,
+			Image:         pullImage,
+			DeploymentID:  c.DeploymentID,
+			CommitSHA:     c.CommitSHA,
+			Port:          tenantPort,
+			DBSecretName:  dbSecretName,
+			EnvSecretName: envSecretName,
 		}),
 	); err != nil {
 		return fmt.Errorf("apply deployment: %w", err)
@@ -687,6 +716,12 @@ type deployInput struct {
 	// pod also picks up the `paas.db=enabled` label so the
 	// allow-paas-db-egress NetworkPolicy permits CNPG traffic.
 	DBSecretName string
+	// EnvSecretName, when non-empty, names the per-project Secret in
+	// the tenant namespace whose keys are projected wholesale as env
+	// vars via envFrom. Marked optional in the manifest so a missing
+	// Secret (no env vars set yet, or first-time deploy before the
+	// worker materialised it) is non-fatal.
+	EnvSecretName string
 }
 
 func deploymentManifest(in deployInput) map[string]any {
@@ -787,6 +822,23 @@ func deploymentManifest(in deployInput) map[string]any {
 							}
 							if len(envVars) > 0 {
 								c["env"] = envVars
+							}
+							// envFrom projects every key of the per-project
+							// Secret as an env var named after the key. Going
+							// through envFrom (vs listing each key explicitly)
+							// means CRUD on env vars doesn't require us to
+							// re-template the Deployment YAML — we just update
+							// the Secret in place and the pod sees new values
+							// on its next restart (which the redeploy triggers).
+							if in.EnvSecretName != "" {
+								c["envFrom"] = []any{
+									map[string]any{
+										"secretRef": map[string]any{
+											"name":     in.EnvSecretName,
+											"optional": true,
+										},
+									},
+								}
 							}
 							return c
 						}(),

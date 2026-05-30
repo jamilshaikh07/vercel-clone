@@ -854,6 +854,104 @@ func (s *store) GetProjectForOwner(ctx context.Context, projectID, ownerUserID s
 	return &p, nil
 }
 
+// --- Project env vars (Slice "Env Vars UI") -----------------------------
+
+// projectEnvVar is the dashboard-facing shape of a row. We return the
+// plaintext value to authenticated owners; the UI is responsible for the
+// click-to-reveal interaction.
+type projectEnvVar struct {
+	Name      string `json:"name"`
+	Value     string `json:"value"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// ReservedEnvVarNames lists keys the user is NOT allowed to set through
+// the env-vars API. They're managed by other subsystems (e.g.
+// DATABASE_URL is written from project_databases when a DB is bound).
+var ReservedEnvVarNames = map[string]struct{}{
+	"DATABASE_URL": {},
+}
+
+// ListProjectEnv returns all env vars for a project, alphabetically by
+// name. Ownership is enforced by the caller, which always passes a
+// project_id it has already authorised.
+func (s *store) ListProjectEnv(ctx context.Context, projectID string) ([]projectEnvVar, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT name, value,
+		       to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+		  FROM project_env_vars
+		 WHERE project_id = $1::uuid
+		 ORDER BY name
+	`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []projectEnvVar{}
+	for rows.Next() {
+		var v projectEnvVar
+		if err := rows.Scan(&v.Name, &v.Value, &v.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// MapProjectEnv is the build-worker variant: returns a flat
+// {name: value} map ready for k8s.applySecret. Equivalent to ListProjectEnv
+// minus the timestamps. Returns an empty (non-nil) map when no vars exist
+// so the caller can use len() == 0 to skip Secret creation.
+func (s *store) MapProjectEnv(ctx context.Context, projectID string) (map[string]string, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT name, value
+		  FROM project_env_vars
+		 WHERE project_id = $1::uuid
+	`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		out[k] = v
+	}
+	return out, rows.Err()
+}
+
+// UpsertProjectEnv writes one env var (insert or replace) and returns
+// the row's updated_at so the caller can echo it back to the UI.
+func (s *store) UpsertProjectEnv(ctx context.Context, projectID, name, value string) (string, error) {
+	var updatedAt string
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO project_env_vars (project_id, name, value, updated_at)
+		VALUES ($1::uuid, $2, $3, now())
+		ON CONFLICT (project_id, name) DO UPDATE
+		   SET value      = EXCLUDED.value,
+		       updated_at = now()
+		RETURNING to_char(updated_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+	`, projectID, name, value).Scan(&updatedAt)
+	return updatedAt, err
+}
+
+// DeleteProjectEnv removes one env var by (project_id, name). Returns
+// true if a row was deleted, false if the key didn't exist (caller may
+// translate to 404).
+func (s *store) DeleteProjectEnv(ctx context.Context, projectID, name string) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM project_env_vars
+		 WHERE project_id = $1::uuid AND name = $2
+	`, projectID, name)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 // slugify turns "jamilshaikh07/paas-sample-hello" into
 // "jamilshaikh07-paas-sample-hello" (URL-safe, lower-case, no double dashes).
 var slugUnsafe = regexp.MustCompile(`[^a-z0-9-]+`)

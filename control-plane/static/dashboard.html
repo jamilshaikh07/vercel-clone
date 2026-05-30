@@ -129,6 +129,55 @@
     }
     .ws-storage .copy:hover, .ws-storage .reveal:hover { color: var(--text); border-color: var(--accent); }
     .ws-storage .err { color: var(--err); }
+    /* Env vars block — sits between Storage and the SQL editor. Same
+       visual idiom as Storage so the workspace pane feels coherent. */
+    .ws-env {
+      border-bottom: 1px solid var(--border);
+      padding: 8px 16px 12px;
+      font-size: 12px; color: var(--text-dim);
+    }
+    .ws-env .head {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+    }
+    .ws-env .head .label {
+      text-transform: uppercase; letter-spacing: 0.06em;
+      font-size: 10px; font-weight: 600; color: var(--text-dim);
+    }
+    .ws-env .head .hint { font-size: 10px; color: var(--text-dim); opacity: 0.7; }
+    .ws-env .head .spacer { flex: 1; }
+    .ws-env .btn-add {
+      background: transparent; border: 1px dashed var(--border); color: var(--text-dim);
+      padding: 2px 10px; border-radius: 6px; font-size: 11px; cursor: pointer;
+    }
+    .ws-env .btn-add:hover { color: var(--text); border-color: var(--accent); border-style: solid; }
+    .ws-env .rows { display: flex; flex-direction: column; gap: 4px; }
+    .ws-env .row {
+      display: grid;
+      grid-template-columns: 160px 1fr auto auto auto;
+      gap: 6px; align-items: center;
+    }
+    .ws-env .row input {
+      background: var(--panel-2); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 4px 8px; font-size: 11px;
+      font-family: ui-monospace, monospace;
+      min-width: 0;
+    }
+    .ws-env .row input:focus { outline: none; border-color: var(--accent); }
+    .ws-env .row input[readonly] { color: var(--text-dim); background: transparent; border-color: transparent; cursor: default; }
+    .ws-env .row .btn {
+      background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+      padding: 2px 8px; border-radius: 6px; font-size: 11px; cursor: pointer;
+    }
+    .ws-env .row .btn:hover { color: var(--text); border-color: var(--accent); }
+    .ws-env .row .btn.danger:hover { color: var(--err); border-color: var(--err); }
+    .ws-env .row .btn.primary { background: var(--accent); color: #14171d; border-color: var(--accent); font-weight: 600; }
+    .ws-env .row .btn.primary:hover { filter: brightness(1.15); }
+    .ws-env .row .btn[disabled] { opacity: 0.4; cursor: not-allowed; }
+    .ws-env .empty { padding: 4px 0; font-style: italic; color: var(--text-dim); }
+    .ws-env .toast { font-size: 10px; color: var(--ok); margin-top: 4px; min-height: 12px; }
+    .ws-env .toast.err { color: var(--err); }
+
     /* Query editor area — flexes to fill remaining space above logs. */
     .ws-query {
       display: none; flex-direction: column;
@@ -404,6 +453,16 @@
         <div class="ws-storage" id="ws-storage">
           <span class="label">Storage</span><span>loading…</span>
         </div>
+        <div class="ws-env" id="ws-env">
+          <div class="head">
+            <span class="label">Env Vars</span>
+            <span class="hint">applied on next deploy</span>
+            <span class="spacer"></span>
+            <button class="btn-add" id="ws-env-add">+ Add variable</button>
+          </div>
+          <div class="rows" id="ws-env-rows"></div>
+          <div class="toast" id="ws-env-toast"></div>
+        </div>
         <div class="ws-query" id="ws-query">
           <div class="editor">
             <textarea id="ws-sql" spellcheck="false" placeholder="-- Try:  SELECT now();"></textarea>
@@ -597,6 +656,9 @@ const wsSql     = $('ws-sql');
 const wsRun     = $('ws-run');
 const wsResult  = $('ws-result');
 const wsCloseBtn = $('ws-close');
+const wsEnvRows  = $('ws-env-rows');
+const wsEnvAdd   = $('ws-env-add');
+const wsEnvToast = $('ws-env-toast');
 let   wsProjectID = null;
 
 // Snapshot the in-flight editor state for the currently-open project
@@ -635,6 +697,7 @@ function openWorkspace(project) {
   });
 
   loadStorage(project.id);
+  loadEnv(project.id);
 }
 
 function closeWorkspace() {
@@ -756,6 +819,215 @@ async function addDatabase(projectID, btn) {
     alert('Database provisioning failed: ' + e);
   }
 }
+
+// === Env vars ============================================================
+// Per-project env vars. Persisted via the /v1/projects/{id}/env API; the
+// build worker materialises them into a Secret on each deploy. Effect
+// timing is "next deploy" — we surface this in the inline hint so users
+// don't expect a live change.
+//
+// UX notes:
+//  * Each existing var is one row with a read-only KEY and an editable
+//    VALUE (renaming a var = delete + create, intentionally).
+//  * New-row affordance lives outside the rows list (the "+ Add variable"
+//    button) and inserts an editable row when clicked.
+//  * Values are masked by default (type=password) with an eye-toggle.
+//  * Save is enabled only when the row is dirty.
+
+const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
+
+function envToast(msg, isErr) {
+  wsEnvToast.textContent = msg || '';
+  wsEnvToast.classList.toggle('err', !!isErr);
+  if (msg) {
+    setTimeout(() => {
+      if (wsEnvToast.textContent === msg) wsEnvToast.textContent = '';
+    }, 4000);
+  }
+}
+
+async function loadEnv(projectID) {
+  wsEnvRows.innerHTML = `<div class="empty">loading…</div>`;
+  wsEnvToast.textContent = '';
+  try {
+    const r = await fetch('/v1/projects/' + projectID + '/env', {
+      cache: 'no-store', credentials: 'same-origin',
+    });
+    if (r.status === 401) { window.location.href = '/login'; return; }
+    if (projectID !== wsProjectID) return;
+    if (!r.ok) {
+      wsEnvRows.innerHTML = `<div class="empty err">failed to load env vars</div>`;
+      return;
+    }
+    const data = await r.json();
+    renderEnvRows(projectID, data.vars || []);
+  } catch (e) {
+    if (projectID !== wsProjectID) return;
+    wsEnvRows.innerHTML = `<div class="empty err">${escapeHTML(String(e))}</div>`;
+  }
+}
+
+function renderEnvRows(projectID, vars) {
+  wsEnvRows.innerHTML = '';
+  if (vars.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = 'No env vars set. Click + Add variable to create one.';
+    wsEnvRows.appendChild(empty);
+    return;
+  }
+  vars.forEach(v => wsEnvRows.appendChild(buildEnvRow(projectID, v)));
+}
+
+// buildEnvRow renders one existing var. For new (unsaved) rows pass
+// {name: '', value: '', isNew: true} — the KEY input becomes editable
+// and the Save button creates instead of updates.
+function buildEnvRow(projectID, v) {
+  const row = document.createElement('div');
+  row.className = 'row';
+
+  const keyInput = document.createElement('input');
+  keyInput.type = 'text';
+  keyInput.placeholder = 'KEY_NAME';
+  keyInput.value = v.name || '';
+  if (!v.isNew) keyInput.readOnly = true;
+  else keyInput.spellcheck = false;
+
+  const valInput = document.createElement('input');
+  valInput.type = 'password';
+  valInput.placeholder = 'value';
+  valInput.value = v.value || '';
+  valInput.spellcheck = false;
+  valInput.autocomplete = 'off';
+
+  const eyeBtn = document.createElement('button');
+  eyeBtn.className = 'btn';
+  eyeBtn.type = 'button';
+  eyeBtn.textContent = 'show';
+  eyeBtn.title = 'Reveal value';
+  eyeBtn.addEventListener('click', () => {
+    const masked = valInput.type === 'password';
+    valInput.type = masked ? 'text' : 'password';
+    eyeBtn.textContent = masked ? 'hide' : 'show';
+  });
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'btn primary';
+  saveBtn.type = 'button';
+  saveBtn.textContent = v.isNew ? 'Add' : 'Save';
+  saveBtn.disabled = !v.isNew;
+
+  const delBtn = document.createElement('button');
+  delBtn.className = 'btn danger';
+  delBtn.type = 'button';
+  delBtn.textContent = v.isNew ? 'cancel' : '×';
+  delBtn.title = v.isNew ? 'Discard' : 'Delete variable';
+
+  // Dirty tracking: enable Save when either field changes from the
+  // server-confirmed baseline. For new rows the Save stays enabled
+  // as long as the row has any content.
+  const baseName = v.name || '';
+  const baseValue = v.value || '';
+  const recompute = () => {
+    if (v.isNew) {
+      saveBtn.disabled = !(keyInput.value.trim() && valInput.value.length > 0);
+    } else {
+      saveBtn.disabled = (valInput.value === baseValue);
+    }
+  };
+  keyInput.addEventListener('input', recompute);
+  valInput.addEventListener('input', recompute);
+
+  // Enter key submits the row when Save is enabled.
+  const submitOnEnter = (ev) => {
+    if (ev.key === 'Enter' && !saveBtn.disabled) {
+      ev.preventDefault();
+      saveBtn.click();
+    }
+  };
+  keyInput.addEventListener('keydown', submitOnEnter);
+  valInput.addEventListener('keydown', submitOnEnter);
+
+  saveBtn.addEventListener('click', async () => {
+    const name = (v.isNew ? keyInput.value.trim() : baseName).toUpperCase();
+    const value = valInput.value;
+    if (!ENV_NAME_RE.test(name) || name.length > 128) {
+      envToast('Name must match ^[A-Z_][A-Z0-9_]*$ and be ≤128 chars', true);
+      return;
+    }
+    saveBtn.disabled = true;
+    const orig = saveBtn.textContent;
+    saveBtn.textContent = 'Saving…';
+    try {
+      const r = await fetch('/v1/projects/' + projectID + '/env/' + encodeURIComponent(name), {
+        method: 'PUT',
+        cache: 'no-store', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value }),
+      });
+      if (r.status === 401) { window.location.href = '/login'; return; }
+      if (!r.ok) {
+        const msg = (await r.text()).trim() || ('HTTP ' + r.status);
+        envToast(msg, true);
+        saveBtn.disabled = false;
+        saveBtn.textContent = orig;
+        return;
+      }
+      envToast('Saved ' + name + '. Takes effect on next deploy.');
+      await loadEnv(projectID);
+    } catch (e) {
+      envToast(String(e), true);
+      saveBtn.disabled = false;
+      saveBtn.textContent = orig;
+    }
+  });
+
+  delBtn.addEventListener('click', async () => {
+    if (v.isNew) {
+      row.remove();
+      // If we just discarded the only row in an empty list, restore
+      // the placeholder.
+      if (wsEnvRows.children.length === 0) renderEnvRows(projectID, []);
+      return;
+    }
+    if (!confirm('Delete env var ' + baseName + '? Takes effect on next deploy.')) return;
+    delBtn.disabled = true;
+    try {
+      const r = await fetch('/v1/projects/' + projectID + '/env/' + encodeURIComponent(baseName), {
+        method: 'DELETE',
+        cache: 'no-store', credentials: 'same-origin',
+      });
+      if (r.status === 401) { window.location.href = '/login'; return; }
+      if (!r.ok) {
+        envToast((await r.text()).trim() || ('HTTP ' + r.status), true);
+        delBtn.disabled = false;
+        return;
+      }
+      envToast('Deleted ' + baseName + '. Takes effect on next deploy.');
+      await loadEnv(projectID);
+    } catch (e) {
+      envToast(String(e), true);
+      delBtn.disabled = false;
+    }
+  });
+
+  row.appendChild(keyInput);
+  row.appendChild(valInput);
+  row.appendChild(eyeBtn);
+  row.appendChild(saveBtn);
+  row.appendChild(delBtn);
+  return row;
+}
+
+wsEnvAdd.addEventListener('click', () => {
+  if (!wsProjectID) return;
+  // Strip any "empty" placeholder before appending the new editable row.
+  const empty = wsEnvRows.querySelector('.empty');
+  if (empty) empty.remove();
+  const row = buildEnvRow(wsProjectID, { name: '', value: '', isNew: true });
+  wsEnvRows.appendChild(row);
+  row.querySelector('input').focus();
+});
 
 async function runQuery(projectID, ta, btn, resEl) {
   const sql = ta.value.trim();
