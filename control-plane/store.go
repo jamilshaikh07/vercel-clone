@@ -228,6 +228,35 @@ func (s *store) ListRecentDeployments(ctx context.Context, limit int) ([]deploym
 	return out, rows.Err()
 }
 
+// GetDeployment returns the single deployment row for an ID, or (nil, nil) if
+// not found. Used by the SSE log handler to validate the ID and surface
+// current status to clients before/after streaming.
+func (s *store) GetDeployment(ctx context.Context, id string) (*deploymentRow, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT d.id::text, d.project_id::text, p.slug,
+		       d.commit_sha, d.ref, d.status, d.url, d.image,
+		       to_char(d.created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+		       d.delivery_id
+		  FROM deployments d
+		  JOIN projects p ON p.id = d.project_id
+		 WHERE d.id::text = $1
+		 LIMIT 1
+	`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	var d deploymentRow
+	if err := rows.Scan(&d.ID, &d.ProjectID, &d.Slug, &d.CommitSHA, &d.Ref,
+		&d.Status, &d.URL, &d.Image, &d.CreatedAt, &d.DeliveryID); err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
 // --- worker side: claim + transition deployments --------------------------
 
 // claimedDeployment carries everything the builder needs in one fetch so

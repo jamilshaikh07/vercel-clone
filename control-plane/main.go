@@ -43,6 +43,7 @@ const (
 type server struct {
 	webhookSecret []byte
 	store         *store
+	k8s           *kubeClient
 	log           *slog.Logger
 }
 
@@ -108,6 +109,7 @@ func main() {
 	s := &server{
 		webhookSecret: []byte(secret),
 		store:         newStore(pool),
+		k8s:           k8s,
 		log:           log,
 	}
 
@@ -126,6 +128,7 @@ func main() {
 	mux.HandleFunc("GET /readyz", s.readyz(pool))
 	mux.HandleFunc("POST /webhooks/github", s.handleGitHubWebhook)
 	mux.HandleFunc("GET /admin/deployments", s.handleListDeployments)
+	mux.HandleFunc("GET /v1/deployments/{id}/logs", s.handleDeploymentLogs)
 	mux.HandleFunc("GET /", s.root)
 
 	httpSrv := &http.Server{

@@ -8,6 +8,7 @@ package main
 // only the standard library.
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -35,6 +36,10 @@ type kubeClient struct {
 	token     string
 	namespace string
 	http      *http.Client
+	// streamHTTP is used for long-lived watch / log-follow requests. It
+	// shares TLS config with http but has no overall timeout so a build
+	// taking 5 minutes doesn't get cut off mid-stream.
+	streamHTTP *http.Client
 }
 
 func newInClusterClient() (*kubeClient, error) {
@@ -56,19 +61,26 @@ func newInClusterClient() (*kubeClient, error) {
 		return nil, errors.New("could not parse SA CA bundle")
 	}
 
+	tlsCfg := &tls.Config{RootCAs: pool}
+	transport := &http.Transport{
+		TLSClientConfig:     tlsCfg,
+		MaxIdleConns:        16,
+		MaxIdleConnsPerHost: 8,
+		IdleConnTimeout:     90 * time.Second,
+	}
+	streamTransport := &http.Transport{
+		TLSClientConfig:       tlsCfg,
+		MaxIdleConns:          8,
+		MaxIdleConnsPerHost:   4,
+		IdleConnTimeout:       90 * time.Second,
+		ResponseHeaderTimeout: 15 * time.Second,
+	}
 	return &kubeClient{
-		base:      "https://" + apiHost,
-		token:     strings.TrimSpace(string(tok)),
-		namespace: strings.TrimSpace(string(nsB)),
-		http: &http.Client{
-			Timeout: 30 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig:     &tls.Config{RootCAs: pool},
-				MaxIdleConns:        16,
-				MaxIdleConnsPerHost: 8,
-				IdleConnTimeout:     90 * time.Second,
-			},
-		},
+		base:       "https://" + apiHost,
+		token:      strings.TrimSpace(string(tok)),
+		namespace:  strings.TrimSpace(string(nsB)),
+		http:       &http.Client{Timeout: 30 * time.Second, Transport: transport},
+		streamHTTP: &http.Client{Transport: streamTransport},
 	}, nil
 }
 
@@ -296,4 +308,172 @@ func snippet(b []byte) string {
 		b = b[:400]
 	}
 	return strings.TrimSpace(string(b))
+}
+
+// --- Pod lookup + log streaming -----------------------------------------
+
+// containerState is the minimal slice of pod.status.containerStatuses we care
+// about: whether a given container is still pending startup, currently
+// running, or already terminated.
+type containerState struct {
+	Waiting    bool
+	Running    bool
+	Terminated bool
+	Reason     string
+}
+
+// findBuildPod returns the build pod name for a deployment, or "" if no
+// pod with the matching paas.deployment label exists yet. Errors only on
+// API transport / auth problems.
+func (k *kubeClient) findBuildPod(ctx context.Context, namespace, deploymentID string) (string, error) {
+	sel := fmt.Sprintf("paas.deployment=%s,app.kubernetes.io/component=build", deploymentID)
+	path := fmt.Sprintf("/api/v1/namespaces/%s/pods?labelSelector=%s",
+		url.PathEscape(namespace), url.QueryEscape(sel))
+	status, body, err := k.do(ctx, "GET", path, nil)
+	if err != nil {
+		return "", err
+	}
+	if status < 200 || status >= 300 {
+		return "", fmt.Errorf("list pods: status %d: %s", status, snippet(body))
+	}
+	var list struct {
+		Items []struct {
+			Metadata struct {
+				Name              string    `json:"name"`
+				CreationTimestamp time.Time `json:"creationTimestamp"`
+			} `json:"metadata"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(body, &list); err != nil {
+		return "", fmt.Errorf("decode pods: %w", err)
+	}
+	if len(list.Items) == 0 {
+		return "", nil
+	}
+	// Most recent pod wins — relevant if we ever recreate the Job.
+	best := list.Items[0]
+	for _, it := range list.Items[1:] {
+		if it.Metadata.CreationTimestamp.After(best.Metadata.CreationTimestamp) {
+			best = it
+		}
+	}
+	return best.Metadata.Name, nil
+}
+
+// containerStatus reads pod.status.{init,}containerStatuses and returns the
+// state of one named container.
+func (k *kubeClient) containerStatus(ctx context.Context, namespace, pod, container string) (*containerState, error) {
+	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s",
+		url.PathEscape(namespace), url.PathEscape(pod))
+	status, body, err := k.do(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if status == http.StatusNotFound {
+		return nil, nil
+	}
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("get pod: status %d: %s", status, snippet(body))
+	}
+	var p struct {
+		Status struct {
+			InitContainerStatuses []podContainerStatus `json:"initContainerStatuses"`
+			ContainerStatuses     []podContainerStatus `json:"containerStatuses"`
+		} `json:"status"`
+	}
+	if err := json.Unmarshal(body, &p); err != nil {
+		return nil, fmt.Errorf("decode pod: %w", err)
+	}
+	all := append([]podContainerStatus{}, p.Status.InitContainerStatuses...)
+	all = append(all, p.Status.ContainerStatuses...)
+	for _, cs := range all {
+		if cs.Name != container {
+			continue
+		}
+		st := &containerState{}
+		if cs.State.Waiting != nil {
+			st.Waiting = true
+			st.Reason = cs.State.Waiting.Reason
+		}
+		if cs.State.Running != nil {
+			st.Running = true
+		}
+		if cs.State.Terminated != nil {
+			st.Terminated = true
+			st.Reason = cs.State.Terminated.Reason
+		}
+		return st, nil
+	}
+	return nil, nil
+}
+
+type podContainerStatus struct {
+	Name  string `json:"name"`
+	State struct {
+		Waiting    *struct{ Reason string `json:"reason"` } `json:"waiting,omitempty"`
+		Running    *struct{}                                `json:"running,omitempty"`
+		Terminated *struct{ Reason string `json:"reason"` } `json:"terminated,omitempty"`
+	} `json:"state"`
+}
+
+// streamPodLog tails one container's stdout/stderr until the container
+// terminates or ctx is cancelled. onLine is called for each line (without
+// the trailing newline). The function blocks until done; it retries with a
+// short backoff while the container is still in "Waiting" state, so callers
+// can invoke it immediately after pod creation.
+func (k *kubeClient) streamPodLog(ctx context.Context, namespace, pod, container string, onLine func(string)) error {
+	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/log?follow=true&container=%s&timestamps=false",
+		url.PathEscape(namespace), url.PathEscape(pod), url.QueryEscape(container))
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		req, err := http.NewRequestWithContext(ctx, "GET", k.base+path, nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+k.token)
+		req.Header.Set("Accept", "text/plain")
+
+		resp, err := k.streamHTTP.Do(req)
+		if err != nil {
+			return err
+		}
+		// Container not started yet ⇒ 400 with body
+		// `container "x" in pod "y" is waiting to start: ContainerCreating`.
+		// Retry with backoff until it transitions out of Waiting.
+		if resp.StatusCode == http.StatusBadRequest {
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if !strings.Contains(string(b), "waiting to start") {
+				return fmt.Errorf("log stream: status 400: %s", snippet(b))
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(1500 * time.Millisecond):
+			}
+			continue
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			resp.Body.Close()
+			return nil
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return fmt.Errorf("log stream: status %d: %s", resp.StatusCode, snippet(b))
+		}
+
+		sc := bufio.NewScanner(resp.Body)
+		sc.Buffer(make([]byte, 64*1024), 1<<20)
+		for sc.Scan() {
+			onLine(sc.Text())
+		}
+		err = sc.Err()
+		resp.Body.Close()
+		// follow=true returns EOF when the container terminates. If we got
+		// here without a scanner error, that's normal completion.
+		return err
+	}
 }
