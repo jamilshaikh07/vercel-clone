@@ -335,6 +335,48 @@ func (s *store) ListProjectsForUser(ctx context.Context, userID string) ([]proje
 	return out, rows.Err()
 }
 
+// projectWithTenant is a thin variant of projectRow that also carries the
+// GitHub installation login — required to derive the tenant namespace
+// (paas-tenant-<login>) for telemetry lookups.
+type projectWithTenant struct {
+	ID          string
+	Slug        string
+	TenantLogin string
+}
+
+// ListProjectsWithTenant returns id/slug/tenant_login per project for one
+// user (or all, when userID==""). Smaller select than ListProjectsForUser
+// — used by the telemetry rollup which doesn't need full_name etc.
+func (s *store) ListProjectsWithTenant(ctx context.Context, userID string) ([]projectWithTenant, error) {
+	var rows pgx.Rows
+	var err error
+	const q = `
+		SELECT p.id::text, p.slug, i.account_login
+		  FROM projects p
+		  JOIN installations i ON i.id = p.installation_id
+		%s
+		 ORDER BY p.slug
+	`
+	if userID == "" {
+		rows, err = s.pool.Query(ctx, fmt.Sprintf(q, ""))
+	} else {
+		rows, err = s.pool.Query(ctx, fmt.Sprintf(q, "WHERE p.owner_user_id = $1::uuid"), userID)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []projectWithTenant
+	for rows.Next() {
+		var p projectWithTenant
+		if err := rows.Scan(&p.ID, &p.Slug, &p.TenantLogin); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // ListDeploymentsForProjects returns deployments grouped by project_id, capped
 // at perProject rows per project. One round-trip via a window function so the
 // dashboard renders in O(1) queries regardless of project count.

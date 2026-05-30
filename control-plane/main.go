@@ -50,6 +50,10 @@ type server struct {
 	gh   *githubApp
 	auth *authConfig
 	log  *slog.Logger
+	// tcache absorbs multi-tab dashboard polling so the metrics-server
+	// + Traefik /metrics endpoints are only hit once per 5s window. Safe
+	// to share across requests — collector serialises on its own mutex.
+	tcache telemetryCache
 }
 
 func main() {
@@ -172,6 +176,8 @@ func main() {
 		"GET /v1/projects/{id}/env":             s.handleListProjectEnv,
 		"PUT /v1/projects/{id}/env/{name}":      s.handleUpsertProjectEnv,
 		"DELETE /v1/projects/{id}/env/{name}":   s.handleDeleteProjectEnv,
+		"GET /v1/telemetry":                     s.handleGlobalTelemetry,
+		"GET /v1/projects/{id}/telemetry":       s.handleProjectTelemetry,
 	}
 	for pat, h := range apiHandlers {
 		mux.Handle(pat, s.requireUser(h, "json"))

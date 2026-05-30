@@ -714,26 +714,19 @@
           </div>
         </div>
 
-        <!-- TELEMETRY: rolls up control-plane-known signals (build counts,
-             success rates, recent activity). Pod-level CPU/memory and
-             request rates require a Prometheus/Loki sidecar — surfaced as
-             a "coming next" banner so the user knows we're not stuck. -->
+        <!-- TELEMETRY: live per-app CPU/memory (metrics-server) + request
+             counts and average latency (Traefik /metrics). Polled every 5s
+             while the page is visible. -->
         <div class="page" id="page-telemetry">
           <div class="page-inner">
-            <div class="stub-banner">
-              <strong>Beta:</strong> Pod-level CPU/RAM and request rates need a Prometheus + Loki sidecar (next on the roadmap). For now this view rolls up what the control-plane already knows about your builds.
-            </div>
             <div id="telemetry-content"></div>
           </div>
         </div>
 
-        <!-- TRAFFIC: per-app request counts. Requires the Traefik access
-             log to be shipped; placeholder for now using deployment counts. -->
+        <!-- TRAFFIC: traffic-per-app view sourced from the same /v1/telemetry
+             snapshot, sorted by request volume with a share bar. -->
         <div class="page" id="page-traffic">
           <div class="page-inner">
-            <div class="stub-banner">
-              <strong>Beta:</strong> Per-app request counts come from the Traefik access log, which we'll wire up after telemetry. For now this shows deployment activity per app.
-            </div>
             <div id="traffic-content"></div>
           </div>
         </div>
@@ -935,7 +928,11 @@ function navigate(hash) {
 let pendingDeploymentID = null;
 
 function applyRoute() {
-  closeStream();           // any page swap kills the SSE — we'll reopen if needed
+  // Any page swap stops every per-page background activity. The
+  // matching render*() functions re-start them when needed.
+  closeStream();
+  stopTelemetryPoll();
+  stopTrafficPoll();
   ROUTE = parseHash();
   if (ROUTE.pendingDeploymentID) {
     pendingDeploymentID = ROUTE.pendingDeploymentID;
@@ -1707,102 +1704,206 @@ async function redeployFromButton(btn) {
   }
 }
 
-// ----- Telemetry / Traffic (stub pages) ----------------------------------
-// Roll up control-plane-known signals while we wait for prometheus/loki.
+// ----- Telemetry / Traffic (live) ---------------------------------------
+// Both pages share one HTTP fetch (/v1/telemetry) — see the cache note
+// in telemetry.go. The poll only runs while one of the two pages is the
+// active page; navigating away clears the interval so we don't burn API
+// calls in the background.
 
-function renderTelemetry() {
-  const projects = DATA.projects || [];
-  const allDeps = projects.flatMap(p => (p.deployments || []).map(d => ({ ...d, projectSlug: p.slug })));
-  const totals = {
-    all:       allDeps.length,
-    ready:     allDeps.filter(d => d.status === 'ready').length,
-    failed:    allDeps.filter(d => d.status === 'failed').length,
-    building:  allDeps.filter(d => d.status === 'building' || d.status === 'queued' || d.status === 'deploying').length,
-  };
-  // Last-24h bar (one bar per hour, height proportional to deploy count;
-  // failures coloured red).
-  const now = Date.now();
-  const bars = Array(24).fill(0).map((_, i) => ({ total: 0, failed: 0 }));
-  allDeps.forEach(d => {
-    const ageH = (now - new Date(d.created_at).getTime()) / 3600000;
-    const idx = 23 - Math.floor(ageH);
-    if (idx >= 0 && idx < 24) {
-      bars[idx].total += 1;
-      if (d.status === 'failed') bars[idx].failed += 1;
-    }
-  });
-  const maxH = Math.max(1, ...bars.map(b => b.total));
-  const sparkHTML = bars.map(b => {
-    const h = (b.total / maxH) * 100;
-    const cls = b.failed > 0 ? 'failed' : '';
-    return `<div class="bar ${cls}" style="height:${h}%" title="${b.total} build${b.total === 1 ? '' : 's'}"></div>`;
-  }).join('');
-  const recentDeps = allDeps.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 10);
+let telemetryTimer = null;
+let telemetryCache = null;   // last response, kept so renderTraffic can reuse it
 
-  $('telemetry-content').innerHTML = `
-    <div class="summary">
-      <div class="stat"><div class="label">Total builds</div><div class="value">${totals.all}</div></div>
-      <div class="stat"><div class="label">Ready</div><div class="value ok">${totals.ready}</div></div>
-      <div class="stat"><div class="label">Failed</div><div class="value ${totals.failed ? 'err' : ''}">${totals.failed}</div></div>
-      <div class="stat"><div class="label">In flight</div><div class="value">${totals.building}</div></div>
-    </div>
-    <div class="charts">
-      <div class="chart">
-        <h4>Builds — last 24h</h4>
-        <div class="spark">${sparkHTML}</div>
-        <div style="font-size:10px;color:var(--text-faint);text-align:right;margin-top:6px;">red = had failures</div>
-      </div>
-      <div class="chart">
-        <h4>Success rate</h4>
-        <div style="font-size:28px;font-weight:700;color:var(--ok);">${totals.all ? Math.round((totals.ready / totals.all) * 100) : 0}%</div>
-        <div style="font-size:11px;color:var(--text-dim);margin-top:6px;">${totals.ready}/${totals.all} deploys reached READY</div>
-      </div>
-    </div>
-    <div class="panel">
-      <div class="panel-head"><h3>Recent activity</h3></div>
-      <table class="recent-table">
-        <thead><tr><th>App</th><th>Commit</th><th>Status</th><th>When</th></tr></thead>
-        <tbody>
-          ${recentDeps.length === 0 ? '<tr><td colspan="4" style="color:var(--text-dim);font-style:italic;">no activity yet</td></tr>' :
-            recentDeps.map(d => `
-              <tr>
-                <td class="proj">${escapeHTML(d.projectSlug)}</td>
-                <td><code style="color:var(--text);">${d.commit_sha.slice(0,8)}</code></td>
-                <td><span class="badge ${d.status}">${d.status}</span></td>
-                <td>${timeAgo(d.created_at)}</td>
-              </tr>`).join('')}
-        </tbody>
-      </table>
-    </div>`;
+async function fetchTelemetry() {
+  try {
+    const data = await fetchJSON('/v1/telemetry');
+    telemetryCache = data;
+    return data;
+  } catch (e) {
+    if (e.message === 'unauthenticated') return null;
+    return { error: e.message };
+  }
 }
 
-function renderTraffic() {
-  const projects = DATA.projects || [];
-  const rows = projects.map(p => {
-    const deps = p.deployments || [];
-    const latest = deps[0];
-    const ready = deps.filter(d => d.status === 'ready').length;
-    return { slug: p.slug, full: p.full_name, deps: deps.length, ready, latest };
-  }).sort((a, b) => b.deps - a.deps);
+// Format a CPU value (millicores) into "123 m" or "1.2 cores" depending on size.
+function fmtCPU(m) {
+  if (!m) return '0';
+  if (m < 1000) return m + ' m';
+  return (m / 1000).toFixed(2) + ' cores';
+}
 
-  $('traffic-content').innerHTML = `
-    <div class="panel">
-      <div class="panel-head"><h3>Activity per app</h3></div>
-      <table class="recent-table">
-        <thead><tr><th>App</th><th>Repo</th><th class="num">Deployments</th><th class="num">Ready</th><th>Latest</th></tr></thead>
-        <tbody>
-          ${rows.length === 0 ? '<tr><td colspan="5" style="color:var(--text-dim);font-style:italic;">no apps yet</td></tr>' :
-            rows.map(r => `
-              <tr>
-                <td><a href="#/p/${(DATA.projects.find(p => p.slug === r.slug) || {}).id}">${escapeHTML(r.slug)}</a></td>
-                <td class="proj">${escapeHTML(r.full)}</td>
-                <td class="num">${r.deps}</td>
-                <td class="num">${r.ready}</td>
-                <td>${r.latest ? timeAgo(r.latest.created_at) : '—'}</td>
-              </tr>`).join('')}
-        </tbody>
-      </table>
-    </div>`;
+// Format memory MiB into "12 Mi" or "1.4 GiB".
+function fmtMem(mi) {
+  if (!mi) return '0';
+  if (mi < 1024) return mi + ' Mi';
+  return (mi / 1024).toFixed(2) + ' GiB';
+}
+
+// Format a large absolute count (request totals) into "1.2k" / "3.4M".
+function fmtCount(n) {
+  if (!n) return '0';
+  if (n < 1000) return Math.round(n).toString();
+  if (n < 1e6)  return (n / 1000).toFixed(1) + 'k';
+  return (n / 1e6).toFixed(1) + 'M';
+}
+
+function renderTelemetry() {
+  // Stand up the layout once; subsequent ticks just overwrite #telemetry-rows.
+  const root = $('telemetry-content');
+  if (!root.querySelector('#telemetry-summary')) {
+    root.innerHTML = `
+      <div class="summary" id="telemetry-summary"></div>
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Per-app live signals</h3>
+          <span class="spacer"></span>
+          <span id="telemetry-asof" style="color:var(--text-faint);font-size:11px;">—</span>
+        </div>
+        <table class="recent-table" id="telemetry-table">
+          <thead><tr>
+            <th>App</th>
+            <th class="num">Pods</th>
+            <th class="num">CPU</th>
+            <th class="num">Memory</th>
+            <th class="num">Requests</th>
+            <th class="num">Errors</th>
+            <th class="num">Avg latency</th>
+          </tr></thead>
+          <tbody id="telemetry-rows"><tr><td colspan="7" style="color:var(--text-dim);font-style:italic;">loading…</td></tr></tbody>
+        </table>
+      </div>
+      <div id="telemetry-degraded" style="display:none" class="stub-banner"></div>`;
+  }
+  startTelemetryPoll();
+}
+
+async function tickTelemetry() {
+  const data = await fetchTelemetry();
+  if (!data) return;
+  if (data.error) {
+    $('telemetry-rows').innerHTML = `<tr><td colspan="7" style="color:var(--err);">${escapeHTML(data.error)}</td></tr>`;
+    return;
+  }
+  // The telemetry endpoint can return cached data even if one source
+  // failed; surface that as a soft banner rather than wiping the table.
+  const degraded = $('telemetry-degraded');
+  if (data.degraded) {
+    degraded.textContent = '⚠ partial data — ' + data.degraded;
+    degraded.style.display = '';
+  } else {
+    degraded.style.display = 'none';
+  }
+
+  $('telemetry-summary').innerHTML = `
+    <div class="stat"><div class="label">Running apps</div><div class="value">${(data.apps || []).filter(a => a.pods > 0).length}</div><div class="sub">of ${(data.apps || []).length} deployed</div></div>
+    <div class="stat"><div class="label">Total pods</div><div class="value">${data.total_pods}</div></div>
+    <div class="stat"><div class="label">CPU usage</div><div class="value">${fmtCPU(data.total_cpu_m)}</div></div>
+    <div class="stat"><div class="label">Memory</div><div class="value">${fmtMem(data.total_memory_mi)}</div></div>
+    <div class="stat"><div class="label">Requests served</div><div class="value">${fmtCount(data.total_requests)}</div><div class="sub">since Traefik start</div></div>`;
+
+  $('telemetry-asof').textContent = 'updated ' + new Date(data.as_of).toLocaleTimeString();
+
+  const apps = data.apps || [];
+  if (apps.length === 0) {
+    $('telemetry-rows').innerHTML = `<tr><td colspan="7" style="color:var(--text-dim);font-style:italic;">no apps yet</td></tr>`;
+    return;
+  }
+  $('telemetry-rows').innerHTML = apps.map(a => {
+    const errPct = a.requests > 0 ? ((a.errors / a.requests) * 100).toFixed(1) : '0';
+    const errCls = a.errors > 0 ? 'style="color:var(--err);"' : '';
+    return `
+      <tr>
+        <td><a href="#/p/${a.project_id}">${escapeHTML(a.slug)}</a></td>
+        <td class="num">${a.pods}</td>
+        <td class="num">${fmtCPU(a.cpu_m)}</td>
+        <td class="num">${fmtMem(a.memory_mi)}</td>
+        <td class="num">${fmtCount(a.requests)}</td>
+        <td class="num" ${errCls}>${fmtCount(a.errors)}${a.requests > 0 ? ` (${errPct}%)` : ''}</td>
+        <td class="num">${a.avg_latency_ms ? a.avg_latency_ms + ' ms' : '—'}</td>
+      </tr>`;
+  }).join('');
+}
+
+function startTelemetryPoll() {
+  stopTelemetryPoll();
+  tickTelemetry();
+  telemetryTimer = setInterval(tickTelemetry, 5000);
+}
+
+function stopTelemetryPoll() {
+  if (telemetryTimer) {
+    clearInterval(telemetryTimer);
+    telemetryTimer = null;
+  }
+}
+
+// Traffic page is a transposition of the telemetry data sorted by
+// requests + a per-app share bar. Reuses the same endpoint so flipping
+// between Telemetry and Traffic costs zero extra round-trips.
+function renderTraffic() {
+  const root = $('traffic-content');
+  if (!root.querySelector('#traffic-table')) {
+    root.innerHTML = `
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Traffic per app</h3>
+          <span class="spacer"></span>
+          <span id="traffic-asof" style="color:var(--text-faint);font-size:11px;">—</span>
+        </div>
+        <table class="recent-table" id="traffic-table">
+          <thead><tr>
+            <th>App</th>
+            <th class="num">Requests</th>
+            <th class="num">Errors</th>
+            <th class="num">Avg latency</th>
+            <th style="width:30%">Share</th>
+          </tr></thead>
+          <tbody id="traffic-rows"><tr><td colspan="5" style="color:var(--text-dim);font-style:italic;">loading…</td></tr></tbody>
+        </table>
+      </div>`;
+  }
+  startTrafficPoll();
+}
+
+async function tickTraffic() {
+  const data = await fetchTelemetry();
+  if (!data || data.error) {
+    if (data && data.error) {
+      $('traffic-rows').innerHTML = `<tr><td colspan="5" style="color:var(--err);">${escapeHTML(data.error)}</td></tr>`;
+    }
+    return;
+  }
+  $('traffic-asof').textContent = 'updated ' + new Date(data.as_of).toLocaleTimeString();
+  const apps = (data.apps || []).slice().sort((a, b) => b.requests - a.requests);
+  const max = Math.max(1, ...apps.map(a => a.requests));
+  if (apps.length === 0) {
+    $('traffic-rows').innerHTML = `<tr><td colspan="5" style="color:var(--text-dim);font-style:italic;">no apps yet</td></tr>`;
+    return;
+  }
+  $('traffic-rows').innerHTML = apps.map(a => {
+    const pct = (a.requests / max) * 100;
+    return `
+      <tr>
+        <td><a href="#/p/${a.project_id}">${escapeHTML(a.slug)}</a></td>
+        <td class="num">${fmtCount(a.requests)}</td>
+        <td class="num" ${a.errors > 0 ? 'style="color:var(--err);"' : ''}>${fmtCount(a.errors)}</td>
+        <td class="num">${a.avg_latency_ms ? a.avg_latency_ms + ' ms' : '—'}</td>
+        <td>
+          <div style="background:var(--panel-2);border-radius:4px;height:14px;position:relative;overflow:hidden;">
+            <div style="background:var(--accent);width:${pct.toFixed(1)}%;height:100%;"></div>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
+function startTrafficPoll() {
+  stopTrafficPoll();
+  tickTraffic();
+  trafficTimer = setInterval(tickTraffic, 5000);
+}
+let trafficTimer = null;
+function stopTrafficPoll() {
+  if (trafficTimer) { clearInterval(trafficTimer); trafficTimer = null; }
 }
 
 // ----- Signout + bootstrap -----------------------------------------------

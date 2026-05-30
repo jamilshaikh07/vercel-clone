@@ -86,6 +86,17 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "create", "update", "patch", "delete"]
+  # Cluster-wide pod discovery: runtime-logs SSE tails tenant pods, and the
+  # telemetry collector finds a Traefik pod in traefik-system to scrape its
+  # Prometheus /metrics endpoint. Read-only; we never mutate pods.
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+  # CPU/memory data for the dashboard Telemetry page. Comes from
+  # kube-system/metrics-server (already installed). Read-only by design.
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods"]
+    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
