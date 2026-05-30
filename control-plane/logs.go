@@ -95,10 +95,43 @@ func (s *server) handleDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 		flush()
 		return true
 	}
+	// Heartbeat: SSE comments are ignored by EventSource but force any
+	// intermediate proxy (Cloudflare Tunnel in particular) to forward
+	// bytes rather than buffer the response. Without this, an idle
+	// build (e.g. a stuck kaniko push) shows as "streaming…" in the
+	// browser forever with zero log lines actually delivered.
+	heartbeat := func() bool {
+		if _, err := w.Write([]byte(": hb\n\n")); err != nil {
+			return false
+		}
+		flush()
+		return true
+	}
+	heartbeat()
 
 	// Initial status snapshot — UI can render "queued"/"building"/etc.
 	// immediately, even if the pod doesn't exist yet.
 	send("status", statusPayload(dep))
+
+	// Background ticker keeps the stream warm during long idle gaps
+	// inside kaniko / clone / waitForBuildPod. Cancelled when the
+	// handler returns.
+	hbCtx, hbCancel := context.WithCancel(r.Context())
+	defer hbCancel()
+	go func() {
+		t := time.NewTicker(15 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-hbCtx.Done():
+				return
+			case <-t.C:
+				if !heartbeat() {
+					return
+				}
+			}
+		}
+	}()
 
 	ctx := r.Context()
 

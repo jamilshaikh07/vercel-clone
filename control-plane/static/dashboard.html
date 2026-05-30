@@ -353,6 +353,15 @@
       padding: 2px 8px; border-radius: 6px; font-size: 11px; cursor: pointer; text-decoration: none;
     }
     .log-head button:hover, .log-head a:hover { color: var(--text); border-color: var(--accent); }
+    .log-tabs { display: inline-flex; gap: 4px; }
+    .log-tabs .tab {
+      background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+      padding: 2px 10px; border-radius: 6px; font-size: 11px; cursor: pointer;
+      text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .log-tabs .tab:hover { color: var(--text); border-color: var(--accent); }
+    .log-tabs .tab.active { color: var(--text); border-color: var(--accent); background: var(--panel-2); }
+    .log-line.app    .c { color: #88c0d0; }
     .log-body {
       flex: 1; overflow-y: auto;
       padding: 8px 14px;
@@ -407,6 +416,10 @@
       <div class="logs-pane">
         <div class="log-head">
           <span class="title" id="log-title">Logs</span>
+          <span class="log-tabs" id="log-tabs" style="display:none">
+            <button class="tab active" data-mode="build">Build</button>
+            <button class="tab" data-mode="runtime">Runtime</button>
+          </span>
           <span class="commit" id="log-commit">— select a deployment</span>
           <span class="spacer"></span>
           <a id="log-url" target="_blank" rel="noopener" style="display:none">open ↗</a>
@@ -431,6 +444,18 @@ const meta       = $('meta');
 
 let currentES = null;
 let selectedId = null;
+// 'build' (default) tails the kaniko build pod; 'runtime' tails the live
+// tenant pod. Persisted across deployment selections so a user who
+// clicked Runtime once stays in runtime mode for subsequent rows.
+let logMode = 'build';
+const logTabs = $('log-tabs');
+
+// Endpoint + 'no logs yet' placeholder vary by mode. Keeping them in
+// one map makes openLogs symmetric for the two modes.
+const LOG_SOURCES = {
+  build:   { path: 'logs',         empty: 'Click a deployment row to stream its build logs here.' },
+  runtime: { path: 'runtime-logs', empty: 'Streaming runtime output from the live tenant pod…'   },
+};
 // Per-project SQL console state preserved across refresh() re-renders.
 // Without this the 10s background poll wipes the user's textarea +
 // closes the panel mid-edit.
@@ -823,11 +848,11 @@ function openLogs(el) {
   el.classList.add('selected');
   selectedId = id;
 
-  // Reset panel.
-  closeStream();
-  logBody.innerHTML = '';
-  logTitle.textContent = 'Logs';
-  logCommit.textContent = commit.slice(0, 8) + ' · streaming…';
+  // Reveal the tab strip + close button now that a deployment is
+  // selected; sync the active tab to the current logMode.
+  logTabs.style.display = '';
+  logTabs.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.mode === logMode));
+  logClose.style.display = '';
   if (url) {
     logUrl.textContent = 'open ↗';
     logUrl.href = url;
@@ -835,14 +860,26 @@ function openLogs(el) {
   } else {
     logUrl.style.display = 'none';
   }
-  logClose.style.display = '';
 
-  const es = new EventSource('/v1/deployments/' + id + '/logs');
+  streamLogsFor(id, commit, logMode);
+}
+
+// streamLogsFor opens the SSE stream for one deployment in the requested
+// mode ('build' or 'runtime'). Safe to call repeatedly — it always closes
+// the previous EventSource first.
+function streamLogsFor(id, commit, mode) {
+  closeStream();
+  logBody.innerHTML = '';
+  logTitle.textContent = mode === 'runtime' ? 'Runtime' : 'Build';
+  logCommit.textContent = commit.slice(0, 8) + ' · streaming…';
+
+  const path = LOG_SOURCES[mode].path;
+  const es = new EventSource('/v1/deployments/' + id + '/' + path);
   currentES = es;
 
   es.addEventListener('status', (ev) => {
     const d = JSON.parse(ev.data);
-    logCommit.textContent = commit.slice(0, 8) + ' · ' + d.status;
+    logCommit.textContent = commit.slice(0, 8) + ' · ' + (d.status || (mode === 'runtime' ? 'live' : 'streaming'));
     if (d.url) { logUrl.textContent = 'open ↗'; logUrl.href = d.url; logUrl.style.display = ''; }
   });
   es.addEventListener('log', (ev) => {
@@ -851,15 +888,28 @@ function openLogs(el) {
   });
   es.addEventListener('end', (ev) => {
     const d = JSON.parse(ev.data);
-    logCommit.textContent = commit.slice(0, 8) + ' · ' + (d.status || 'ended');
+    logCommit.textContent = commit.slice(0, 8) + ' · ' + (d.status || d.reason || 'ended');
     closeStream();
-    refresh();
+    if (mode === 'build') refresh();
   });
   es.onerror = () => {
     appendLine('system', '[stream] connection closed');
     closeStream();
   };
 }
+
+// Tab switch: re-stream the currently-selected deployment in the new mode.
+logTabs.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => {
+    const mode = t.dataset.mode;
+    if (mode === logMode) return;
+    logMode = mode;
+    logTabs.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
+    if (!selectedId) return;
+    const sel = projectsEl.querySelector(`.deployment[data-id="${selectedId}"]`);
+    if (sel) streamLogsFor(selectedId, sel.dataset.commit, mode);
+  });
+});
 
 function appendLine(container, msg) {
   const div = document.createElement('div');
@@ -887,7 +937,8 @@ logClose.addEventListener('click', () => {
   logCommit.textContent = '— select a deployment';
   logUrl.style.display = 'none';
   logClose.style.display = 'none';
-  logBody.innerHTML = '<div class="log-placeholder">Click a deployment row to stream its build logs here.</div>';
+  logTabs.style.display = 'none';
+  logBody.innerHTML = '<div class="log-placeholder">' + LOG_SOURCES[logMode].empty + '</div>';
 });
 
 // Deep-link support: GitHub status check target_url is `/#d=<deployment-id>`.

@@ -427,6 +427,43 @@ func (s *store) ListRecentDeploymentsForUser(ctx context.Context, userID string,
 	return out, rows.Err()
 }
 
+// GetDeploymentTenantLogin returns the GitHub login of the installation
+// that owns this deployment — the same value used to derive the tenant
+// namespace via tenantNamespaceFor(). Returns ("", nil) when the row is
+// not found or not owned by userID. Passing "" for userID skips the
+// ownership filter (admin path only — caller must gate).
+func (s *store) GetDeploymentTenantLogin(ctx context.Context, deploymentID, userID string) (string, error) {
+	var login string
+	var err error
+	if userID == "" {
+		err = s.pool.QueryRow(ctx, `
+			SELECT i.account_login
+			  FROM deployments d
+			  JOIN projects p      ON p.id = d.project_id
+			  JOIN installations i ON i.id = p.installation_id
+			 WHERE d.id::text = $1
+			 LIMIT 1
+		`, deploymentID).Scan(&login)
+	} else {
+		err = s.pool.QueryRow(ctx, `
+			SELECT i.account_login
+			  FROM deployments d
+			  JOIN projects p      ON p.id = d.project_id
+			  JOIN installations i ON i.id = p.installation_id
+			 WHERE d.id::text = $1
+			   AND p.owner_user_id = $2
+			 LIMIT 1
+		`, deploymentID, userID).Scan(&login)
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return login, nil
+}
+
 // --- users + sessions (Slice A) -----------------------------------------
 
 // sessionUser is the materialised view of a user attached to a request.

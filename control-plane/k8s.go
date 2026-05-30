@@ -437,6 +437,67 @@ func (k *kubeClient) findBuildPod(ctx context.Context, namespace, deploymentID s
 	return best.Metadata.Name, nil
 }
 
+// findTenantPod returns the most relevant tenant pod for a deployment, or
+// "" if none exists yet. It prefers Running pods (the rollout has landed)
+// over Pending ones (still being created); among equal candidates the
+// most-recently-created wins. Errors only on API transport/auth problems.
+//
+// Counterpart to findBuildPod; same label scheme but the tenant component
+// and the tenant namespace are different.
+func (k *kubeClient) findTenantPod(ctx context.Context, namespace, deploymentID string) (string, error) {
+	sel := fmt.Sprintf("paas.deployment=%s,app.kubernetes.io/component=tenant", deploymentID)
+	path := fmt.Sprintf("/api/v1/namespaces/%s/pods?labelSelector=%s",
+		url.PathEscape(namespace), url.QueryEscape(sel))
+	status, body, err := k.do(ctx, "GET", path, nil)
+	if err != nil {
+		return "", err
+	}
+	if status < 200 || status >= 300 {
+		return "", fmt.Errorf("list pods: status %d: %s", status, snippet(body))
+	}
+	var list struct {
+		Items []struct {
+			Metadata struct {
+				Name              string    `json:"name"`
+				CreationTimestamp time.Time `json:"creationTimestamp"`
+				DeletionTimestamp *time.Time `json:"deletionTimestamp,omitempty"`
+			} `json:"metadata"`
+			Status struct {
+				Phase string `json:"phase"`
+			} `json:"status"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(body, &list); err != nil {
+		return "", fmt.Errorf("decode pods: %w", err)
+	}
+	if len(list.Items) == 0 {
+		return "", nil
+	}
+	// Score: Running > Pending; never pick Terminating pods.
+	bestIdx := -1
+	bestRank := -1
+	for i, it := range list.Items {
+		if it.Metadata.DeletionTimestamp != nil {
+			continue
+		}
+		rank := 0
+		if it.Status.Phase == "Running" {
+			rank = 2
+		} else if it.Status.Phase == "Pending" {
+			rank = 1
+		}
+		if bestIdx < 0 || rank > bestRank ||
+			(rank == bestRank && it.Metadata.CreationTimestamp.After(list.Items[bestIdx].Metadata.CreationTimestamp)) {
+			bestIdx = i
+			bestRank = rank
+		}
+	}
+	if bestIdx < 0 {
+		return "", nil
+	}
+	return list.Items[bestIdx].Metadata.Name, nil
+}
+
 // containerStatus reads pod.status.{init,}containerStatuses and returns the
 // state of one named container.
 func (k *kubeClient) containerStatus(ctx context.Context, namespace, pod, container string) (*containerState, error) {
