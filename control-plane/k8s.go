@@ -433,7 +433,9 @@ func (k *kubeClient) streamPodLog(ctx context.Context, namespace, pod, container
 			return err
 		}
 		req.Header.Set("Authorization", "Bearer "+k.token)
-		req.Header.Set("Accept", "text/plain")
+		// Deliberately no Accept header — the log endpoint returns text/plain
+		// on success, but kube-apiserver content-negotiation refuses any
+		// non-JSON Accept value with 406 NotAcceptable on the error path.
 
 		resp, err := k.streamHTTP.Do(req)
 		if err != nil {
