@@ -73,10 +73,17 @@
     .project-head .slug { font-weight: 600; font-size: 14px; }
     .project-head .repo { color: var(--text-dim); font-size: 12px; }
     .project-head .branch {
-      margin-left: auto; font-size: 11px;
+      font-size: 11px;
       color: var(--text-dim);
       padding: 2px 8px; border: 1px solid var(--border); border-radius: 20px;
     }
+    .project-head .prod-link {
+      margin-left: auto;
+      font-size: 12px; color: var(--ok); font-family: ui-monospace, monospace;
+      padding: 2px 10px; border: 1px solid rgba(46, 204, 113, 0.4);
+      border-radius: 20px;
+    }
+    .project-head .prod-link:hover { background: rgba(46, 204, 113, 0.1); text-decoration: none; }
     .deployments { padding: 4px 0; }
     .deployment {
       display: grid;
@@ -218,11 +225,21 @@ function render(data) {
       </div>
     `).join('') : '<div class="empty">No deployments yet.</div>';
 
+    // Production URL is live as soon as any deployment on the production
+    // branch has reached ready — the prod-<slug> IngressRoute is in place.
+    const prodRef = 'refs/heads/' + p.production_branch;
+    const hasProd = deps.some(d => d.status === 'ready' && d.ref === prodRef);
+    const prodHost = `${p.slug}.jamilshaikh.in`;
+    const prodLink = hasProd
+      ? `<a class="prod-link" href="https://${prodHost}" target="_blank" rel="noopener" title="Production alias">${prodHost} ↗</a>`
+      : '';
+
     return `
       <div class="project">
         <div class="project-head">
           <span class="slug">${escapeHTML(p.slug)}</span>
           <span class="repo">${escapeHTML(p.full_name)}</span>
+          ${prodLink}
           <span class="branch">${escapeHTML(p.production_branch)}</span>
         </div>
         <div class="deployments">${depHTML}</div>
