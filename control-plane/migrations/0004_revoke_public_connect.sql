@@ -1,0 +1,11 @@
+-- Defence-in-depth: by default Postgres lets ANY authenticated role
+-- (including freshly-provisioned tenant roles) call CONNECT on the
+-- control-plane database. RLS / column GRANTs stop them reading rows,
+-- but reachability alone leaks the schema and consumes connection slots.
+--
+-- Revoking CONNECT on the paas database from PUBLIC means only roles
+-- with an explicit GRANT (currently just the 'app' role, the DB owner)
+-- can open a session. New tenant roles cannot.
+--
+-- Idempotent — REVOKE on a privilege the role never had is a no-op.
+REVOKE CONNECT ON DATABASE paas FROM PUBLIC;
