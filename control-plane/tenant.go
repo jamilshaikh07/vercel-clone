@@ -241,8 +241,9 @@ func tenantDefaultDenyNetworkPolicyManifest(namespace string) map[string]any {
 }
 
 // tenantAllowTraefikIngressManifest lets Traefik reach tenant pods on
-// the conventional 8080 application port. Traefik's pods live in
-// kube-system in default Talos installs; we select by namespace name.
+// the conventional application port. On this cluster Traefik lives in
+// the traefik-system namespace (not kube-system as the helm chart's
+// default suggests), so we select by namespace name.
 func tenantAllowTraefikIngressManifest(namespace string) map[string]any {
 	return map[string]any{
 		"apiVersion": "networking.k8s.io/v1",
@@ -260,7 +261,7 @@ func tenantAllowTraefikIngressManifest(namespace string) map[string]any {
 						map[string]any{
 							"namespaceSelector": map[string]any{
 								"matchLabels": map[string]any{
-									"kubernetes.io/metadata.name": "kube-system",
+									"kubernetes.io/metadata.name": "traefik-system",
 								},
 							},
 						},
