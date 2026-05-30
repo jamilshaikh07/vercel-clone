@@ -191,6 +191,60 @@ func (s *store) EnqueueDeployment(
 	return &deploymentEnqueued{ProjectID: projectID, DeploymentID: deploymentID, Slug: slug}, nil
 }
 
+// EnqueueRedeploy inserts a new queued deployment row that mirrors the
+// (project_id, commit_sha, ref) of an existing source deployment. The
+// ownership filter is applied inline (via the join on projects) so a
+// caller that wasn't gated upstream still can't enqueue against another
+// tenant's project. Empty userID skips ownership (admin path).
+//
+// Returns (newDeploymentID, projectSlug, nil) on success. Returns
+// ("", "", nil) when the source row doesn't exist or isn't owned —
+// callers translate that to 404 so we don't leak which IDs exist.
+//
+// triggered_by is recorded as 'redeploy' so audit logs can distinguish
+// dashboard-initiated rebuilds from real webhook pushes. delivery_id
+// is NULL because there's no GitHub delivery behind this row.
+func (s *store) EnqueueRedeploy(ctx context.Context, sourceDeploymentID, userID string) (string, string, error) {
+	var (
+		newID string
+		slug  string
+		err   error
+	)
+	if userID == "" {
+		err = s.pool.QueryRow(ctx, `
+			WITH src AS (
+			  SELECT d.project_id, d.commit_sha, d.ref, p.slug
+			    FROM deployments d
+			    JOIN projects p ON p.id = d.project_id
+			   WHERE d.id::text = $1
+			)
+			INSERT INTO deployments (project_id, commit_sha, ref, triggered_by, delivery_id)
+			SELECT project_id, commit_sha, ref, 'redeploy', NULL FROM src
+			RETURNING id::text, (SELECT slug FROM src)
+		`, sourceDeploymentID).Scan(&newID, &slug)
+	} else {
+		err = s.pool.QueryRow(ctx, `
+			WITH src AS (
+			  SELECT d.project_id, d.commit_sha, d.ref, p.slug
+			    FROM deployments d
+			    JOIN projects p ON p.id = d.project_id
+			   WHERE d.id::text = $1
+			     AND p.owner_user_id = $2::uuid
+			)
+			INSERT INTO deployments (project_id, commit_sha, ref, triggered_by, delivery_id)
+			SELECT project_id, commit_sha, ref, 'redeploy', NULL FROM src
+			RETURNING id::text, (SELECT slug FROM src)
+		`, sourceDeploymentID, userID).Scan(&newID, &slug)
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+	return newID, slug, nil
+}
+
 type deploymentRow struct {
 	ID         string  `json:"id"`
 	ProjectID  string  `json:"project_id"`

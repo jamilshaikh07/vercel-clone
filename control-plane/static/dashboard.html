@@ -379,6 +379,13 @@
     .badge.failed    { background: rgba(255, 107, 107, 0.15); color: var(--err); }
     .badge.cancelled { background: rgba(154, 161, 173, 0.15); color: var(--text-dim); }
     .url-link { font-size: 12px; }
+    .btn-redeploy {
+      background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+      padding: 2px 8px; border-radius: 6px; font-size: 11px; cursor: pointer;
+      font-family: inherit;
+    }
+    .btn-redeploy:hover { color: var(--text); border-color: var(--accent); }
+    .btn-redeploy[disabled] { opacity: 0.4; cursor: not-allowed; }
     .empty {
       color: var(--text-dim); font-style: italic; padding: 12px 16px;
     }
@@ -594,7 +601,11 @@ function render(data) {
         <span class="commit"><span class="sha">${d.commit_sha.slice(0,8)}</span> · ${d.ref.replace('refs/heads/','')}</span>
         <span class="ago" title="${d.created_at}">${timeAgo(d.created_at)}</span>
         ${d.url ? `<a class="url-link" href="${d.url}" target="_blank" rel="noopener" onclick="event.stopPropagation()">open ↗</a>` : '<span></span>'}
-        <span></span>
+        <button class="btn-redeploy"
+                data-deployment-id="${d.id}"
+                data-commit="${d.commit_sha}"
+                ${(d.status === 'queued' || d.status === 'building' || d.status === 'deploying') ? 'disabled title="already in flight"' : 'title="Re-run the build for this commit (rollback or apply new env vars)"'}
+                onclick="event.stopPropagation()">redeploy</button>
       </div>
     `).join('') : '<div class="empty">No deployments yet.</div>';
 
@@ -642,6 +653,50 @@ function render(data) {
   projectsEl.querySelectorAll('.deployment').forEach(el => {
     el.addEventListener('click', () => openLogs(el));
   });
+
+  // Per-row redeploy buttons. The button already stops propagation in
+  // its onclick attribute so this listener only handles the POST.
+  projectsEl.querySelectorAll('.btn-redeploy').forEach(btn => {
+    btn.addEventListener('click', () => redeployFromButton(btn));
+  });
+}
+
+async function redeployFromButton(btn) {
+  const id = btn.dataset.deploymentId;
+  const sha = (btn.dataset.commit || '').slice(0, 8);
+  if (btn.disabled) return;
+  if (!confirm('Redeploy commit ' + sha + '?\n\nThis enqueues a fresh build for the same commit. ' +
+               'Use it to apply env-var changes or to roll back to a previous version.')) {
+    return;
+  }
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = 'queueing…';
+  try {
+    const r = await fetch('/v1/deployments/' + id + '/redeploy', {
+      method: 'POST',
+      cache: 'no-store', credentials: 'same-origin',
+    });
+    if (r.status === 401) { window.location.href = '/login'; return; }
+    if (!r.ok) {
+      alert('Redeploy failed: ' + ((await r.text()).trim() || ('HTTP ' + r.status)));
+      btn.disabled = false;
+      btn.textContent = orig;
+      return;
+    }
+    const data = await r.json();
+    // Deep-link to the new deployment so the log stream auto-opens when
+    // render() picks up the queued row on its next refresh.
+    if (data.deployment_id) {
+      pendingDeepLink = data.deployment_id;
+      window.location.hash = 'd=' + data.deployment_id;
+    }
+    refresh();
+  } catch (e) {
+    alert('Redeploy failed: ' + e);
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
 }
 
 // === Workspace (right-pane) singletons ===
