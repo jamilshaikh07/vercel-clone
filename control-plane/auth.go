@@ -1,0 +1,457 @@
+package main
+
+// GitHub-OAuth login + opaque-token sessions for the dashboard.
+//
+// Why GitHub OAuth specifically: we already require a GitHub App for the
+// build/deploy plumbing. Turning on "Request user authorization (OAuth)
+// during installation" on the same App gives us one identity provider that
+// also lets us call the GitHub API on the user's behalf (e.g. listing their
+// installations) without ever asking for another credential.
+//
+// Threat model worth being explicit about:
+//   * The plaintext session token lives only in the user's cookie. We
+//     persist HMAC(SESSION_SECRET, token), so a database leak alone does
+//     not yield working sessions.
+//   * State for the OAuth dance is signed-with-expiry; we don't trust a
+//     callback that arrives without a fresh state cookie we issued.
+//   * The cookie is HttpOnly + Secure + SameSite=Lax. Lax (not Strict) is
+//     required because GitHub's redirect back to /auth/callback is a
+//     top-level GET from a different origin.
+
+import (
+	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"time"
+)
+
+type authConfig struct {
+	clientID     string
+	clientSecret string
+	// sessionSecret is the HMAC key used to (a) hash the bearer token
+	// before storage and (b) sign OAuth state tokens. 32 bytes minimum.
+	sessionSecret []byte
+	// baseURL is the public origin the dashboard is reached at — used to
+	// construct redirect_uri values for GitHub. Must match the callback
+	// configured on the GitHub App exactly.
+	baseURL string
+}
+
+const (
+	sessionCookie    = "paas_session"
+	stateCookie      = "paas_oauth_state"
+	sessionLifetime  = 30 * 24 * time.Hour
+	stateLifetime    = 10 * time.Minute
+	githubAuthURL    = "https://github.com/login/oauth/authorize"
+	githubTokenURL   = "https://github.com/login/oauth/access_token"
+	githubAPIBase    = "https://api.github.com"
+)
+
+func loadAuthConfig() (*authConfig, error) {
+	cid := strings.TrimSpace(os.Getenv("GITHUB_APP_CLIENT_ID"))
+	cs := strings.TrimSpace(os.Getenv("GITHUB_APP_CLIENT_SECRET"))
+	ss := strings.TrimSpace(os.Getenv("SESSION_SECRET"))
+	base := strings.TrimSpace(os.Getenv("DASHBOARD_BASE_URL"))
+	if base == "" {
+		base = "https://paas.jamilshaikh.in"
+	}
+	if cid == "" || cs == "" || ss == "" {
+		return nil, errors.New(
+			"auth requires GITHUB_APP_CLIENT_ID, GITHUB_APP_CLIENT_SECRET, SESSION_SECRET")
+	}
+	// Allow either raw bytes or base64. We accept either to avoid making
+	// the operator hand-roll base64 in their Secret.
+	raw, err := base64.StdEncoding.DecodeString(ss)
+	if err != nil || len(raw) < 32 {
+		raw = []byte(ss)
+	}
+	if len(raw) < 32 {
+		return nil, fmt.Errorf("SESSION_SECRET must be at least 32 bytes (got %d)", len(raw))
+	}
+	return &authConfig{
+		clientID:      cid,
+		clientSecret:  cs,
+		sessionSecret: raw,
+		baseURL:       strings.TrimRight(base, "/"),
+	}, nil
+}
+
+// --- Tokens, hashing, state -----------------------------------------------
+
+// hashSessionToken returns HMAC-SHA256(secret, token). Constant-time-safe;
+// the resulting digest is what we look up in the sessions table.
+func hashSessionToken(secret []byte, token string) []byte {
+	m := hmac.New(sha256.New, secret)
+	m.Write([]byte(token))
+	return m.Sum(nil)
+}
+
+// signState packs {nonce, expiresAt} and HMACs them. Returned string is
+// safe to put in a cookie. verifyState undoes this. We use signed-cookie
+// rather than DB-backed state so the OAuth flow doesn't need a write to
+// start.
+func signState(secret []byte, ttl time.Duration) (string, error) {
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return "", err
+	}
+	payload := fmt.Sprintf("%s.%d", hex.EncodeToString(nonce[:]),
+		time.Now().Add(ttl).Unix())
+	m := hmac.New(sha256.New, secret)
+	m.Write([]byte(payload))
+	sig := hex.EncodeToString(m.Sum(nil))
+	return payload + "." + sig, nil
+}
+
+func verifyState(secret []byte, raw string) error {
+	parts := strings.Split(raw, ".")
+	if len(parts) != 3 {
+		return errors.New("malformed state")
+	}
+	payload := parts[0] + "." + parts[1]
+	want, err := hex.DecodeString(parts[2])
+	if err != nil {
+		return err
+	}
+	m := hmac.New(sha256.New, secret)
+	m.Write([]byte(payload))
+	if !hmac.Equal(want, m.Sum(nil)) {
+		return errors.New("state signature mismatch")
+	}
+	var exp int64
+	if _, err := fmt.Sscan(parts[1], &exp); err != nil {
+		return errors.New("malformed state expiry")
+	}
+	if time.Now().Unix() > exp {
+		return errors.New("state expired")
+	}
+	return nil
+}
+
+// randomToken returns a fresh 32-byte URL-safe opaque session token.
+func randomToken() (string, error) {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b[:]), nil
+}
+
+// --- Handlers -------------------------------------------------------------
+
+func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	state, err := signState(s.auth.sessionSecret, stateLifetime)
+	if err != nil {
+		s.log.Error("sign oauth state failed", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     stateCookie,
+		Value:    state,
+		Path:     "/",
+		MaxAge:   int(stateLifetime / time.Second),
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	q := url.Values{}
+	q.Set("client_id", s.auth.clientID)
+	q.Set("redirect_uri", s.auth.baseURL+"/auth/callback")
+	q.Set("state", state)
+	// GitHub Apps don't take a `scope` parameter — permissions are baked
+	// into the App's configuration. Including scope causes "redirect_uri
+	// MUST match" style errors with some App configurations, so we omit.
+	http.Redirect(w, r, githubAuthURL+"?"+q.Encode(), http.StatusFound)
+}
+
+func (s *server) handleCallback(w http.ResponseWriter, r *http.Request) {
+	code := r.URL.Query().Get("code")
+	state := r.URL.Query().Get("state")
+	if code == "" || state == "" {
+		http.Error(w, "missing code or state", http.StatusBadRequest)
+		return
+	}
+	cookie, err := r.Cookie(stateCookie)
+	if err != nil || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(state)) != 1 {
+		http.Error(w, "state mismatch", http.StatusBadRequest)
+		return
+	}
+	if err := verifyState(s.auth.sessionSecret, state); err != nil {
+		http.Error(w, "state invalid: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	// State cookie is single-use — clear it.
+	http.SetCookie(w, &http.Cookie{
+		Name: stateCookie, Value: "", Path: "/", MaxAge: -1,
+		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
+	})
+
+	tok, err := s.exchangeOAuthCode(r.Context(), code)
+	if err != nil {
+		s.log.Error("oauth token exchange failed", "err", err)
+		http.Error(w, "github token exchange failed", http.StatusBadGateway)
+		return
+	}
+	gh, err := s.fetchGitHubUser(r.Context(), tok.AccessToken)
+	if err != nil {
+		s.log.Error("fetch github user failed", "err", err)
+		http.Error(w, "fetch user failed", http.StatusBadGateway)
+		return
+	}
+
+	expires := time.Time{}
+	if tok.ExpiresIn > 0 {
+		expires = time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second)
+	}
+	userID, err := s.store.UpsertUserFromGitHub(r.Context(), userUpsert{
+		GitHubUserID: gh.ID,
+		Login:        gh.Login,
+		Email:        gh.Email,
+		AvatarURL:    gh.AvatarURL,
+		OAuthToken:   tok.AccessToken,
+		OAuthExpires: expires,
+	})
+	if err != nil {
+		s.log.Error("upsert user failed", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	// Claim any prior installations that arrived before this user existed,
+	// and inherit ownership of every project under them. Best-effort: a
+	// missing claim doesn't block login.
+	if n, err := s.store.ClaimInstallationsForUser(r.Context(), userID, gh.ID); err != nil {
+		s.log.Warn("claim installations failed", "user", gh.Login, "err", err)
+	} else if n > 0 {
+		s.log.Info("claimed installations on login", "user", gh.Login, "count", n)
+	}
+
+	// Mint session.
+	token, err := randomToken()
+	if err != nil {
+		s.log.Error("random token failed", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	hash := hashSessionToken(s.auth.sessionSecret, token)
+	if err := s.store.CreateSession(r.Context(), sessionRow{
+		TokenHash: hash,
+		UserID:    userID,
+		UserAgent: r.UserAgent(),
+		IP:        clientIP(r),
+		ExpiresAt: time.Now().Add(sessionLifetime),
+	}); err != nil {
+		s.log.Error("create session failed", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    token,
+		Path:     "/",
+		MaxAge:   int(sessionLifetime / time.Second),
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	s.log.Info("user signed in", "user", gh.Login, "id", userID)
+	http.Redirect(w, r, "/", http.StatusFound)
+}
+
+func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie(sessionCookie); err == nil && c.Value != "" {
+		hash := hashSessionToken(s.auth.sessionSecret, c.Value)
+		if err := s.store.DeleteSession(r.Context(), hash); err != nil {
+			s.log.Warn("delete session failed", "err", err)
+		}
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: sessionCookie, Value: "", Path: "/", MaxAge: -1,
+		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
+	})
+	// Browser POSTs from the dashboard expect JSON; let them follow up
+	// with a client-side redirect rather than us doing 302 here.
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"ok":true}`))
+}
+
+func (s *server) handleMe(w http.ResponseWriter, r *http.Request) {
+	u := userFromCtx(r.Context())
+	if u == nil {
+		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"id":         u.ID,
+		"login":      u.GitHubLogin,
+		"email":      u.Email,
+		"avatar_url": u.AvatarURL,
+		"is_admin":   u.IsAdmin,
+	})
+}
+
+// --- Middleware -----------------------------------------------------------
+
+type ctxKey int
+
+const userCtxKey ctxKey = 1
+
+func userFromCtx(ctx context.Context) *sessionUser {
+	v, _ := ctx.Value(userCtxKey).(*sessionUser)
+	return v
+}
+
+// requireUser is middleware: if the request carries a valid session cookie
+// the user is attached to the request context; otherwise the handler
+// responds with the supplied unauthorised behaviour.
+//
+// Two behaviours we need:
+//   * For HTML routes (/, /login) we redirect to /login.
+//   * For JSON APIs we 401 with a small JSON body so the dashboard JS
+//     can detect the redirect-to-login condition.
+func (s *server) requireUser(next http.Handler, mode string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u := s.userFromRequest(r)
+		if u == nil {
+			if mode == "html" {
+				http.Redirect(w, r, "/login", http.StatusFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"unauthenticated"}`))
+			return
+		}
+		ctx := context.WithValue(r.Context(), userCtxKey, u)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// userFromRequest reads paas_session, hashes it, and looks up the
+// matching session row. Returns nil silently on any failure — the caller
+// decides whether that means "401" or "redirect to login".
+func (s *server) userFromRequest(r *http.Request) *sessionUser {
+	c, err := r.Cookie(sessionCookie)
+	if err != nil || c.Value == "" {
+		return nil
+	}
+	hash := hashSessionToken(s.auth.sessionSecret, c.Value)
+	u, err := s.store.LookupSession(r.Context(), hash)
+	if err != nil || u == nil {
+		return nil
+	}
+	return u
+}
+
+// --- GitHub OAuth API calls ----------------------------------------------
+
+type oauthTokenResponse struct {
+	AccessToken      string `json:"access_token"`
+	ExpiresIn        int    `json:"expires_in"`
+	RefreshToken     string `json:"refresh_token"`
+	RefreshExpiresIn int    `json:"refresh_token_expires_in"`
+	Scope            string `json:"scope"`
+	TokenType        string `json:"token_type"`
+	Error            string `json:"error"`
+	ErrorDescription string `json:"error_description"`
+}
+
+func (s *server) exchangeOAuthCode(ctx context.Context, code string) (*oauthTokenResponse, error) {
+	body, err := json.Marshal(map[string]string{
+		"client_id":     s.auth.clientID,
+		"client_secret": s.auth.clientSecret,
+		"code":          code,
+		"redirect_uri":  s.auth.baseURL + "/auth/callback",
+	})
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", githubTokenURL, strings.NewReader(string(body)))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := s.gh.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	rb, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode/100 != 2 {
+		return nil, fmt.Errorf("token endpoint: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(rb)))
+	}
+	var out oauthTokenResponse
+	if err := json.Unmarshal(rb, &out); err != nil {
+		return nil, fmt.Errorf("decode token: %w", err)
+	}
+	if out.Error != "" {
+		return nil, fmt.Errorf("oauth error: %s: %s", out.Error, out.ErrorDescription)
+	}
+	if out.AccessToken == "" {
+		return nil, errors.New("empty access_token from github")
+	}
+	return &out, nil
+}
+
+type githubUser struct {
+	ID        int64  `json:"id"`
+	Login     string `json:"login"`
+	Email     string `json:"email"`
+	AvatarURL string `json:"avatar_url"`
+}
+
+func (s *server) fetchGitHubUser(ctx context.Context, accessToken string) (*githubUser, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", githubAPIBase+"/user", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	resp, err := s.gh.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	rb, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode/100 != 2 {
+		return nil, fmt.Errorf("get user: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(rb)))
+	}
+	var u githubUser
+	if err := json.Unmarshal(rb, &u); err != nil {
+		return nil, err
+	}
+	if u.ID == 0 || u.Login == "" {
+		return nil, errors.New("empty user response from github")
+	}
+	return &u, nil
+}
+
+func clientIP(r *http.Request) string {
+	if xf := r.Header.Get("X-Forwarded-For"); xf != "" {
+		if i := strings.IndexByte(xf, ','); i > 0 {
+			return strings.TrimSpace(xf[:i])
+		}
+		return strings.TrimSpace(xf)
+	}
+	host := r.RemoteAddr
+	if i := strings.LastIndexByte(host, ':'); i > 0 {
+		host = host[:i]
+	}
+	return host
+}

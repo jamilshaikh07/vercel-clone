@@ -61,6 +61,27 @@ spec:
                   key: app-id
             - name: GITHUB_APP_PRIVATE_KEY_PATH
               value: /etc/github-app/private-key.pem
+            # Dashboard OAuth — App credentials live in the same App as the
+            # webhook/clone-token issuer, just exposed via OAuth on the side.
+            - name: GITHUB_APP_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: github-app-oauth
+                  key: client-id
+            - name: GITHUB_APP_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: github-app-oauth
+                  key: client-secret
+            # 32+ bytes used to (a) HMAC session tokens before storing them
+            # and (b) sign OAuth state cookies. Rotating it logs everyone out.
+            - name: SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: github-app-oauth
+                  key: session-secret
+            - name: DASHBOARD_BASE_URL
+              value: https://paas.jamilshaikh.in
           volumeMounts:
             - name: github-app-key
               mountPath: /etc/github-app

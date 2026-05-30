@@ -44,7 +44,12 @@ type server struct {
 	webhookSecret []byte
 	store         *store
 	k8s           *kubeClient
-	log           *slog.Logger
+	// gh is the GitHub App client. It's used by the build worker for
+	// installation tokens AND by the auth subsystem for OAuth API calls,
+	// so we hold it on the server (not just on the worker).
+	gh   *githubApp
+	auth *authConfig
+	log  *slog.Logger
 }
 
 func main() {
@@ -106,10 +111,19 @@ func main() {
 	}
 	log.Info("github app + k8s client ready", "app_id", appIDStr, "namespace", k8s.namespace)
 
+	authCfg, err := loadAuthConfig()
+	if err != nil {
+		log.Error("load auth config failed", "err", err)
+		os.Exit(1)
+	}
+	log.Info("auth ready", "base_url", authCfg.baseURL)
+
 	s := &server{
 		webhookSecret: []byte(secret),
 		store:         newStore(pool),
 		k8s:           k8s,
+		gh:            gh,
+		auth:          authCfg,
 		log:           log,
 	}
 
@@ -124,14 +138,29 @@ func main() {
 	go bw.Run(rootCtx)
 
 	mux := http.NewServeMux()
+	// Public — health probes + webhook (HMAC auth) + login pages.
 	mux.HandleFunc("GET /healthz", s.healthz)
 	mux.HandleFunc("GET /readyz", s.readyz(pool))
 	mux.HandleFunc("POST /webhooks/github", s.handleGitHubWebhook)
-	mux.HandleFunc("GET /admin/deployments", s.handleListDeployments)
-	mux.HandleFunc("GET /v1/deployments", s.handleListDeployments)
-	mux.HandleFunc("GET /v1/deployments/{id}/logs", s.handleDeploymentLogs)
-	mux.HandleFunc("GET /v1/projects", s.handleListProjects)
-	mux.HandleFunc("GET /", s.handleDashboard)
+	mux.HandleFunc("GET /login", s.handleLoginPage)
+	mux.HandleFunc("GET /auth/login", s.handleLogin)
+	mux.HandleFunc("GET /auth/callback", s.handleCallback)
+	mux.HandleFunc("POST /auth/logout", s.handleLogout)
+
+	// Authenticated dashboard root — HTML mode redirects to /login.
+	mux.Handle("GET /{$}", s.requireUser(http.HandlerFunc(s.handleDashboard), "html"))
+
+	// Authenticated API surface — JSON mode returns 401 so the SPA can
+	// detect logout and bounce to /login itself.
+	apiHandlers := map[string]http.HandlerFunc{
+		"GET /v1/me":                          s.handleMe,
+		"GET /v1/projects":                    s.handleListProjects,
+		"GET /v1/deployments":                 s.handleListDeployments,
+		"GET /v1/deployments/{id}/logs":       s.handleDeploymentLogs,
+	}
+	for pat, h := range apiHandlers {
+		mux.Handle(pat, s.requireUser(h, "json"))
+	}
 
 	httpSrv := &http.Server{
 		Addr:              addr,
@@ -214,7 +243,12 @@ func (s *server) readyz(pool *pgxpool.Pool) http.HandlerFunc {
 func (s *server) handleListDeployments(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
-	rows, err := s.store.ListRecentDeployments(ctx, 50)
+	u := userFromCtx(r.Context())
+	scope := ""
+	if u != nil && !u.IsAdmin {
+		scope = u.ID
+	}
+	rows, err := s.store.ListRecentDeploymentsForUser(ctx, scope, 50)
 	if err != nil {
 		s.log.Error("list deployments failed", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -336,12 +370,25 @@ func (s *server) handleInstallation(ctx context.Context, env envelope, body []by
 		}); err != nil {
 			return err
 		}
+		// If the installer's GitHub account already has a dashboard user,
+		// claim this installation immediately so AddRepos below stamps
+		// projects with the right owner from the start.
+		if err := s.store.LinkInstallationByGitHubAccount(ctx,
+			env.Installation.ID, env.Installation.Account.ID); err != nil {
+			s.log.Warn("link installation owner failed",
+				"installation_id", env.Installation.ID, "err", err)
+		}
 		// On created, payload includes the initial list of repositories.
 		var p struct {
 			Repositories []githubRepo `json:"repositories"`
 		}
 		if err := json.Unmarshal(body, &p); err == nil && len(p.Repositories) > 0 {
-			return s.store.AddRepos(ctx, env.Installation.ID, toRepoRows(p.Repositories))
+			if err := s.store.AddRepos(ctx, env.Installation.ID, toRepoRows(p.Repositories)); err != nil {
+				return err
+			}
+			// Belt-and-braces: backfill in case the installation was linked
+			// AFTER the AddRepos statement happened in a prior call.
+			_ = s.store.SetProjectOwnerByInstallation(ctx, env.Installation.ID)
 		}
 		return nil
 
@@ -366,6 +413,7 @@ func (s *server) handleInstallationRepos(ctx context.Context, env envelope, body
 		if err := s.store.AddRepos(ctx, env.Installation.ID, toRepoRows(p.RepositoriesAdded)); err != nil {
 			return err
 		}
+		_ = s.store.SetProjectOwnerByInstallation(ctx, env.Installation.ID)
 	}
 	if len(p.RepositoriesRemoved) > 0 {
 		ids := make([]int64, 0, len(p.RepositoriesRemoved))

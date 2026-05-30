@@ -113,9 +113,15 @@ func (s *store) AddRepos(ctx context.Context, installationID int64, repos []repo
 		`, installationID, r.ID, r.FullName, r.Private, r.DefaultBranch)
 
 		// Lazy-create a project per repo so first push doesn't have to do it.
+		// Pick up the installation's current owner so the project is visible
+		// to its rightful user from minute zero. NULL owner is fine and gets
+		// fixed up on the user's first login via ClaimInstallationsForUser.
 		batch.Queue(`
-			INSERT INTO projects (installation_id, repo_id, full_name, slug, production_branch)
-			VALUES ($1, $2, $3, $4, COALESCE(NULLIF($5, ''), 'main'))
+			INSERT INTO projects (installation_id, repo_id, full_name, slug,
+			                     production_branch, owner_user_id)
+			SELECT $1, $2, $3, $4, COALESCE(NULLIF($5, ''), 'main'), i.owner_user_id
+			  FROM installations i
+			 WHERE i.id = $1
 			ON CONFLICT (installation_id, repo_id) DO NOTHING
 		`, installationID, r.ID, r.FullName, slugify(r.FullName), r.DefaultBranch)
 	}
@@ -238,13 +244,28 @@ type projectRow struct {
 	CreatedAt        string `json:"created_at"`
 }
 
-func (s *store) ListProjects(ctx context.Context) ([]projectRow, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT id::text, slug, full_name, production_branch,
-		       to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
-		  FROM projects
-		 ORDER BY created_at DESC
-	`)
+// ListProjectsForUser returns the projects owned by one user. Pass an
+// empty userID to list everything (admin/dev path only — caller is
+// responsible for the gate).
+func (s *store) ListProjectsForUser(ctx context.Context, userID string) ([]projectRow, error) {
+	var rows pgx.Rows
+	var err error
+	if userID == "" {
+		rows, err = s.pool.Query(ctx, `
+			SELECT id::text, slug, full_name, production_branch,
+			       to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+			  FROM projects
+			 ORDER BY created_at DESC
+		`)
+	} else {
+		rows, err = s.pool.Query(ctx, `
+			SELECT id::text, slug, full_name, production_branch,
+			       to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+			  FROM projects
+			 WHERE owner_user_id = $1
+			 ORDER BY created_at DESC
+		`, userID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -330,6 +351,244 @@ func (s *store) GetDeployment(ctx context.Context, id string) (*deploymentRow, e
 		return nil, err
 	}
 	return &d, nil
+}
+
+// GetDeploymentForUser returns the deployment only if the user owns the
+// project it belongs to. Empty userID is a wildcard match (admin-only path,
+// caller's responsibility to gate). Returns (nil, nil) when not found or
+// not owned — callers translate this to 404 so we don't leak existence.
+func (s *store) GetDeploymentForUser(ctx context.Context, id, userID string) (*deploymentRow, error) {
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	if userID == "" {
+		return s.GetDeployment(ctx, id)
+	}
+	rows, err = s.pool.Query(ctx, `
+		SELECT d.id::text, d.project_id::text, p.slug,
+		       d.commit_sha, d.ref, d.status, d.url, d.image,
+		       to_char(d.created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+		       d.delivery_id
+		  FROM deployments d
+		  JOIN projects p ON p.id = d.project_id
+		 WHERE d.id::text = $1
+		   AND p.owner_user_id = $2
+		 LIMIT 1
+	`, id, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	var d deploymentRow
+	if err := rows.Scan(&d.ID, &d.ProjectID, &d.Slug, &d.CommitSHA, &d.Ref,
+		&d.Status, &d.URL, &d.Image, &d.CreatedAt, &d.DeliveryID); err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// ListRecentDeploymentsForUser is the user-scoped variant. Empty userID
+// falls back to the unscoped list.
+func (s *store) ListRecentDeploymentsForUser(ctx context.Context, userID string, limit int) ([]deploymentRow, error) {
+	if userID == "" {
+		return s.ListRecentDeployments(ctx, limit)
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT d.id::text, d.project_id::text, p.slug, d.commit_sha, d.ref,
+		       d.status, d.url, d.image,
+		       to_char(d.created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+		       d.delivery_id
+		  FROM deployments d
+		  JOIN projects p ON p.id = d.project_id
+		 WHERE p.owner_user_id = $1
+		 ORDER BY d.created_at DESC
+		 LIMIT $2
+	`, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []deploymentRow
+	for rows.Next() {
+		var d deploymentRow
+		if err := rows.Scan(&d.ID, &d.ProjectID, &d.Slug, &d.CommitSHA, &d.Ref,
+			&d.Status, &d.URL, &d.Image, &d.CreatedAt, &d.DeliveryID); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// --- users + sessions (Slice A) -----------------------------------------
+
+// sessionUser is the materialised view of a user attached to a request.
+// It carries enough to answer 'who am I' without an extra round-trip.
+type sessionUser struct {
+	ID           string
+	GitHubUserID int64
+	GitHubLogin  string
+	Email        string
+	AvatarURL    string
+	IsAdmin      bool
+}
+
+type userUpsert struct {
+	GitHubUserID int64
+	Login        string
+	Email        string
+	AvatarURL    string
+	OAuthToken   string
+	OAuthExpires time.Time
+}
+
+// UpsertUserFromGitHub creates or refreshes the user row keyed by their
+// GitHub user ID. Returns the internal UUID. Login can change on GitHub —
+// we always keep our copy aligned.
+func (s *store) UpsertUserFromGitHub(ctx context.Context, in userUpsert) (string, error) {
+	var id string
+	var expires any
+	if !in.OAuthExpires.IsZero() {
+		expires = in.OAuthExpires
+	}
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO users (github_user_id, github_login, email, avatar_url,
+		                   oauth_token, oauth_expires_at, last_login_at)
+		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), $6, now())
+		ON CONFLICT (github_user_id) DO UPDATE
+		   SET github_login     = EXCLUDED.github_login,
+		       email            = COALESCE(EXCLUDED.email, users.email),
+		       avatar_url       = COALESCE(EXCLUDED.avatar_url, users.avatar_url),
+		       oauth_token      = COALESCE(EXCLUDED.oauth_token, users.oauth_token),
+		       oauth_expires_at = COALESCE(EXCLUDED.oauth_expires_at, users.oauth_expires_at),
+		       last_login_at    = now()
+		RETURNING id::text
+	`, in.GitHubUserID, in.Login, in.Email, in.AvatarURL, in.OAuthToken, expires).Scan(&id)
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+type sessionRow struct {
+	TokenHash []byte
+	UserID    string
+	UserAgent string
+	IP        string
+	ExpiresAt time.Time
+}
+
+func (s *store) CreateSession(ctx context.Context, in sessionRow) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO sessions (token_hash, user_id, user_agent, ip, expires_at)
+		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''), $5)
+	`, in.TokenHash, in.UserID, in.UserAgent, in.IP, in.ExpiresAt)
+	return err
+}
+
+// LookupSession returns the user behind a token hash, or (nil, nil) if no
+// matching active session exists. Expired sessions are excluded but not
+// reaped here — a periodic sweep can do that.
+func (s *store) LookupSession(ctx context.Context, tokenHash []byte) (*sessionUser, error) {
+	u := &sessionUser{}
+	err := s.pool.QueryRow(ctx, `
+		SELECT u.id::text, u.github_user_id, u.github_login,
+		       COALESCE(u.email, ''), COALESCE(u.avatar_url, ''),
+		       u.is_admin
+		  FROM sessions s
+		  JOIN users u ON u.id = s.user_id
+		 WHERE s.token_hash = $1
+		   AND s.expires_at > now()
+	`, tokenHash).Scan(&u.ID, &u.GitHubUserID, &u.GitHubLogin, &u.Email, &u.AvatarURL, &u.IsAdmin)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return u, nil
+}
+
+func (s *store) DeleteSession(ctx context.Context, tokenHash []byte) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE token_hash = $1`, tokenHash)
+	return err
+}
+
+// ClaimInstallationsForUser links any unowned installations whose
+// GitHub account_id matches this user's github_user_id, AND propagates
+// the ownership to all projects under those installations. Returns the
+// number of installations claimed. Idempotent.
+func (s *store) ClaimInstallationsForUser(ctx context.Context, userID string, githubAccountID int64) (int, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx, `
+		UPDATE installations
+		   SET owner_user_id = $1, updated_at = now()
+		 WHERE account_id = $2
+		   AND owner_user_id IS DISTINCT FROM $1
+	`, userID, githubAccountID)
+	if err != nil {
+		return 0, err
+	}
+	// Backfill any projects that were enqueued before this user logged in.
+	if _, err := tx.Exec(ctx, `
+		UPDATE projects p
+		   SET owner_user_id = $1
+		  FROM installations i
+		 WHERE p.installation_id = i.id
+		   AND i.owner_user_id = $1
+		   AND p.owner_user_id IS DISTINCT FROM $1
+	`, userID); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
+}
+
+// LinkInstallationByGitHubAccount sets the installation's owner_user_id to
+// whichever user has a matching github_user_id, if any. No-op if no such
+// user exists or the installation is already linked correctly. Called from
+// the installation.created webhook so an existing dashboard user
+// immediately sees the new installation.
+func (s *store) LinkInstallationByGitHubAccount(ctx context.Context, installationID, githubAccountID int64) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE installations i
+		   SET owner_user_id = u.id, updated_at = now()
+		  FROM users u
+		 WHERE i.id = $1
+		   AND u.github_user_id = $2
+		   AND i.owner_user_id IS DISTINCT FROM u.id
+	`, installationID, githubAccountID)
+	return err
+}
+
+// SetProjectOwnerByInstallation propagates an installation's current
+// owner to all of its projects. Called from the push-webhook path so
+// projects created lazily on push pick up the right owner.
+func (s *store) SetProjectOwnerByInstallation(ctx context.Context, installationID int64) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE projects p
+		   SET owner_user_id = i.owner_user_id
+		  FROM installations i
+		 WHERE p.installation_id = i.id
+		   AND i.id = $1
+		   AND i.owner_user_id IS NOT NULL
+		   AND p.owner_user_id IS DISTINCT FROM i.owner_user_id
+	`, installationID)
+	return err
 }
 
 // --- worker side: claim + transition deployments --------------------------

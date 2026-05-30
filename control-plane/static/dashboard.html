@@ -46,6 +46,25 @@
     header h1 { font-size: 14px; font-weight: 600; margin: 0; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-dim); }
     header .spacer { flex: 1; }
     header .meta { color: var(--text-dim); font-size: 12px; }
+    header .me { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); }
+    header .me img { width: 24px; height: 24px; border-radius: 50%; }
+    header .signout {
+      background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+      font-size: 12px; padding: 4px 10px; border-radius: 6px; cursor: pointer;
+    }
+    header .signout:hover { color: var(--text); border-color: var(--accent); }
+    .install-cta {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 8px; padding: 24px; text-align: center;
+      margin-bottom: 16px;
+    }
+    .install-cta h3 { margin: 0 0 8px; font-size: 16px; }
+    .install-cta p { color: var(--text-dim); margin: 0 0 16px; font-size: 13px; }
+    .install-cta a.btn {
+      display: inline-block; background: var(--accent); color: #14171d;
+      padding: 8px 18px; border-radius: 6px; font-weight: 600; font-size: 13px;
+    }
+    .install-cta a.btn:hover { text-decoration: none; opacity: 0.9; }
     main {
       grid-area: projects;
       overflow-y: auto;
@@ -143,10 +162,11 @@
 <body>
   <div class="app">
     <header>
-      <h1>paas / dashboard</h1>
+      <h1>paas</h1>
       <span class="meta" id="meta">loading…</span>
       <span class="spacer"></span>
-      <span class="meta">paas.jamilshaikh.in</span>
+      <span class="me" id="me"></span>
+      <button class="signout" id="signout">Sign out</button>
     </header>
     <main id="projects"><div class="empty">Loading projects…</div></main>
     <aside>
@@ -196,21 +216,49 @@ function stripAnsi(s) {
   return s.replace(/\u001b\[[0-9;]*[A-Za-z]/g, '');
 }
 
+async function fetchJSON(url) {
+  const r = await fetch(url, { cache: 'no-store', credentials: 'same-origin' });
+  if (r.status === 401) {
+    window.location.href = '/login';
+    throw new Error('unauthenticated');
+  }
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+async function loadMe() {
+  try {
+    const me = await fetchJSON('/v1/me');
+    const el = document.getElementById('me');
+    el.innerHTML = `${me.avatar_url ? `<img src="${me.avatar_url}" alt="">` : ''}<span>${escapeHTML(me.login)}</span>`;
+  } catch (e) { /* loadMe runs after fetchJSON already redirects on 401 */ }
+}
+
+document.getElementById('signout').addEventListener('click', async () => {
+  try { await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch (_) {}
+  window.location.href = '/login';
+});
+
 async function refresh() {
   try {
-    const r = await fetch('/v1/projects', { cache: 'no-store' });
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    const data = await r.json();
+    const data = await fetchJSON('/v1/projects');
     render(data);
-    meta.textContent = data.projects.length + ' projects · updated ' + new Date().toLocaleTimeString();
+    const n = (data.projects || []).length;
+    meta.textContent = (n === 1 ? '1 project' : n + ' projects') + ' · updated ' + new Date().toLocaleTimeString();
   } catch (e) {
+    if (e.message === 'unauthenticated') return;
     projectsEl.innerHTML = '<div class="empty">Failed to load projects: ' + escapeHTML(e.message) + '</div>';
   }
 }
 
 function render(data) {
   if (!data.projects.length) {
-    projectsEl.innerHTML = '<div class="empty">No projects yet. Push to a connected GitHub repository to create one.</div>';
+    projectsEl.innerHTML = `
+      <div class="install-cta">
+        <h3>Connect a GitHub repository</h3>
+        <p>Install the paas GitHub App on a repository to get your first deployment. Push to its default branch and we'll build &amp; serve it.</p>
+        <a class="btn" href="https://github.com/apps/jamilshaikh-paas-v2/installations/new" target="_blank" rel="noopener">Install GitHub App ↗</a>
+      </div>`;
     return;
   }
   const html = data.projects.map(p => {
@@ -366,6 +414,7 @@ window.addEventListener('hashchange', () => {
   else pendingDeepLink = id;
 });
 
+loadMe();
 refresh();
 // Background poll — every 10s when no live stream so the deployment list
 // stays fresh after another browser (or webhook) triggers a build.

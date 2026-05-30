@@ -24,6 +24,9 @@ import (
 //go:embed static/dashboard.html
 var dashboardHTML []byte
 
+//go:embed static/login.html
+var loginHTML []byte
+
 // projectWithDeployments mirrors the JSON shape consumed by the dashboard JS.
 type projectWithDeployments struct {
 	projectRow
@@ -43,11 +46,27 @@ func (s *server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(dashboardHTML)
 }
 
+func (s *server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
+	// If they're already logged in, skip the splash and go to the app.
+	if s.userFromRequest(r) != nil {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	_, _ = w.Write(loginHTML)
+}
+
 func (s *server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	projects, err := s.store.ListProjects(ctx)
+	u := userFromCtx(r.Context())
+	if u == nil {
+		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		return
+	}
+	projects, err := s.store.ListProjectsForUser(ctx, u.ID)
 	if err != nil {
 		s.log.Error("list projects failed", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

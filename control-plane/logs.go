@@ -38,10 +38,23 @@ func (s *server) handleDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate the deployment exists. Anything else is a 404 — never leak
-	// existence of pods via the streaming endpoint.
+	// Auth: an unauthenticated stranger must never tail another user's
+	// build logs. requireUser middleware guarantees this for /v1/* but
+	// we recheck here so a routing mistake can't silently downgrade it.
+	u := userFromCtx(r.Context())
+	if u == nil {
+		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		return
+	}
+
+	// Ownership-scoped lookup; admins bypass via empty filter. Anything
+	// else is a 404 so we never leak which IDs exist.
+	scope := u.ID
+	if u.IsAdmin {
+		scope = ""
+	}
 	lookupCtx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	dep, err := s.store.GetDeployment(lookupCtx, id)
+	dep, err := s.store.GetDeploymentForUser(lookupCtx, id, scope)
 	cancel()
 	if err != nil {
 		s.log.Error("get deployment failed", "id", id, "err", err)
