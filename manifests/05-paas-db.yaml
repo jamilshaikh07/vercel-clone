@@ -17,6 +17,10 @@ spec:
   instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:16.4
   primaryUpdateStrategy: unsupervised
+  # Mint the paas-db-superuser Secret. The control plane uses it to
+  # provision per-project tenant databases (CREATE ROLE / CREATE DB).
+  # The 'app' user is intentionally NOT a superuser.
+  enableSuperuserAccess: true
 
   bootstrap:
     initdb:

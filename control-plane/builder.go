@@ -229,6 +229,20 @@ func (w *worker) runOne(ctx context.Context, c *claimedDeployment) error {
 		return fmt.Errorf("ensure tenant namespace: %w", err)
 	}
 
+	// Optional Postgres binding: if the user clicked "Add Database" on
+	// this project, inject DATABASE_URL from the tenant-ns Secret and
+	// label the pod so the allow-paas-db-egress NetworkPolicy applies.
+	// Absence of a binding is the common case and not an error.
+	pdb, err := w.store.GetProjectDatabase(ctx, c.ProjectID)
+	if err != nil {
+		// Don't fail the deploy — log and proceed without DB binding.
+		w.log.Error("lookup project db failed", "deployment_id", c.DeploymentID, "err", err)
+	}
+	dbSecretName := ""
+	if pdb != nil {
+		dbSecretName = pdb.SecretName
+	}
+
 	if err := w.k8s.applyDeployment(ctx, tenantNS, deployName,
 		deploymentManifest(deployInput{
 			Name:         deployName,
@@ -239,6 +253,7 @@ func (w *worker) runOne(ctx context.Context, c *claimedDeployment) error {
 			DeploymentID: c.DeploymentID,
 			CommitSHA:    c.CommitSHA,
 			Port:         tenantPort,
+			DBSecretName: dbSecretName,
 		}),
 	); err != nil {
 		return fmt.Errorf("apply deployment: %w", err)
@@ -513,6 +528,11 @@ type deployInput struct {
 	DeploymentID string
 	CommitSHA    string
 	Port         int
+	// DBSecretName, when non-empty, names the Secret in the same
+	// namespace whose `DATABASE_URL` key is wired as an env var. The
+	// pod also picks up the `paas.db=enabled` label so the
+	// allow-paas-db-egress NetworkPolicy permits CNPG traffic.
+	DBSecretName string
 }
 
 func deploymentManifest(in deployInput) map[string]any {
@@ -523,6 +543,22 @@ func deploymentManifest(in deployInput) map[string]any {
 		"paas.project":                 in.Slug,
 		"paas.deployment":              in.DeploymentID,
 		"paas.commit":                  in.ShortSHA,
+	}
+	if in.DBSecretName != "" {
+		labels["paas.db"] = "enabled"
+	}
+	// envVars populated below; declared up-front so we can append.
+	var envVars []any
+	if in.DBSecretName != "" {
+		envVars = append(envVars, map[string]any{
+			"name": "DATABASE_URL",
+			"valueFrom": map[string]any{
+				"secretKeyRef": map[string]any{
+					"name": in.DBSecretName,
+					"key":  "DATABASE_URL",
+				},
+			},
+		})
 	}
 	return map[string]any{
 		"apiVersion": "apps/v1",
@@ -570,30 +606,36 @@ func deploymentManifest(in deployInput) map[string]any {
 						},
 					},
 					"containers": []any{
-						map[string]any{
-							"name":            "app",
-							"image":           in.Image,
-							"imagePullPolicy": "IfNotPresent",
-							"ports": []any{
-								map[string]any{
-									"containerPort": in.Port,
-									"name":          "http",
+						func() map[string]any {
+							c := map[string]any{
+								"name":            "app",
+								"image":           in.Image,
+								"imagePullPolicy": "IfNotPresent",
+								"ports": []any{
+									map[string]any{
+										"containerPort": in.Port,
+										"name":          "http",
+									},
 								},
-							},
-							"resources": map[string]any{
-								"requests": map[string]any{"cpu": "20m", "memory": "32Mi"},
-								"limits":   map[string]any{"cpu": "500m", "memory": "256Mi"},
-							},
-							"securityContext": map[string]any{
-								"allowPrivilegeEscalation": false,
-								"capabilities": map[string]any{
-									"drop": []any{"ALL"},
+								"resources": map[string]any{
+									"requests": map[string]any{"cpu": "20m", "memory": "32Mi"},
+									"limits":   map[string]any{"cpu": "500m", "memory": "256Mi"},
 								},
-								// readOnlyRootFilesystem isn't enforced by
-								// `restricted` — leaving it writable so
-								// nginx can rewrite its temp paths.
-							},
-						},
+								"securityContext": map[string]any{
+									"allowPrivilegeEscalation": false,
+									"capabilities": map[string]any{
+										"drop": []any{"ALL"},
+									},
+									// readOnlyRootFilesystem isn't enforced by
+									// `restricted` — leaving it writable so
+									// nginx can rewrite its temp paths.
+								},
+							}
+							if len(envVars) > 0 {
+								c["env"] = envVars
+							}
+							return c
+						}(),
 					},
 				},
 			},

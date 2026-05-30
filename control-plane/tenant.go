@@ -83,38 +83,53 @@ func tenantNamespaceFor(login string) string {
 // ensureTenant idempotently creates/updates the namespace and all the
 // safety nets that belong with it. Returns the namespace name. Errors
 // are bubbled up — without isolation we must not deploy.
-func (w *worker) ensureTenant(ctx context.Context, login string) (string, error) {
+//
+// Callable from any subsystem that has a *kubeClient — both the build
+// worker (per-deploy) and the HTTP API (e.g. attaching a database before
+// the first deploy has happened).
+func ensureTenant(ctx context.Context, k *kubeClient, login string) (string, error) {
 	ns := tenantNamespaceFor(login)
-	if err := w.k8s.applyNamespace(ctx, ns, tenantNamespaceManifest(ns, login)); err != nil {
+	if err := k.applyNamespace(ctx, ns, tenantNamespaceManifest(ns, login)); err != nil {
 		return "", fmt.Errorf("apply namespace %s: %w", ns, err)
 	}
-	if err := w.k8s.applyResourceQuota(ctx, ns, "tenant", tenantResourceQuotaManifest(ns)); err != nil {
+	if err := k.applyResourceQuota(ctx, ns, "tenant", tenantResourceQuotaManifest(ns)); err != nil {
 		return "", fmt.Errorf("apply quota: %w", err)
 	}
-	if err := w.k8s.applyLimitRange(ctx, ns, "tenant", tenantLimitRangeManifest(ns)); err != nil {
+	if err := k.applyLimitRange(ctx, ns, "tenant", tenantLimitRangeManifest(ns)); err != nil {
 		return "", fmt.Errorf("apply limitrange: %w", err)
 	}
-	if err := w.k8s.applyNetworkPolicy(ctx, ns, "default-deny", tenantDefaultDenyNetworkPolicyManifest(ns)); err != nil {
+	if err := k.applyNetworkPolicy(ctx, ns, "default-deny", tenantDefaultDenyNetworkPolicyManifest(ns)); err != nil {
 		return "", fmt.Errorf("apply default-deny: %w", err)
 	}
-	if err := w.k8s.applyNetworkPolicy(ctx, ns, "allow-traefik-ingress", tenantAllowTraefikIngressManifest(ns)); err != nil {
+	if err := k.applyNetworkPolicy(ctx, ns, "allow-traefik-ingress", tenantAllowTraefikIngressManifest(ns)); err != nil {
 		return "", fmt.Errorf("apply allow-traefik: %w", err)
 	}
-	if err := w.k8s.applyNetworkPolicy(ctx, ns, "allow-public-egress", tenantAllowPublicEgressManifest(ns)); err != nil {
+	if err := k.applyNetworkPolicy(ctx, ns, "allow-public-egress", tenantAllowPublicEgressManifest(ns)); err != nil {
 		return "", fmt.Errorf("apply allow-egress: %w", err)
 	}
-	if err := w.mirrorRegistryPullSecret(ctx, ns); err != nil {
+	// allow-paas-db-egress is podSelector-gated by label paas.db=enabled,
+	// so this NetworkPolicy is safe to apply to every tenant ns up-front
+	// (pods without the label remain blocked from reaching paas-db).
+	if err := k.applyNetworkPolicy(ctx, ns, "allow-paas-db-egress", tenantAllowPaasDBEgressManifest(ns)); err != nil {
+		return "", fmt.Errorf("apply allow-paas-db: %w", err)
+	}
+	if err := mirrorRegistryPullSecret(ctx, k, ns); err != nil {
 		return "", fmt.Errorf("mirror registry pull secret: %w", err)
 	}
 	return ns, nil
+}
+
+// Worker convenience wrapper so the existing call sites stay untouched.
+func (w *worker) ensureTenant(ctx context.Context, login string) (string, error) {
+	return ensureTenant(ctx, w.k8s, login)
 }
 
 // mirrorRegistryPullSecret copies paas-system/registry-dockercfg into the
 // tenant namespace, so the kubelet has credentials to pull tenant images
 // from the in-cluster registry. The source Secret is small and stable,
 // so we just read+write on every call instead of caching.
-func (w *worker) mirrorRegistryPullSecret(ctx context.Context, tenantNS string) error {
-	data, err := w.k8s.getSecretData(ctx, buildNamespace, dockerCfgSecret)
+func mirrorRegistryPullSecret(ctx context.Context, k *kubeClient, tenantNS string) error {
+	data, err := k.getSecretData(ctx, buildNamespace, dockerCfgSecret)
 	if err != nil {
 		return err
 	}
@@ -125,7 +140,7 @@ func (w *worker) mirrorRegistryPullSecret(ctx context.Context, tenantNS string) 
 	if !ok || len(body) == 0 {
 		return fmt.Errorf("source secret %s/%s missing .dockerconfigjson", buildNamespace, dockerCfgSecret)
 	}
-	return w.k8s.applyDockerConfigSecret(ctx, tenantNS, dockerCfgSecret, body)
+	return k.applyDockerConfigSecret(ctx, tenantNS, dockerCfgSecret, body)
 }
 
 // --- Manifests ----------------------------------------------------------
@@ -323,6 +338,56 @@ func tenantAllowPublicEgressManifest(namespace string) map[string]any {
 								},
 							},
 						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// tenantAllowPaasDBEgressManifest unlocks egress from tenant pods to the
+// shared CNPG cluster's primary endpoint. It is podSelector-gated by
+// label paas.db=enabled so only opt-in pods (those whose project has a
+// provisioned database) get the exception. All other tenant pods stay
+// fully isolated by the broader default-deny + allow-public-egress
+// policy chain.
+func tenantAllowPaasDBEgressManifest(namespace string) map[string]any {
+	return map[string]any{
+		"apiVersion": "networking.k8s.io/v1",
+		"kind":       "NetworkPolicy",
+		"metadata": map[string]any{
+			"name":      "allow-paas-db-egress",
+			"namespace": namespace,
+		},
+		"spec": map[string]any{
+			"podSelector": map[string]any{
+				"matchLabels": map[string]any{
+					"paas.db": "enabled",
+				},
+			},
+			"policyTypes": []any{"Egress"},
+			"egress": []any{
+				map[string]any{
+					"to": []any{
+						map[string]any{
+							"namespaceSelector": map[string]any{
+								"matchLabels": map[string]any{
+									"kubernetes.io/metadata.name": "paas-system",
+								},
+							},
+							// CNPG labels every cluster pod with this; we
+							// pin to paas-db so a tenant pod cannot reach
+							// any future shared cluster (e.g. an internal
+							// metrics DB) via this rule.
+							"podSelector": map[string]any{
+								"matchLabels": map[string]any{
+									"cnpg.io/cluster": "paas-db",
+								},
+							},
+						},
+					},
+					"ports": []any{
+						map[string]any{"protocol": "TCP", "port": 5432},
 					},
 				},
 			},

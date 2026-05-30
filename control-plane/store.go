@@ -732,6 +732,91 @@ func (s *store) MarkFailed(ctx context.Context, deploymentID, reason string) err
 	return err
 }
 
+// ----- per-project databases (Slice C) -----
+
+type projectDatabase struct {
+	ID         string
+	ProjectID  string
+	DBName     string
+	RoleName   string
+	Password   string
+	Host       string
+	Port       int
+	SecretName string
+}
+
+// GetProjectDatabaseForOwner returns the row for a project the caller owns
+// (or NULL ownership filter if userID is the admin sentinel ""). Returns
+// (nil, nil) when no DB has been provisioned yet — that is NOT an error.
+func (s *store) GetProjectDatabaseForOwner(ctx context.Context, projectID, ownerUserID string) (*projectDatabase, error) {
+	q := `
+		SELECT pd.id::text, pd.project_id::text, pd.db_name, pd.role_name,
+		       pd.password, pd.host, pd.port, pd.secret_name
+		  FROM project_databases pd
+		  JOIN projects p ON p.id = pd.project_id
+		 WHERE pd.project_id = $1::uuid
+		   AND ($2 = '' OR p.owner_user_id = $2::uuid)
+	`
+	row := s.pool.QueryRow(ctx, q, projectID, ownerUserID)
+	var pd projectDatabase
+	err := row.Scan(&pd.ID, &pd.ProjectID, &pd.DBName, &pd.RoleName,
+		&pd.Password, &pd.Host, &pd.Port, &pd.SecretName)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &pd, nil
+}
+
+// GetProjectDatabase is the worker-side variant used by the builder. It does
+// NOT check ownership — the worker is trusted server-side code.
+func (s *store) GetProjectDatabase(ctx context.Context, projectID string) (*projectDatabase, error) {
+	return s.GetProjectDatabaseForOwner(ctx, projectID, "")
+}
+
+// CreateProjectDatabase persists the metadata row. The actual CREATE ROLE /
+// CREATE DATABASE happens in db_provisioner.go BEFORE this call so a row
+// only ever exists when the underlying objects exist. Returns ErrAlreadyExists
+// if the project already has a DB.
+func (s *store) CreateProjectDatabase(ctx context.Context, pd projectDatabase) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO project_databases
+			(project_id, db_name, role_name, password, host, port, secret_name)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7)
+	`, pd.ProjectID, pd.DBName, pd.RoleName, pd.Password, pd.Host, pd.Port, pd.SecretName)
+	return err
+}
+
+// GetProjectForOwner returns minimal project info used by the DB-create
+// endpoint to know the tenant namespace + slug for naming the K8s Secret.
+type projectInfo struct {
+	ID            string
+	Slug          string
+	TenantLogin   string
+	OwnerUserID   string
+}
+
+func (s *store) GetProjectForOwner(ctx context.Context, projectID, ownerUserID string) (*projectInfo, error) {
+	q := `
+		SELECT p.id::text, p.slug, COALESCE(i.account_login, ''), COALESCE(p.owner_user_id::text, '')
+		  FROM projects p
+		  LEFT JOIN installations i ON i.id = p.installation_id
+		 WHERE p.id = $1::uuid
+		   AND ($2 = '' OR p.owner_user_id = $2::uuid)
+	`
+	row := s.pool.QueryRow(ctx, q, projectID, ownerUserID)
+	var p projectInfo
+	if err := row.Scan(&p.ID, &p.Slug, &p.TenantLogin, &p.OwnerUserID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &p, nil
+}
+
 // slugify turns "jamilshaikh07/paas-sample-hello" into
 // "jamilshaikh07-paas-sample-hello" (URL-safe, lower-case, no double dashes).
 var slugUnsafe = regexp.MustCompile(`[^a-z0-9-]+`)

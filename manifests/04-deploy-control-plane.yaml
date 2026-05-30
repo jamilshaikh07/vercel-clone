@@ -82,6 +82,13 @@ spec:
                   key: session-secret
             - name: DASHBOARD_BASE_URL
               value: https://paas.jamilshaikh.in
+            # Superuser connection for the tenant-DB provisioner. Only
+            # used by db_provisioner.go — never by the app data path.
+            - name: PG_SUPERUSER_URI
+              valueFrom:
+                secretKeyRef:
+                  name: paas-db-superuser
+                  key: uri
           volumeMounts:
             - name: github-app-key
               mountPath: /etc/github-app

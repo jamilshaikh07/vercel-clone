@@ -103,6 +103,41 @@
       border-radius: 20px;
     }
     .project-head .prod-link:hover { background: rgba(46, 204, 113, 0.1); text-decoration: none; }
+    /* Storage panel — per-project Postgres binding ("Add Database"). */
+    .storage {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-dim);
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    }
+    .storage .label {
+      text-transform: uppercase; letter-spacing: 0.06em;
+      font-size: 10px; font-weight: 600; color: var(--text-dim);
+    }
+    .storage .pill {
+      font-family: ui-monospace, monospace;
+      padding: 2px 8px; border-radius: 6px;
+      background: var(--panel-2); border: 1px solid var(--border);
+      color: var(--text);
+    }
+    .storage .btn-add {
+      background: transparent; border: 1px dashed var(--border); color: var(--text-dim);
+      padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer;
+    }
+    .storage .btn-add:hover { color: var(--text); border-color: var(--accent); border-style: solid; }
+    .storage .btn-add[disabled] { opacity: 0.5; cursor: progress; }
+    .storage .copy {
+      background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+      padding: 2px 8px; border-radius: 6px; font-size: 11px; cursor: pointer;
+    }
+    .storage .copy:hover { color: var(--text); border-color: var(--accent); }
+    .storage .reveal {
+      background: transparent; border: none; color: var(--text-dim);
+      cursor: pointer; font-size: 11px; padding: 0 4px;
+    }
+    .storage .reveal:hover { color: var(--text); }
+    .storage .err { color: var(--err); }
     .deployments { padding: 4px 0; }
     .deployment {
       display: grid;
@@ -283,18 +318,26 @@ function render(data) {
       : '';
 
     return `
-      <div class="project">
+      <div class="project" data-project-id="${p.id}">
         <div class="project-head">
           <span class="slug">${escapeHTML(p.slug)}</span>
           <span class="repo">${escapeHTML(p.full_name)}</span>
           ${prodLink}
           <span class="branch">${escapeHTML(p.production_branch)}</span>
         </div>
+        <div class="storage" data-storage-for="${p.id}">
+          <span class="label">Storage</span>
+          <span class="loading">loading…</span>
+        </div>
         <div class="deployments">${depHTML}</div>
       </div>
     `;
   }).join('');
   projectsEl.innerHTML = html;
+
+  // Kick off storage fetches in parallel; they fill in their slots
+  // independently so the deployment list isn't blocked on them.
+  data.projects.forEach(p => loadStorage(p.id));
 
   // Re-highlight the previously-selected row, if it's still in the list.
   if (selectedId) {
@@ -305,6 +348,100 @@ function render(data) {
   projectsEl.querySelectorAll('.deployment').forEach(el => {
     el.addEventListener('click', () => openLogs(el));
   });
+}
+
+async function loadStorage(projectID) {
+  const slot = projectsEl.querySelector(`.storage[data-storage-for="${projectID}"]`);
+  if (!slot) return;
+  try {
+    const r = await fetch('/v1/projects/' + projectID + '/database', {
+      cache: 'no-store', credentials: 'same-origin',
+    });
+    if (r.status === 401) { window.location.href = '/login'; return; }
+    if (!r.ok) {
+      slot.innerHTML = `<span class="label">Storage</span><span class="err">unavailable</span>`;
+      return;
+    }
+    const data = await r.json();
+    renderStorage(slot, projectID, data.database);
+  } catch (e) {
+    slot.innerHTML = `<span class="label">Storage</span><span class="err">${escapeHTML(String(e))}</span>`;
+  }
+}
+
+function renderStorage(slot, projectID, db) {
+  if (!db) {
+    slot.innerHTML = `
+      <span class="label">Storage</span>
+      <button class="btn-add" data-add-db="${projectID}">+ Add Postgres</button>
+      <span style="font-size:11px;">Connect a per-project Postgres database. The next deploy will receive <code>DATABASE_URL</code> as an env var.</span>
+    `;
+    slot.querySelector('[data-add-db]').addEventListener('click', (ev) => {
+      addDatabase(projectID, ev.currentTarget);
+    });
+    return;
+  }
+  // Provisioned. Show readable summary + a copy button for the full URI
+  // and a reveal toggle for the password. The URI itself is never written
+  // to the DOM until the user clicks reveal — paranoia for shoulder-surfers.
+  slot.innerHTML = `
+    <span class="label">Postgres</span>
+    <span class="pill">${escapeHTML(db.db_name)}</span>
+    <span style="font-size:11px;">user <span class="pill">${escapeHTML(db.role_name)}</span></span>
+    <span style="font-size:11px;">host <span class="pill">${escapeHTML(db.host)}:${db.port}</span></span>
+    <span style="font-size:11px; color: var(--text-dim);">env: <code>DATABASE_URL</code></span>
+    <button class="copy" data-copy-uri>Copy URI</button>
+    <button class="reveal" data-reveal-pw>Reveal password</button>
+    <span class="pill" data-pw-slot style="display:none;"></span>
+  `;
+  slot.querySelector('[data-copy-uri]').addEventListener('click', async (ev) => {
+    try {
+      await navigator.clipboard.writeText(db.uri);
+      ev.currentTarget.textContent = 'Copied ✓';
+      setTimeout(() => { ev.currentTarget.textContent = 'Copy URI'; }, 1500);
+    } catch (_) {
+      ev.currentTarget.textContent = 'Copy failed';
+    }
+  });
+  const pwBtn = slot.querySelector('[data-reveal-pw]');
+  const pwSlot = slot.querySelector('[data-pw-slot]');
+  pwBtn.addEventListener('click', () => {
+    if (pwSlot.style.display === 'none') {
+      pwSlot.textContent = db.password;
+      pwSlot.style.display = '';
+      pwBtn.textContent = 'Hide';
+    } else {
+      pwSlot.style.display = 'none';
+      pwSlot.textContent = '';
+      pwBtn.textContent = 'Reveal password';
+    }
+  });
+}
+
+async function addDatabase(projectID, btn) {
+  btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = 'Provisioning…';
+  try {
+    const r = await fetch('/v1/projects/' + projectID + '/database', {
+      method: 'POST',
+      cache: 'no-store', credentials: 'same-origin',
+    });
+    if (r.status === 401) { window.location.href = '/login'; return; }
+    if (!r.ok) {
+      const msg = await r.text();
+      const slot = projectsEl.querySelector(`.storage[data-storage-for="${projectID}"]`);
+      if (slot) slot.innerHTML = `<span class="label">Storage</span><span class="err">${escapeHTML(msg.trim() || 'failed')}</span>`;
+      return;
+    }
+    const data = await r.json();
+    const slot = projectsEl.querySelector(`.storage[data-storage-for="${projectID}"]`);
+    if (slot) renderStorage(slot, projectID, data.database);
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = original;
+    alert('Database provisioning failed: ' + e);
+  }
 }
 
 function openLogs(el) {

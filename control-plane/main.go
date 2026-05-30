@@ -118,6 +118,13 @@ func main() {
 	}
 	log.Info("auth ready", "base_url", authCfg.baseURL)
 
+	// Optional: enables /v1/projects/{id}/database. Absent in dev where
+	// CNPG superuser access is off; the endpoint returns 503 in that case.
+	globalSuperuserURI = strings.TrimSpace(os.Getenv("PG_SUPERUSER_URI"))
+	if globalSuperuserURI == "" {
+		log.Warn("PG_SUPERUSER_URI not set — tenant DB provisioning disabled")
+	}
+
 	s := &server{
 		webhookSecret: []byte(secret),
 		store:         newStore(pool),
@@ -153,10 +160,12 @@ func main() {
 	// Authenticated API surface — JSON mode returns 401 so the SPA can
 	// detect logout and bounce to /login itself.
 	apiHandlers := map[string]http.HandlerFunc{
-		"GET /v1/me":                          s.handleMe,
-		"GET /v1/projects":                    s.handleListProjects,
-		"GET /v1/deployments":                 s.handleListDeployments,
-		"GET /v1/deployments/{id}/logs":       s.handleDeploymentLogs,
+		"GET /v1/me":                            s.handleMe,
+		"GET /v1/projects":                      s.handleListProjects,
+		"GET /v1/deployments":                   s.handleListDeployments,
+		"GET /v1/deployments/{id}/logs":         s.handleDeploymentLogs,
+		"GET /v1/projects/{id}/database":        s.handleGetProjectDatabase,
+		"POST /v1/projects/{id}/database":       s.handleCreateProjectDatabase,
 	}
 	for pat, h := range apiHandlers {
 		mux.Handle(pat, s.requireUser(h, "json"))
