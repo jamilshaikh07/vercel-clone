@@ -408,6 +408,159 @@ func (w *worker) waitForJob(ctx context.Context, namespace, name string) error {
 
 // --- manifest builders -----------------------------------------------------
 
+// autoDockerfileScript runs after `git checkout` inside the clone
+// initContainer. It writes /workspace/Dockerfile when the user's repo
+// doesn't already have one, so students with a plain Vite / CRA /
+// Astro / Gatsby / static site can deploy with zero infra config.
+//
+// Detection order:
+//
+//  1. Existing Dockerfile  → leave it alone (escape hatch for power users).
+//  2. package.json present → grep its dependencies for a known build tool
+//     and generate a multi-stage build: Node builds to <outdir>, then
+//     nginx-unprivileged serves it on port 8080 (matches tenantPort).
+//  3. index.html at root   → pure static site, single-stage nginx copy.
+//  4. None of the above    → exit 1 with a friendly explanation; the
+//     deployment is marked failed and the dashboard shows the message.
+//
+// The generated nginx config does SPA fallback (try_files … /index.html)
+// which is correct for client-routed apps and harmless for plain static.
+// All output ends up under /usr/share/nginx/html which the unprivileged
+// nginx image (uid 101) can read but not modify at runtime — same as
+// any other tenant pod under our PSA `restricted` namespace.
+const autoDockerfileScript = `
+            # ---- Auto-Dockerfile (Slice D) ----
+            # Always emit a .dockerignore so context files we don't want
+            # leaking into the served document root (git history, node
+            # build caches, the generated Dockerfile itself) stay out.
+            # Kaniko reads --dockerfile=Dockerfile BEFORE applying this,
+            # so listing 'Dockerfile' here is safe.
+            cat > .dockerignore <<DI
+.git
+.gitignore
+.dockerignore
+Dockerfile
+node_modules
+.next
+.nuxt
+.cache
+DI
+
+            if [ -f Dockerfile.user ] || [ -f Dockerfile.original ]; then
+                : # placeholder — power-users can override later
+            fi
+            if [ -f Dockerfile ] && [ ! -s .dockerignore.paas-generated ]; then
+                # NOTE: the .dockerignore we just wrote shouldn't shadow a
+                # user's Dockerfile. If they have one, leave everything
+                # alone and let them own the build.
+                echo "auto-detect: using user-provided Dockerfile"
+                rm -f .dockerignore
+            elif [ -f package.json ]; then
+                # Pick the first framework whose dep we find. Order matters:
+                # Next/Nuxt come last because they need their own SSR server
+                # (handled as static export for MVP).
+                if grep -q '"vite"' package.json; then
+                    FW="vite";    OUTDIR="dist"
+                elif grep -q '"react-scripts"' package.json; then
+                    FW="cra";     OUTDIR="build"
+                elif grep -q '"astro"' package.json; then
+                    FW="astro";   OUTDIR="dist"
+                elif grep -q '"gatsby"' package.json; then
+                    FW="gatsby";  OUTDIR="public"
+                elif grep -q '"@sveltejs/kit"' package.json; then
+                    FW="sveltekit"; OUTDIR="build"
+                elif grep -q '"parcel"' package.json; then
+                    FW="parcel";  OUTDIR="dist"
+                else
+                    echo "ERROR: auto-detect found package.json but no recognised"
+                    echo "       build tool. Supported: vite, react-scripts (CRA),"
+                    echo "       astro, gatsby, @sveltejs/kit, parcel."
+                    echo "       Either add one of those, or commit a Dockerfile."
+                    exit 1
+                fi
+
+                # Choose the lockfile-aware install command so npm ci works
+                # when there's a package-lock.json, falling back to install
+                # for repos that only ship package.json. yarn/pnpm get the
+                # same treatment.
+                if   [ -f package-lock.json ]; then INSTALL="npm ci"
+                elif [ -f yarn.lock ];         then INSTALL="corepack enable && yarn install --frozen-lockfile"
+                elif [ -f pnpm-lock.yaml ];    then INSTALL="corepack enable && pnpm install --frozen-lockfile"
+                else                                INSTALL="npm install"
+                fi
+                BUILD="npm run build"
+                # yarn / pnpm: keep using their wrappers so build scripts
+                # that rely on workspace resolution still work.
+                if [ -f yarn.lock ];      then BUILD="yarn build"; fi
+                if [ -f pnpm-lock.yaml ]; then BUILD="pnpm build"; fi
+
+                echo "auto-detect: framework=$FW outdir=$OUTDIR install='$INSTALL' build='$BUILD'"
+
+                # The 'RUN { echo ...; } > default.conf' trick injects the
+                # nginx config inline. Each '$$' is Dockerfile-escape for a
+                # single '$' passed to the shell; the shell sees single-
+                # quoted '$uri' and writes a literal '$uri' nginx variable.
+                # Kaniko 1.23 doesn't support BuildKit heredocs, so this is
+                # the most portable form.
+                cat > Dockerfile <<EOF
+# --- AUTO-GENERATED by paas (Slice D) — framework: $FW ---
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package*.json yarn.lock* pnpm-lock.yaml* ./
+RUN $INSTALL
+COPY . .
+RUN $BUILD
+
+FROM nginxinc/nginx-unprivileged:1.27-alpine
+USER 0
+COPY --from=build /app/$OUTDIR /usr/share/nginx/html
+RUN { \\
+  echo 'server {'; \\
+  echo '  listen 8080;'; \\
+  echo '  server_name _;'; \\
+  echo '  root /usr/share/nginx/html;'; \\
+  echo '  index index.html;'; \\
+  echo '  location / { try_files \$\$uri \$\$uri/ /index.html; }'; \\
+  echo '  location ~* \\\\.(?:js|css|woff2?|png|jpg|jpeg|svg|gif|ico|webp)\$\$ { add_header Cache-Control "public, max-age=31536000, immutable"; }'; \\
+  echo '}'; \\
+} > /etc/nginx/conf.d/default.conf
+USER 101
+EXPOSE 8080
+EOF
+                echo "auto-detect: wrote Dockerfile ($(wc -l < Dockerfile) lines)"
+
+            elif [ -f index.html ]; then
+                # Pure static site, no build step. The .dockerignore above
+                # keeps .git and the generated Dockerfile out of the served
+                # document root.
+                echo "auto-detect: pure-static site (no package.json, found index.html)"
+                cat > Dockerfile <<'EOF'
+# --- AUTO-GENERATED by paas (Slice D) — pure static ---
+FROM nginxinc/nginx-unprivileged:1.27-alpine
+USER 0
+COPY --chown=101:101 . /usr/share/nginx/html
+RUN { \
+  echo 'server {'; \
+  echo '  listen 8080;'; \
+  echo '  server_name _;'; \
+  echo '  root /usr/share/nginx/html;'; \
+  echo '  index index.html;'; \
+  echo '  location / { try_files $$uri $$uri/ /index.html; }'; \
+  echo '}'; \
+} > /etc/nginx/conf.d/default.conf
+USER 101
+EXPOSE 8080
+EOF
+
+            else
+                echo "ERROR: no Dockerfile, package.json, or index.html at repo root."
+                echo "       paas couldn't figure out how to build this repo."
+                echo "       Add one of those three files and push again."
+                exit 1
+            fi
+            # ---- /Auto-Dockerfile ----
+`
+
 type buildJobInput struct {
 	Name          string
 	Namespace     string
@@ -434,7 +587,8 @@ func buildJobManifest(in buildJobInput) map[string]any {
             git clone --quiet "$GIT_CLONE_URL" /workspace
             cd /workspace
             git -c advice.detachedHead=false checkout --quiet "$COMMIT_SHA"
-            echo "cloned $(git rev-parse --short HEAD) at $(date -u +%FT%TZ)"`
+            echo "cloned $(git rev-parse --short HEAD) at $(date -u +%FT%TZ)"
+` + autoDockerfileScript
 
 	return map[string]any{
 		"apiVersion": "batch/v1",
