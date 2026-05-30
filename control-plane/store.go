@@ -604,6 +604,11 @@ type claimedDeployment struct {
 	CommitSHA        string
 	Ref              string
 	ProductionBranch string
+	// TenantLogin is the GitHub account name (user or org) that installed
+	// the App. It's the source of truth for which tenant namespace this
+	// deployment belongs in, even before the GitHub user has signed up
+	// for our dashboard.
+	TenantLogin string
 }
 
 // ClaimNextQueued atomically transitions the oldest 'queued' deployment to
@@ -638,9 +643,10 @@ func (s *store) ClaimNextQueued(ctx context.Context) (*claimedDeployment, error)
 		 WHERE d.id = next.id
 		   AND p.id = d.project_id
 		RETURNING d.id::text, d.project_id::text, p.slug, p.full_name,
-		          p.installation_id, d.commit_sha, d.ref, p.production_branch
+		          p.installation_id, d.commit_sha, d.ref, p.production_branch,
+		          (SELECT account_login FROM installations WHERE id = p.installation_id)
 	`).Scan(&c.DeploymentID, &c.ProjectID, &c.Slug, &repoFullName,
-		&installationID, &c.CommitSHA, &c.Ref, &c.ProductionBranch)
+		&installationID, &c.CommitSHA, &c.Ref, &c.ProductionBranch, &c.TenantLogin)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

@@ -13,6 +13,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -254,6 +255,61 @@ func (k *kubeClient) getJobPhase(ctx context.Context, namespace, name string) (*
 
 // --- Secret -------------------------------------------------------------
 
+// getSecretData reads a Secret and returns its base64-decoded `data` map.
+// Returns (nil, nil) when the Secret doesn't exist.
+func (k *kubeClient) getSecretData(ctx context.Context, namespace, name string) (map[string][]byte, error) {
+	path := fmt.Sprintf("/api/v1/namespaces/%s/secrets/%s",
+		url.PathEscape(namespace), url.PathEscape(name))
+	status, body, err := k.do(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if status == http.StatusNotFound {
+		return nil, nil
+	}
+	if status < 200 || status >= 300 {
+		return nil, fmt.Errorf("get secret %s/%s: status %d: %s", namespace, name, status, snippet(body))
+	}
+	var s struct {
+		Data map[string]string `json:"data"`
+	}
+	if err := json.Unmarshal(body, &s); err != nil {
+		return nil, fmt.Errorf("decode secret: %w", err)
+	}
+	out := make(map[string][]byte, len(s.Data))
+	for k, v := range s.Data {
+		dec, err := base64.StdEncoding.DecodeString(v)
+		if err != nil {
+			return nil, fmt.Errorf("decode key %s: %w", k, err)
+		}
+		out[k] = dec
+	}
+	return out, nil
+}
+
+// applyDockerConfigSecret creates a kubernetes.io/dockerconfigjson Secret
+// in the target namespace, used by tenant pods' imagePullSecrets. Idempotent.
+func (k *kubeClient) applyDockerConfigSecret(ctx context.Context, namespace, name string, dockerConfigJSON []byte) error {
+	path := fmt.Sprintf("/api/v1/namespaces/%s/secrets", url.PathEscape(namespace))
+	obj := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"type":       "kubernetes.io/dockerconfigjson",
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": namespace,
+			"labels": map[string]any{
+				"app.kubernetes.io/managed-by": "control-plane",
+				"app.kubernetes.io/component":  "registry-pull",
+			},
+		},
+		"data": map[string]any{
+			".dockerconfigjson": base64.StdEncoding.EncodeToString(dockerConfigJSON),
+		},
+	}
+	return k.apply(ctx, path, name, obj)
+}
+
 func (k *kubeClient) applySecret(ctx context.Context, namespace, name string, stringData map[string]string, labels map[string]string) error {
 	path := fmt.Sprintf("/api/v1/namespaces/%s/secrets", url.PathEscape(namespace))
 	obj := map[string]any{
@@ -285,6 +341,27 @@ func (k *kubeClient) applyService(ctx context.Context, namespace, name string, o
 func (k *kubeClient) applyIngressRoute(ctx context.Context, namespace, name string, obj map[string]any) error {
 	// Traefik CRD — GVR: traefik.io/v1alpha1, ingressroutes
 	path := fmt.Sprintf("/apis/traefik.io/v1alpha1/namespaces/%s/ingressroutes", url.PathEscape(namespace))
+	return k.apply(ctx, path, name, obj)
+}
+
+// --- Namespace / Quota / NetworkPolicy (tenant isolation, Slice B) ------
+
+func (k *kubeClient) applyNamespace(ctx context.Context, name string, obj map[string]any) error {
+	return k.apply(ctx, "/api/v1/namespaces", name, obj)
+}
+
+func (k *kubeClient) applyResourceQuota(ctx context.Context, namespace, name string, obj map[string]any) error {
+	path := fmt.Sprintf("/api/v1/namespaces/%s/resourcequotas", url.PathEscape(namespace))
+	return k.apply(ctx, path, name, obj)
+}
+
+func (k *kubeClient) applyLimitRange(ctx context.Context, namespace, name string, obj map[string]any) error {
+	path := fmt.Sprintf("/api/v1/namespaces/%s/limitranges", url.PathEscape(namespace))
+	return k.apply(ctx, path, name, obj)
+}
+
+func (k *kubeClient) applyNetworkPolicy(ctx context.Context, namespace, name string, obj map[string]any) error {
+	path := fmt.Sprintf("/apis/networking.k8s.io/v1/namespaces/%s/networkpolicies", url.PathEscape(namespace))
 	return k.apply(ctx, path, name, obj)
 }
 

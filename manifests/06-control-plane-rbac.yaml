@@ -1,9 +1,17 @@
 ---
-# RBAC the control plane needs to drive end-to-end deployments.
+# RBAC for the control plane.
 #
-# Scope is intentionally tight: namespaced Role inside paas-system, not a
-# ClusterRole. When we later split tenant workloads into paas-deployments
-# we'll add a second RoleBinding there, not widen this one.
+# Two scopes here:
+#   * Namespaced Role in paas-system  — for Secrets the build Jobs need,
+#                                       the build Jobs themselves, and pod
+#                                       log streaming for the SSE endpoint.
+#   * ClusterRole for tenant ops      — for creating per-user
+#                                       paas-tenant-* namespaces and the
+#                                       Deployment/Service/IngressRoute/
+#                                       ResourceQuota/LimitRange/NetworkPolicy
+#                                       objects that live inside them.
+# The cluster-scoped binding gives the control-plane only the verbs it
+# actually needs across all namespaces, never raw cluster-admin.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -20,22 +28,14 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "create", "update", "patch", "delete"]
-  # Build workloads.
+  # Build workloads run in paas-system (kept here, not in tenant
+  # namespaces, so build pods can't see tenant Secrets if isolation
+  # ever leaks).
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["get", "list", "watch", "create", "delete"]
-  # Tenant workloads.
-  - apiGroups: ["apps"]
-    resources: ["deployments"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: [""]
-    resources: ["services"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Routing.
-  - apiGroups: ["traefik.io"]
-    resources: ["ingressroutes"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Read access for future log streaming + status display.
+  # Pods + their logs in paas-system — used by /v1/deployments/{id}/logs
+  # to tail the build container.
   - apiGroups: [""]
     resources: ["pods", "pods/log"]
     verbs: ["get", "list", "watch"]
@@ -53,3 +53,49 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: control-plane
+---
+# Cluster-wide perms strictly needed for tenant onboarding + deploys.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: control-plane-tenant
+rules:
+  # Create + label tenant namespaces. We never delete namespaces from
+  # the control plane — operator does it manually if needed.
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # Quota + limits + network policy stamped onto each tenant namespace.
+  - apiGroups: [""]
+    resources: ["resourcequotas", "limitranges"]
+    verbs: ["get", "create", "update", "patch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "create", "update", "patch", "delete"]
+  # Tenant workloads themselves.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["traefik.io"]
+    resources: ["ingressroutes"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Per-tenant Secrets (the DATABASE_URL drop in Slice C lives here).
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: control-plane-tenant
+subjects:
+  - kind: ServiceAccount
+    name: control-plane
+    namespace: paas-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: control-plane-tenant

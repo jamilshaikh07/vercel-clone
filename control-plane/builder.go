@@ -32,9 +32,11 @@ import (
 )
 
 const (
-	buildNamespace  = "paas-system"
-	deployNamespace = "paas-system"
-	tenantHostZone  = "jamilshaikh.in"
+	buildNamespace = "paas-system"
+	// Tenant Deployment/Service/IngressRoute now live in
+	// paas-tenant-<login> — see tenant.go. Build Jobs stay in paas-system
+	// so build-time Secrets are never visible from tenant pods.
+	tenantHostZone = "jamilshaikh.in"
 	kanikoImage     = "gcr.io/kaniko-project/executor:v1.23.2"
 	// TODO: detect from the built image's Config.ExposedPorts. For MVP we
 	// assume the modern non-root convention (most rootless images use 8080+).
@@ -214,10 +216,23 @@ func (w *worker) runOne(ctx context.Context, c *claimedDeployment) error {
 		return fmt.Errorf("mark deploying: %w", err)
 	}
 
-	if err := w.k8s.applyDeployment(ctx, deployNamespace, deployName,
+	// Tenant isolation: every deploy lives inside paas-tenant-<login>.
+	// ensureTenant is idempotent — on the warm path it's four GETs that
+	// confirm the namespace, quota, limits, and network policies already
+	// exist. The build Job + per-build Secret intentionally stay in
+	// paas-system; tenant pods never see them.
+	if c.TenantLogin == "" {
+		return fmt.Errorf("deployment %s has no tenant login — refusing to deploy unscoped", c.DeploymentID)
+	}
+	tenantNS, err := w.ensureTenant(ctx, c.TenantLogin)
+	if err != nil {
+		return fmt.Errorf("ensure tenant namespace: %w", err)
+	}
+
+	if err := w.k8s.applyDeployment(ctx, tenantNS, deployName,
 		deploymentManifest(deployInput{
 			Name:         deployName,
-			Namespace:    deployNamespace,
+			Namespace:    tenantNS,
 			Slug:         c.Slug,
 			ShortSHA:     shortSHA,
 			Image:        pullImage,
@@ -228,13 +243,13 @@ func (w *worker) runOne(ctx context.Context, c *claimedDeployment) error {
 	); err != nil {
 		return fmt.Errorf("apply deployment: %w", err)
 	}
-	if err := w.k8s.applyService(ctx, deployNamespace, deployName,
-		serviceManifest(deployName, deployNamespace, c.Slug, shortSHA, tenantPort),
+	if err := w.k8s.applyService(ctx, tenantNS, deployName,
+		serviceManifest(deployName, tenantNS, c.Slug, shortSHA, tenantPort),
 	); err != nil {
 		return fmt.Errorf("apply service: %w", err)
 	}
-	if err := w.k8s.applyIngressRoute(ctx, deployNamespace, deployName,
-		ingressRouteManifest(deployName, deployNamespace, host, c.Slug, shortSHA),
+	if err := w.k8s.applyIngressRoute(ctx, tenantNS, deployName,
+		ingressRouteManifest(deployName, tenantNS, host, c.Slug, shortSHA),
 	); err != nil {
 		return fmt.Errorf("apply ingressroute: %w", err)
 	}
@@ -253,8 +268,8 @@ func (w *worker) runOne(ctx context.Context, c *claimedDeployment) error {
 	if c.Ref == "refs/heads/"+c.ProductionBranch {
 		prodHost := fmt.Sprintf("%s.%s", c.Slug, tenantHostZone)
 		prodRouteName := "prod-" + c.Slug
-		if err := w.k8s.applyIngressRoute(ctx, deployNamespace, prodRouteName,
-			productionAliasManifest(prodRouteName, deployNamespace, prodHost, deployName, c.Slug),
+		if err := w.k8s.applyIngressRoute(ctx, tenantNS, prodRouteName,
+			productionAliasManifest(prodRouteName, tenantNS, prodHost, deployName, c.Slug),
 		); err != nil {
 			// Don't fail the deploy — the per-SHA URL is already serving.
 			w.log.Error("apply production alias failed",
@@ -538,6 +553,22 @@ func deploymentManifest(in deployInput) map[string]any {
 					"imagePullSecrets": []any{
 						map[string]any{"name": dockerCfgSecret},
 					},
+					// Pod-level securityContext: required by PSA `restricted`
+					// in the tenant namespace. The numeric uid/gid match
+					// nginxinc/nginx-unprivileged (101) and most common
+					// non-root distro images. Tenants overriding this in
+					// their own Dockerfile won't be blocked by us — only
+					// the must-have flags (runAsNonRoot, seccomp, no
+					// privilege escalation) are enforced.
+					"securityContext": map[string]any{
+						"runAsNonRoot": true,
+						"runAsUser":    101,
+						"runAsGroup":   101,
+						"fsGroup":      101,
+						"seccompProfile": map[string]any{
+							"type": "RuntimeDefault",
+						},
+					},
 					"containers": []any{
 						map[string]any{
 							"name":            "app",
@@ -552,6 +583,15 @@ func deploymentManifest(in deployInput) map[string]any {
 							"resources": map[string]any{
 								"requests": map[string]any{"cpu": "20m", "memory": "32Mi"},
 								"limits":   map[string]any{"cpu": "500m", "memory": "256Mi"},
+							},
+							"securityContext": map[string]any{
+								"allowPrivilegeEscalation": false,
+								"capabilities": map[string]any{
+									"drop": []any{"ALL"},
+								},
+								// readOnlyRootFilesystem isn't enforced by
+								// `restricted` — leaving it writable so
+								// nginx can rewrite its temp paths.
 							},
 						},
 					},
