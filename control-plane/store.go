@@ -228,6 +228,81 @@ func (s *store) ListRecentDeployments(ctx context.Context, limit int) ([]deploym
 	return out, rows.Err()
 }
 
+// projectRow is the dashboard-facing summary of a project. We intentionally
+// don't expose installation_id or repo_id — those are GitHub-internal IDs.
+type projectRow struct {
+	ID               string `json:"id"`
+	Slug             string `json:"slug"`
+	FullName         string `json:"full_name"`
+	ProductionBranch string `json:"production_branch"`
+	CreatedAt        string `json:"created_at"`
+}
+
+func (s *store) ListProjects(ctx context.Context) ([]projectRow, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id::text, slug, full_name, production_branch,
+		       to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+		  FROM projects
+		 ORDER BY created_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []projectRow
+	for rows.Next() {
+		var p projectRow
+		if err := rows.Scan(&p.ID, &p.Slug, &p.FullName, &p.ProductionBranch, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// ListDeploymentsForProjects returns deployments grouped by project_id, capped
+// at perProject rows per project. One round-trip via a window function so the
+// dashboard renders in O(1) queries regardless of project count.
+func (s *store) ListDeploymentsForProjects(ctx context.Context, projectIDs []string, perProject int) (map[string][]deploymentRow, error) {
+	if len(projectIDs) == 0 {
+		return map[string][]deploymentRow{}, nil
+	}
+	if perProject <= 0 || perProject > 50 {
+		perProject = 10
+	}
+	rows, err := s.pool.Query(ctx, `
+		WITH ranked AS (
+			SELECT d.id::text AS id, d.project_id::text AS project_id,
+			       p.slug, d.commit_sha, d.ref, d.status, d.url, d.image,
+			       to_char(d.created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at,
+			       d.delivery_id,
+			       row_number() OVER (PARTITION BY d.project_id ORDER BY d.created_at DESC) AS rn
+			  FROM deployments d
+			  JOIN projects p ON p.id = d.project_id
+			 WHERE d.project_id::text = ANY($1)
+		)
+		SELECT id, project_id, slug, commit_sha, ref, status, url, image,
+		       created_at, delivery_id
+		  FROM ranked
+		 WHERE rn <= $2
+		 ORDER BY project_id, created_at DESC
+	`, projectIDs, perProject)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string][]deploymentRow, len(projectIDs))
+	for rows.Next() {
+		var d deploymentRow
+		if err := rows.Scan(&d.ID, &d.ProjectID, &d.Slug, &d.CommitSHA, &d.Ref,
+			&d.Status, &d.URL, &d.Image, &d.CreatedAt, &d.DeliveryID); err != nil {
+			return nil, err
+		}
+		out[d.ProjectID] = append(out[d.ProjectID], d)
+	}
+	return out, rows.Err()
+}
+
 // GetDeployment returns the single deployment row for an ID, or (nil, nil) if
 // not found. Used by the SSE log handler to validate the ID and surface
 // current status to clients before/after streaming.

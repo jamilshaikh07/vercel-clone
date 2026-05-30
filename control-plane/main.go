@@ -128,8 +128,10 @@ func main() {
 	mux.HandleFunc("GET /readyz", s.readyz(pool))
 	mux.HandleFunc("POST /webhooks/github", s.handleGitHubWebhook)
 	mux.HandleFunc("GET /admin/deployments", s.handleListDeployments)
+	mux.HandleFunc("GET /v1/deployments", s.handleListDeployments)
 	mux.HandleFunc("GET /v1/deployments/{id}/logs", s.handleDeploymentLogs)
-	mux.HandleFunc("GET /", s.root)
+	mux.HandleFunc("GET /v1/projects", s.handleListProjects)
+	mux.HandleFunc("GET /", s.handleDashboard)
 
 	httpSrv := &http.Server{
 		Addr:              addr,
@@ -190,11 +192,6 @@ func connectDB(ctx context.Context, dsn string, log *slog.Logger) (*pgxpool.Pool
 		case <-time.After(2 * time.Second):
 		}
 	}
-}
-
-func (s *server) root(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	_, _ = io.WriteString(w, "vercel-clone control plane — POST /webhooks/github\n")
 }
 
 func (s *server) healthz(w http.ResponseWriter, r *http.Request) {
