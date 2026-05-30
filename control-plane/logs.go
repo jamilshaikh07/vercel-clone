@@ -102,6 +102,38 @@ func (s *server) handleDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
+	// Fast path: if the deployment is already in a terminal status, the
+	// build Job (and its pod) has almost certainly been garbage-collected
+	// by the Job TTL. Without this fast path the client would hang for 2
+	// minutes inside waitForBuildPod before getting an 'end' event for a
+	// build that finished an hour ago.
+	switch dep.Status {
+	case "ready", "failed", "cancelled":
+		// Best-effort: if the pod is still around (rare), tail it; else
+		// send a friendly "no logs available" message and exit.
+		lookupCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		pod, _ := s.k8s.findBuildPod(lookupCtx, buildNamespace, id)
+		cancel()
+		if pod == "" {
+			send("log", map[string]string{
+				"c": "system",
+				"m": "Build artefacts for this deployment have been cleaned up. Logs are only retained while the build pod exists (~1h after completion).",
+			})
+			send("end", map[string]string{"status": dep.Status})
+			return
+		}
+		for _, c := range buildContainers {
+			if ctx.Err() != nil {
+				return
+			}
+			_ = s.k8s.streamPodLog(ctx, buildNamespace, pod, c, func(line string) {
+				send("log", map[string]string{"c": c, "m": line})
+			})
+		}
+		send("end", map[string]string{"status": dep.Status})
+		return
+	}
+
 	// Wait up to 2 minutes for the build pod to be created. Deployments stay
 	// in 'queued' until the worker claims them, which is typically <3s but
 	// can be longer right after a control-plane restart.
