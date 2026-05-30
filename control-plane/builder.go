@@ -243,13 +243,74 @@ func (w *worker) runOne(ctx context.Context, c *claimedDeployment) error {
 	if err := w.store.MarkReady(ctx, c.DeploymentID, liveURL); err != nil {
 		return fmt.Errorf("mark ready: %w", err)
 	}
-	// Success status: target_url is the live preview URL itself, so the
-	// green check on the commit in GitHub deep-links to the deployed app.
-	w.postStatus(ctx, c, "success", "deployed", liveURL)
+
+	// Production alias: if this commit is on the project's production
+	// branch, point <slug>.<zone> at the per-deployment Service. The route
+	// name is shared across all production deploys for this project, so
+	// applying it for a newer SHA atomically cuts traffic over to the new
+	// Service without touching the per-SHA preview URLs.
+	prodURL := liveURL
+	if c.Ref == "refs/heads/"+c.ProductionBranch {
+		prodHost := fmt.Sprintf("%s.%s", c.Slug, tenantHostZone)
+		prodRouteName := "prod-" + c.Slug
+		if err := w.k8s.applyIngressRoute(ctx, deployNamespace, prodRouteName,
+			productionAliasManifest(prodRouteName, deployNamespace, prodHost, deployName, c.Slug),
+		); err != nil {
+			// Don't fail the deploy — the per-SHA URL is already serving.
+			w.log.Error("apply production alias failed",
+				"deployment_id", c.DeploymentID, "host", prodHost, "err", err)
+		} else {
+			prodURL = "https://" + prodHost
+			w.log.Info("production alias applied",
+				"deployment_id", c.DeploymentID, "host", prodHost, "target_service", deployName)
+		}
+	}
+
+	// Success status: target_url is the production alias when applicable,
+	// otherwise the per-SHA preview URL.
+	w.postStatus(ctx, c, "success", "deployed", prodURL)
 	w.log.Info("deployment ready",
-		"deployment_id", c.DeploymentID, "url", liveURL,
+		"deployment_id", c.DeploymentID, "url", liveURL, "prod_url", prodURL,
 		"push_image", pushImage, "pull_image", pullImage)
 	return nil
+}
+
+// productionAliasManifest is a Traefik IngressRoute that points
+// <slug>.<zone> at one specific per-deployment Service. The route name is
+// stable per project (prod-<slug>) so successive ready deployments on the
+// production branch update it in place via applyIngressRoute's create-or-PUT.
+func productionAliasManifest(routeName, namespace, host, serviceName, slug string) map[string]any {
+	return map[string]any{
+		"apiVersion": "traefik.io/v1alpha1",
+		"kind":       "IngressRoute",
+		"metadata": map[string]any{
+			"name":      routeName,
+			"namespace": namespace,
+			"labels": map[string]any{
+				"app.kubernetes.io/managed-by": "control-plane",
+				"app.kubernetes.io/component":  "production-alias",
+				"paas.project":                 slug,
+			},
+			"annotations": map[string]any{
+				"external-dns.alpha.kubernetes.io/target": tunnelTarget,
+			},
+		},
+		"spec": map[string]any{
+			"entryPoints": []any{"web"},
+			"routes": []any{
+				map[string]any{
+					"match": fmt.Sprintf("Host(`%s`)", host),
+					"kind":  "Rule",
+					"services": []any{
+						map[string]any{
+							"name": serviceName,
+							"port": 80,
+						},
+					},
+				},
+			},
+		},
+	}
 }
 
 // ensureBuildJob makes a Kaniko Job exist for this deployment, recreating

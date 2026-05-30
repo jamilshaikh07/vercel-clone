@@ -337,13 +337,14 @@ func (s *store) GetDeployment(ctx context.Context, id string) (*deploymentRow, e
 // claimedDeployment carries everything the builder needs in one fetch so
 // the worker never has to round-trip back to projects/installation_repos.
 type claimedDeployment struct {
-	DeploymentID   string
-	ProjectID      string
-	Slug           string
-	RepoFullName   string
-	InstallationID int64
-	CommitSHA      string
-	Ref            string
+	DeploymentID     string
+	ProjectID        string
+	Slug             string
+	RepoFullName     string
+	InstallationID   int64
+	CommitSHA        string
+	Ref              string
+	ProductionBranch string
 }
 
 // ClaimNextQueued atomically transitions the oldest 'queued' deployment to
@@ -378,9 +379,9 @@ func (s *store) ClaimNextQueued(ctx context.Context) (*claimedDeployment, error)
 		 WHERE d.id = next.id
 		   AND p.id = d.project_id
 		RETURNING d.id::text, d.project_id::text, p.slug, p.full_name,
-		          p.installation_id, d.commit_sha, d.ref
+		          p.installation_id, d.commit_sha, d.ref, p.production_branch
 	`).Scan(&c.DeploymentID, &c.ProjectID, &c.Slug, &repoFullName,
-		&installationID, &c.CommitSHA, &c.Ref)
+		&installationID, &c.CommitSHA, &c.Ref, &c.ProductionBranch)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
