@@ -36,6 +36,11 @@ data:
         v4auth: true
       delete:
         enabled: true
+      redirect:
+        # Registry proxies blob downloads through itself instead of issuing
+        # presigned-URL redirects to MinIO. Required because kubelet on the
+        # nodes can't resolve cluster-internal DNS (minio.minio-system.svc).
+        disable: true
       maintenance:
         uploadpurging:
           enabled: true
