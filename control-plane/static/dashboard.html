@@ -138,6 +138,67 @@
     }
     .storage .reveal:hover { color: var(--text); }
     .storage .err { color: var(--err); }
+
+    /* SQL console — collapsible per project, sits between storage panel and deployments. */
+    .sql-panel {
+      display: none;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel-2);
+    }
+    .sql-panel.open { display: block; }
+    .sql-panel .editor {
+      padding: 10px 16px;
+      display: grid; grid-template-columns: 1fr auto; gap: 10px;
+    }
+    .sql-panel textarea {
+      width: 100%; min-height: 80px; resize: vertical;
+      background: var(--panel); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 8px 10px;
+      font-family: ui-monospace, monospace; font-size: 12px; line-height: 1.5;
+    }
+    .sql-panel textarea:focus { outline: none; border-color: var(--accent); }
+    .sql-panel .run {
+      background: var(--accent); color: #fff; border: none;
+      padding: 6px 16px; border-radius: 6px; font-size: 12px; cursor: pointer;
+      align-self: start; font-weight: 600;
+    }
+    .sql-panel .run[disabled] { opacity: 0.5; cursor: progress; }
+    .sql-panel .run:hover:not([disabled]) { filter: brightness(1.15); }
+    .sql-panel .result {
+      padding: 0 16px 12px;
+      font-size: 11px; color: var(--text-dim);
+      font-family: ui-monospace, monospace;
+    }
+    .sql-panel .result .meta { padding: 4px 0 8px; }
+    .sql-panel .result .meta .ok { color: var(--ok); }
+    .sql-panel .result .meta .err { color: var(--err); }
+    .sql-panel .result table {
+      width: 100%; border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--border); border-radius: 6px;
+      overflow: hidden;
+    }
+    .sql-panel .result th, .sql-panel .result td {
+      padding: 6px 10px; text-align: left;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+      white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis;
+    }
+    .sql-panel .result th {
+      background: var(--panel-2); color: var(--text-dim);
+      font-weight: 600; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .sql-panel .result td.num { text-align: right; }
+    .sql-panel .result tr:last-child td { border-bottom: none; }
+    .sql-panel .result .null { color: var(--text-dim); font-style: italic; }
+    .storage .btn-query {
+      background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+      padding: 2px 8px; border-radius: 6px; font-size: 11px; cursor: pointer;
+    }
+    .storage .btn-query:hover { color: var(--text); border-color: var(--accent); }
+    .storage .btn-query.active { color: var(--text); border-color: var(--accent); background: var(--panel-2); }
+
     .deployments { padding: 4px 0; }
     .deployment {
       display: grid;
@@ -329,6 +390,13 @@ function render(data) {
           <span class="label">Storage</span>
           <span class="loading">loading…</span>
         </div>
+        <div class="sql-panel" data-sql-for="${p.id}">
+          <div class="editor">
+            <textarea spellcheck="false" placeholder="-- Try:  SELECT now();" data-sql-input></textarea>
+            <button class="run" data-sql-run>Run ⌘↵</button>
+          </div>
+          <div class="result" data-sql-result></div>
+        </div>
         <div class="deployments">${depHTML}</div>
       </div>
     `;
@@ -390,10 +458,37 @@ function renderStorage(slot, projectID, db) {
     <span style="font-size:11px;">user <span class="pill">${escapeHTML(db.role_name)}</span></span>
     <span style="font-size:11px;">host <span class="pill">${escapeHTML(db.host)}:${db.port}</span></span>
     <span style="font-size:11px; color: var(--text-dim);">env: <code>DATABASE_URL</code></span>
+    <button class="btn-query" data-toggle-query>Query ▾</button>
     <button class="copy" data-copy-uri>Copy URI</button>
     <button class="reveal" data-reveal-pw>Reveal password</button>
     <span class="pill" data-pw-slot style="display:none;"></span>
   `;
+  // Toggle SQL console.
+  const queryBtn = slot.querySelector('[data-toggle-query]');
+  const panel = projectsEl.querySelector(`.sql-panel[data-sql-for="${projectID}"]`);
+  queryBtn.addEventListener('click', () => {
+    const open = panel.classList.toggle('open');
+    queryBtn.classList.toggle('active', open);
+    queryBtn.textContent = open ? 'Query ▴' : 'Query ▾';
+    if (open) {
+      const ta = panel.querySelector('[data-sql-input]');
+      ta.focus();
+    }
+  });
+  // Bind Run button + ⌘/Ctrl+Enter inside the textarea — wire once per render.
+  if (panel && !panel.dataset.bound) {
+    const runBtn = panel.querySelector('[data-sql-run]');
+    const ta     = panel.querySelector('[data-sql-input]');
+    const resEl  = panel.querySelector('[data-sql-result]');
+    runBtn.addEventListener('click', () => runQuery(projectID, ta, runBtn, resEl));
+    ta.addEventListener('keydown', (ev) => {
+      if ((ev.metaKey || ev.ctrlKey) && ev.key === 'Enter') {
+        ev.preventDefault();
+        runQuery(projectID, ta, runBtn, resEl);
+      }
+    });
+    panel.dataset.bound = '1';
+  }
   slot.querySelector('[data-copy-uri]').addEventListener('click', async (ev) => {
     try {
       await navigator.clipboard.writeText(db.uri);
@@ -442,6 +537,76 @@ async function addDatabase(projectID, btn) {
     btn.textContent = original;
     alert('Database provisioning failed: ' + e);
   }
+}
+
+async function runQuery(projectID, ta, btn, resEl) {
+  const sql = ta.value.trim();
+  if (!sql) { ta.focus(); return; }
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = 'Running…';
+  resEl.innerHTML = `<div class="meta">running…</div>`;
+  try {
+    const r = await fetch('/v1/projects/' + projectID + '/database/query', {
+      method: 'POST',
+      cache: 'no-store', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sql }),
+    });
+    if (r.status === 401) { window.location.href = '/login'; return; }
+    if (!r.ok) {
+      const msg = await r.text();
+      resEl.innerHTML = `<div class="meta"><span class="err">HTTP ${r.status}:</span> ${escapeHTML(msg.trim() || 'request failed')}</div>`;
+      return;
+    }
+    const data = await r.json();
+    renderQueryResult(resEl, data);
+  } catch (e) {
+    resEl.innerHTML = `<div class="meta"><span class="err">error:</span> ${escapeHTML(String(e))}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+}
+
+function renderQueryResult(resEl, data) {
+  if (data.error) {
+    const e = data.error;
+    let msg = e.message || 'query failed';
+    if (e.code) msg = `[${e.code}] ${msg}`;
+    let extra = '';
+    if (e.detail)   extra += `\n  detail: ${e.detail}`;
+    if (e.hint)     extra += `\n  hint: ${e.hint}`;
+    if (e.position) extra += `\n  position: ${e.position}`;
+    resEl.innerHTML = `<div class="meta"><span class="err">error:</span> ${escapeHTML(msg)}</div><pre style="margin:0;color:var(--text-dim);font-size:11px;">${escapeHTML(extra)}</pre>`;
+    return;
+  }
+  const cmd  = data.command || '';
+  const ms   = data.elapsed_ms || 0;
+  const rows = data.rows || [];
+  const cols = data.columns || [];
+
+  const summary =
+    cmd === 'SELECT'
+      ? `${rows.length} row${rows.length === 1 ? '' : 's'}`
+      : `${cmd} ${data.row_count || 0}`;
+  const trunc = data.truncated ? ` <span class="err">(truncated at 1000)</span>` : '';
+
+  let table = '';
+  if (cols.length > 0) {
+    const numTypes = new Set(['int', 'numeric']);
+    const headers = cols.map(c => `<th>${escapeHTML(c.name)}<div style="font-weight:400;font-size:9px;color:var(--text-dim);margin-top:1px;">${escapeHTML(c.type || '')}</div></th>`).join('');
+    const body = rows.map(r =>
+      '<tr>' + r.map((v, i) => {
+        const cls = numTypes.has(cols[i]?.type) ? 'num' : '';
+        if (v === null || v === undefined) return `<td class="${cls}"><span class="null">NULL</span></td>`;
+        const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
+        return `<td class="${cls}" title="${escapeHTML(s)}">${escapeHTML(s)}</td>`;
+      }).join('') + '</tr>'
+    ).join('');
+    table = `<table><thead><tr>${headers}</tr></thead><tbody>${body}</tbody></table>`;
+  }
+  resEl.innerHTML = `<div class="meta"><span class="ok">${summary}</span>${trunc} <span style="color:var(--text-dim);">· ${ms}ms</span></div>${table}`;
 }
 
 function openLogs(el) {
