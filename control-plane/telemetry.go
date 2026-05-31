@@ -57,6 +57,12 @@ type ServiceTraffic struct {
 	Duration float64            `json:"duration_sum"` // sum of request_duration_seconds
 	Count    float64            `json:"duration_cnt"` // count for averaging
 	ByClass  map[string]float64 `json:"by_class"`     // {"2xx":..,"3xx":..,"4xx":..,"5xx":..,"1xx":..}
+	// Buckets holds the cumulative-count histogram exposed by Traefik
+	// as traefik_service_request_duration_seconds_bucket{le="X"}. Keyed
+	// by the literal le label ("0.005", "0.01", ..., "+Inf"). Used by
+	// the project-series sampler to compute window-delta percentiles
+	// (real p50/p95/p99, not just running averages).
+	Buckets map[string]float64 `json:"buckets,omitempty"`
 }
 
 // TelemetrySnapshot is the cached read model returned by the cache. Always
@@ -301,9 +307,10 @@ func parseTraefikMetrics(r io.Reader, snap *TelemetrySnapshot) error {
 			continue
 		}
 		var (
-			isCount     bool
-			isDurSum    bool
-			isDurCount  bool
+			isCount    bool
+			isDurSum   bool
+			isDurCount bool
+			isBucket   bool
 		)
 		switch {
 		case strings.HasPrefix(line, "traefik_service_requests_total{"):
@@ -312,6 +319,11 @@ func parseTraefikMetrics(r io.Reader, snap *TelemetrySnapshot) error {
 			isDurSum = true
 		case strings.HasPrefix(line, "traefik_service_request_duration_seconds_count{"):
 			isDurCount = true
+		case strings.HasPrefix(line, "traefik_service_request_duration_seconds_bucket{"):
+			// Cumulative-count histogram bucket. We accumulate by `le`
+			// per service so the project-series sampler can compute
+			// p50/p95/p99 from delta buckets at every tick.
+			isBucket = true
 		default:
 			continue
 		}
@@ -323,7 +335,7 @@ func parseTraefikMetrics(r io.Reader, snap *TelemetrySnapshot) error {
 		if err != nil {
 			continue
 		}
-		var service, code string
+		var service, code, le string
 		for _, kv := range splitLabels(labels) {
 			eq := strings.Index(kv, "=")
 			if eq == -1 {
@@ -336,6 +348,8 @@ func parseTraefikMetrics(r io.Reader, snap *TelemetrySnapshot) error {
 				service = v
 			case "code":
 				code = v
+			case "le":
+				le = v
 			}
 		}
 		if service == "" {
@@ -343,7 +357,11 @@ func parseTraefikMetrics(r io.Reader, snap *TelemetrySnapshot) error {
 		}
 		st, ok := snap.Services[service]
 		if !ok {
-			st = &ServiceTraffic{Service: service, ByClass: map[string]float64{}}
+			st = &ServiceTraffic{
+				Service: service,
+				ByClass: map[string]float64{},
+				Buckets: map[string]float64{},
+			}
 			snap.Services[service] = st
 		}
 		switch {
@@ -359,6 +377,18 @@ func parseTraefikMetrics(r io.Reader, snap *TelemetrySnapshot) error {
 			st.Duration += val
 		case isDurCount:
 			st.Count += val
+		case isBucket:
+			// Traefik exposes one bucket line per (service, code, method,
+			// le). We sum across (code, method) into a single per-service
+			// histogram — sufficient for app-level latency percentiles.
+			// Bucket maps may be nil on a stale ServiceTraffic record
+			// pulled across snapshot rotation; guard cheaply.
+			if st.Buckets == nil {
+				st.Buckets = map[string]float64{}
+			}
+			if le != "" {
+				st.Buckets[le] += val
+			}
 		}
 	}
 	return s.Err()

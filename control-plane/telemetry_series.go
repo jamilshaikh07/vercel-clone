@@ -212,8 +212,18 @@ func startTelemetrySampler(ctx context.Context, srv *server, log *slog.Logger) {
 			// raw collect function rather than the cache.
 			tickCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 			snap := collectTelemetry(tickCtx, srv.k8s)
+			// List projects on every tick so a freshly-installed app starts
+			// collecting series data within one window — no restart needed.
+			// "" scope = all projects (admin-equivalent; this is a system
+			// sampler, not a user-facing query).
+			projects, err := srv.store.ListProjectsWithTenant(tickCtx, "")
 			cancel()
 			srv.series.recordSnapshot(snap)
+			if err != nil {
+				log.Warn("list projects for series sampler failed", "err", err)
+			} else {
+				srv.pseries.recordSnapshot(snap, projects)
+			}
 
 			select {
 			case <-ctx.Done():

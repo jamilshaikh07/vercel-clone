@@ -58,6 +58,10 @@ type server struct {
 	// status-code counts. Populated by the sampler goroutine; read by
 	// the per-app traffic chart.
 	series *seriesStore
+	// pseries is the richer per-project rolling history: CPU, memory,
+	// RPS, and real latency percentiles. Powers the BI-style charts on
+	// the per-app Telemetry/Traffic pages.
+	pseries *projectSeries
 }
 
 func main() {
@@ -141,6 +145,7 @@ func main() {
 		auth:          authCfg,
 		log:           log,
 		series:        newSeriesStore(),
+		pseries:       newProjectSeries(),
 	}
 
 	requeued, err := s.store.RequeueStuck(rootCtx)
@@ -201,6 +206,7 @@ func main() {
 		"GET /v1/telemetry":                       s.handleGlobalTelemetry,
 		"GET /v1/projects/{id}/telemetry":         s.handleProjectTelemetry,
 		"GET /v1/projects/{id}/telemetry/series":  s.handleProjectSeries,
+		"GET /v1/projects/{id}/metrics":           s.handleProjectMetrics,
 		"GET /v1/projects/{id}/status":            s.handleProjectStatus,
 		"POST /v1/projects/{id}/scale":            s.handleProjectScale,
 		"GET /v1/projects/{id}/insights":          s.handleProjectInsights,

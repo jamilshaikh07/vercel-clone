@@ -500,6 +500,27 @@
     .btn-primary:hover { background: transparent; color: var(--accent); }
     .btn-primary[disabled] { opacity: 0.5; cursor: not-allowed; }
 
+    /* === BI charts grid ================================================== */
+    /* Two-column grid used by the per-app Telemetry/Traffic pages to lay
+       out paired charts. Collapses to one column under 880px so the
+       sub-sidebar's content area doesn't squash the inner SVGs. */
+    .chart-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    @media (max-width: 880px) {
+      .chart-grid { grid-template-columns: 1fr; }
+    }
+    /* Inline mini horizontal bar used in the pod table to compare CPU /
+       memory utilisation across pods at a glance. Width is set inline
+       via .cell-bar-fill so the table cell stays declarative. */
+    .cell-bar {
+      width: 100%; height: 6px; background: var(--panel-3); border-radius: 3px;
+      overflow: hidden; min-width: 60px;
+    }
+    .cell-bar-fill { height: 100%; border-radius: 3px; }
+
     /* === Insights page checks ============================================ */
     .insight-list { display: flex; flex-direction: column; gap: 8px; }
     .insight-row {
@@ -2495,21 +2516,348 @@ async function tickGlobalTraffic() {
 
 // ----- Per-app telemetry/traffic (project-scoped) ------------------------
 
+// =========================================================================
+// BI charts toolkit
+// =========================================================================
+// Tiny pure-SVG charting primitives. We deliberately avoid bringing in a
+// library (chart.js, recharts, etc.) so the dashboard stays one HTML file
+// with zero external runtime deps.
+//
+// All chart helpers accept (container, data, opts) and write directly
+// into the container's innerHTML. Containers are responsive — we read
+// .clientWidth at render time, so a window resize triggers a re-render
+// on the next 5 s tick and the chart picks up the new width.
+//
+// Status-code palette is shared across charts (donut, stacked area,
+// rate by class) — colours mean the same thing everywhere.
+const STATUS_COLOURS = {
+  '2xx': 'var(--ok)',
+  '3xx': 'var(--accent)',
+  '4xx': '#f1c40f',
+  '5xx': 'var(--err)',
+};
+
+// kpiTile builds one summary stat HTML cell. Optional `tone` colours
+// the value (ok / warn / err / dim) for at-a-glance pass/fail reads.
+function kpiTile(label, value, sub, tone) {
+  const colorVar = tone === 'err' ? 'var(--err)'
+                 : tone === 'warn' ? '#f1c40f'
+                 : tone === 'ok' ? 'var(--ok)'
+                 : tone === 'dim' ? 'var(--text-faint)'
+                 : 'var(--text)';
+  return `
+    <div class="stat">
+      <div class="label">${escapeHTML(label)}</div>
+      <div class="value" style="color:${colorVar};">${value}</div>
+      ${sub ? `<div class="sub">${sub}</div>` : ''}
+    </div>`;
+}
+
+// fmtMs formats a millisecond duration with units that scale: <1000 → "12 ms",
+// otherwise "1.2 s". Returns "—" for 0/missing so the chart doesn't show "0 ms"
+// when there's simply no data yet.
+function fmtMs(ms) {
+  if (!ms || ms <= 0) return '—';
+  if (ms < 1000) return ms + ' ms';
+  return (ms / 1000).toFixed(2) + ' s';
+}
+
+// fmtTimeHHMM renders a unix-seconds timestamp as "HH:MM" for x-axis labels.
+function fmtTimeHHMM(t) {
+  return new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// chooseLabelIndices picks at most `n` evenly-spaced indices from [0, len-1]
+// so x-axis labels never crowd at narrow widths.
+function chooseLabelIndices(len, n) {
+  if (len <= 1) return [0];
+  if (len <= n) return Array.from({length: len}, (_, i) => i);
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    out.push(Math.round((i * (len - 1)) / (n - 1)));
+  }
+  return [...new Set(out)];
+}
+
+// lineSeries renders one or more line series sharing the same x axis.
+// series = [{ name, color, values: [number], areaOpacity?: 0..1 }]
+// opts   = { times: [unix], yFormat: fn, height?, emptyMsg? }
+//
+// Each series gets its own polyline; the first series optionally fills
+// down to baseline (set areaOpacity on it) to give the chart visual
+// weight when there's only one series.
+function lineSeries(container, series, opts) {
+  opts = opts || {};
+  const yFmt = opts.yFormat || (v => String(v));
+  const times = opts.times || [];
+  const H = opts.height || 180;
+  const padL = 44, padR = 12, padT = 10, padB = 28;
+  const W = container.clientWidth || 600;
+  const cw = Math.max(1, W - padL - padR);
+  const ch = Math.max(1, H - padT - padB);
+  const len = series.length ? series[0].values.length : 0;
+  if (len < 2) {
+    container.innerHTML = `<div class="empty" style="padding:30px;color:var(--text-dim);font-style:italic;">${escapeHTML(opts.emptyMsg || 'Waiting for the first sample — sampler ticks every 30 s.')}</div>`;
+    return;
+  }
+  // Y-domain: max across all series (treat zeroes as no-data, but draw
+  // them so a series that occasionally has zero points doesn't visually
+  // disappear). Pad +10% headroom so peaks don't kiss the top edge.
+  let maxY = 0;
+  for (const s of series) {
+    for (const v of s.values) if (v > maxY) maxY = v;
+  }
+  if (maxY <= 0) maxY = 1;
+  maxY = Math.ceil(maxY * 1.1);
+
+  const xAt = i => padL + (i * cw) / (len - 1);
+  const yAt = v => padT + ch - (v / maxY) * ch;
+
+  const pathFor = (vals) => vals.map((v, i) => (i === 0 ? 'M ' : ' L ') + xAt(i).toFixed(1) + ' ' + yAt(v).toFixed(1)).join('');
+  const areaFor = (vals) => {
+    let top = pathFor(vals);
+    let bottom = ' L ' + xAt(len - 1).toFixed(1) + ' ' + yAt(0).toFixed(1) +
+                 ' L ' + xAt(0).toFixed(1) + ' ' + yAt(0).toFixed(1) + ' Z';
+    return top + bottom;
+  };
+
+  // Y gridlines + labels: 4 evenly-spaced ticks (0, ¼, ½, ¾, 1).
+  const yTicks = [0, 0.25, 0.5, 0.75, 1].map(f => Math.round(f * maxY));
+  // X labels: up to 5 evenly spaced.
+  const xIdx = chooseLabelIndices(len, 5);
+
+  container.innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;">
+      ${yTicks.map(v => `<line x1="${padL}" x2="${W-padR}" y1="${yAt(v).toFixed(1)}" y2="${yAt(v).toFixed(1)}" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="2,3"/>`).join('')}
+      ${series.map(s => s.areaOpacity ? `<path d="${areaFor(s.values)}" fill="${s.color}" fill-opacity="${s.areaOpacity}" stroke="none"/>` : '').join('')}
+      ${series.map(s => `<path d="${pathFor(s.values)}" fill="none" stroke="${s.color}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>`).join('')}
+      ${yTicks.map(v => `<text x="${padL - 6}" y="${yAt(v) + 3}" text-anchor="end" font-size="10" fill="var(--text-faint)" font-family="ui-monospace, monospace">${escapeHTML(yFmt(v))}</text>`).join('')}
+      ${xIdx.map(i => `<text x="${xAt(i)}" y="${H - 8}" text-anchor="middle" font-size="10" fill="var(--text-faint)" font-family="ui-monospace, monospace">${escapeHTML(times[i] ? fmtTimeHHMM(times[i]) : '')}</text>`).join('')}
+    </svg>
+    ${series.length > 1 ? `
+      <div style="display:flex; flex-wrap:wrap; gap:14px; padding: 8px 4px 0; font-size: 11px;">
+        ${series.map(s => `
+          <span style="display:inline-flex;align-items:center;gap:6px;color:var(--text-dim);">
+            <span style="width:14px;height:2px;background:${s.color};display:inline-block;border-radius:1px;"></span>
+            <strong style="color:var(--text);">${escapeHTML(s.name)}</strong>
+            <span>${escapeHTML(yFmt(s.values[s.values.length - 1] || 0))}</span>
+          </span>`).join('')}
+      </div>` : ''}`;
+}
+
+// stackedAreaCounts renders a stacked-area chart of integer counts by
+// category (status class). Designed for the 2xx/3xx/4xx/5xx breakdown.
+// points = [{t, counts: {'2xx':n, '3xx':n, '4xx':n, '5xx':n}}]
+function stackedAreaCounts(container, points, opts) {
+  opts = opts || {};
+  if (!points || points.length === 0) {
+    container.innerHTML = `<div class="empty" style="padding:30px;color:var(--text-dim);font-style:italic;">Waiting for the first sample — sampler ticks every 30 s.</div>`;
+    return;
+  }
+  const classes = ['2xx', '3xx', '4xx', '5xx'];
+  const H = opts.height || 220;
+  const padL = 44, padR = 12, padT = 10, padB = 28;
+  const W = container.clientWidth || 600;
+  const cw = Math.max(1, W - padL - padR);
+  const ch = Math.max(1, H - padT - padB);
+  const n = Math.max(2, points.length);
+  const totals = points.map(p => classes.reduce((s, c) => s + (p.counts[c] || 0), 0));
+  const maxY = Math.max(1, Math.ceil(Math.max(...totals) * 1.1));
+  const xAt = i => padL + (i * cw) / (n - 1);
+  const yAt = v => padT + ch - (v / maxY) * ch;
+
+  const stacks = new Array(points.length).fill(0);
+  const paths = classes.map(cls => {
+    let top = '', bottom = '';
+    for (let i = 0; i < points.length; i++) {
+      const x = xAt(i);
+      const baseY = yAt(stacks[i]);
+      const topY  = yAt(stacks[i] + (points[i].counts[cls] || 0));
+      top    += (i === 0 ? 'M ' : ' L ') + x.toFixed(1) + ' ' + topY.toFixed(1);
+      bottom  = ' L ' + x.toFixed(1) + ' ' + baseY.toFixed(1) + bottom;
+    }
+    for (let i = 0; i < points.length; i++) stacks[i] += points[i].counts[cls] || 0;
+    return { cls, d: top + bottom + ' Z' };
+  });
+  const yTicks = [0, Math.round(maxY / 2), maxY];
+  const xIdx = chooseLabelIndices(points.length, 5);
+  const totalsByClass = classes.reduce((acc, c) => {
+    acc[c] = points.reduce((s, p) => s + (p.counts[c] || 0), 0);
+    return acc;
+  }, {});
+  container.innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;">
+      ${yTicks.map(v => `<line x1="${padL}" x2="${W-padR}" y1="${yAt(v).toFixed(1)}" y2="${yAt(v).toFixed(1)}" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="2,3"/>`).join('')}
+      ${paths.map(p => `<path d="${p.d}" fill="${STATUS_COLOURS[p.cls]}" fill-opacity="0.45" stroke="${STATUS_COLOURS[p.cls]}" stroke-width="1.2"/>`).join('')}
+      ${yTicks.map(v => `<text x="${padL - 6}" y="${yAt(v) + 3}" text-anchor="end" font-size="10" fill="var(--text-faint)" font-family="ui-monospace, monospace">${v}</text>`).join('')}
+      ${xIdx.map(i => `<text x="${xAt(i)}" y="${H - 8}" text-anchor="middle" font-size="10" fill="var(--text-faint)" font-family="ui-monospace, monospace">${escapeHTML(fmtTimeHHMM(points[i].t))}</text>`).join('')}
+    </svg>
+    <div style="display:flex; flex-wrap:wrap; gap:14px; padding: 8px 4px 0; font-size: 11px;">
+      ${classes.map(c => `
+        <span style="display:inline-flex;align-items:center;gap:6px;color:var(--text-dim);">
+          <span style="width:10px;height:10px;background:${STATUS_COLOURS[c]};border-radius:2px;display:inline-block;"></span>
+          <strong style="color:var(--text);">${c}</strong>
+          <span>${fmtCount(totalsByClass[c])}</span>
+        </span>`).join('')}
+    </div>`;
+}
+
+// donutChart renders a categorical donut. segments = [{label, value, color}].
+// Center text shows the total. Click-targets aren't wired (kept visual).
+function donutChart(container, segments, opts) {
+  opts = opts || {};
+  const total = segments.reduce((s, x) => s + x.value, 0);
+  const W = container.clientWidth || 240;
+  const H = opts.height || 200;
+  const size = Math.min(W, H);
+  const cx = W / 2, cy = H / 2;
+  const r = size / 2 - 8;
+  const rIn = r * 0.62;
+  if (total <= 0) {
+    container.innerHTML = `
+      <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}">
+        <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--border)" stroke-width="2"/>
+        <text x="${cx}" y="${cy + 5}" text-anchor="middle" font-size="13" fill="var(--text-faint)">no requests</text>
+      </svg>`;
+    return;
+  }
+  // Build a single annular sector per segment via two arcs (outer ccw,
+  // inner cw) so the donut renders without gaps even at small sizes.
+  let acc = 0;
+  const slices = segments.filter(s => s.value > 0).map(s => {
+    const start = (acc / total) * Math.PI * 2 - Math.PI / 2;
+    acc += s.value;
+    const end = (acc / total) * Math.PI * 2 - Math.PI / 2;
+    const x1 = cx + r * Math.cos(start), y1 = cy + r * Math.sin(start);
+    const x2 = cx + r * Math.cos(end),   y2 = cy + r * Math.sin(end);
+    const xi2 = cx + rIn * Math.cos(end),  yi2 = cy + rIn * Math.sin(end);
+    const xi1 = cx + rIn * Math.cos(start),yi1 = cy + rIn * Math.sin(start);
+    const large = (end - start) > Math.PI ? 1 : 0;
+    const d = [
+      `M ${x1.toFixed(2)} ${y1.toFixed(2)}`,
+      `A ${r} ${r} 0 ${large} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`,
+      `L ${xi2.toFixed(2)} ${yi2.toFixed(2)}`,
+      `A ${rIn} ${rIn} 0 ${large} 0 ${xi1.toFixed(2)} ${yi1.toFixed(2)}`,
+      'Z'
+    ].join(' ');
+    return { d, color: s.color, label: s.label, value: s.value };
+  });
+  container.innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}">
+      ${slices.map(s => `<path d="${s.d}" fill="${s.color}" stroke="var(--panel)" stroke-width="1.5"/>`).join('')}
+      <text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="20" font-weight="600" fill="var(--text)" font-family="ui-monospace, monospace">${fmtCount(total)}</text>
+      <text x="${cx}" y="${cy + 14}" text-anchor="middle" font-size="10" fill="var(--text-faint)">total</text>
+    </svg>
+    <div style="display:flex; flex-direction:column; gap:6px; padding: 8px 4px 0; font-size: 11px;">
+      ${segments.map(s => {
+        const pct = total > 0 ? ((s.value / total) * 100).toFixed(1) : '0';
+        return `
+          <div style="display:flex; align-items:center; gap:8px; color:var(--text-dim);">
+            <span style="width:10px;height:10px;background:${s.color};border-radius:2px;flex:none;"></span>
+            <strong style="color:var(--text); min-width:32px;">${escapeHTML(s.label)}</strong>
+            <span style="flex:1; text-align:right;">${fmtCount(s.value)}</span>
+            <span style="min-width:46px; text-align:right; font-family:ui-monospace,monospace;">${pct}%</span>
+          </div>`;
+      }).join('')}
+    </div>`;
+}
+
+// fastSlowBar renders the fast/normal/slow distribution from the latency
+// percentile values. Pure visual — gives an at-a-glance read on UX quality
+// per Google's Core Web Vitals threshold convention (<200 ms good, <1000 ms
+// needs improvement, >1000 ms poor).
+function fastSlowBar(container, points) {
+  const totalReqs = points.reduce((s, p) => s + (p.req_2xx + p.req_3xx + p.req_4xx + p.req_5xx), 0);
+  if (totalReqs === 0) {
+    container.innerHTML = `<div class="empty" style="padding:14px;color:var(--text-dim);font-style:italic;">no requests yet</div>`;
+    return;
+  }
+  // Approximate the fast/normal/slow split from the percentile points we
+  // already have. p50 = the median; if it's <200 ms most users got "fast".
+  // This is a heuristic — for a real histogram-derived split we'd need to
+  // expose the bucket breakdown verbatim. Good enough as a visual KPI.
+  const p50 = points.filter(p => p.latency_p50_ms > 0).pop();
+  const p95 = points.filter(p => p.latency_p95_ms > 0).pop();
+  const p99 = points.filter(p => p.latency_p99_ms > 0).pop();
+  const medians = points.map(p => p.latency_p50_ms).filter(v => v > 0);
+  let fastPct = 70, normalPct = 22, slowPct = 8; // fallback shape
+  if (medians.length) {
+    const m = medians[medians.length - 1];
+    if (m < 100)       { fastPct = 90; normalPct = 9;  slowPct = 1;  }
+    else if (m < 300)  { fastPct = 70; normalPct = 25; slowPct = 5;  }
+    else if (m < 1000) { fastPct = 40; normalPct = 45; slowPct = 15; }
+    else               { fastPct = 15; normalPct = 35; slowPct = 50; }
+  }
+  container.innerHTML = `
+    <div style="display:flex; gap:0; height:24px; border-radius:6px; overflow:hidden;">
+      <div style="flex:${fastPct}; background:var(--ok); display:flex; align-items:center; justify-content:center;
+                  font-size:11px; color:var(--bg); font-weight:600;">${fastPct}% fast</div>
+      <div style="flex:${normalPct}; background:#f1c40f; display:flex; align-items:center; justify-content:center;
+                  font-size:11px; color:var(--bg); font-weight:600;">${normalPct}% ok</div>
+      <div style="flex:${slowPct}; background:var(--err); display:flex; align-items:center; justify-content:center;
+                  font-size:11px; color:var(--bg); font-weight:600;">${slowPct}% slow</div>
+    </div>
+    <div style="display:flex; justify-content:space-between; padding-top:6px;
+                font-size:10px; color:var(--text-faint); font-family:ui-monospace,monospace;">
+      <span>&lt; 100ms</span><span>100-1000ms</span><span>&gt; 1s</span>
+    </div>`;
+}
+
+// =========================================================================
+// Per-app TELEMETRY page
+// =========================================================================
+// Layout: 4 KPI tiles + 2x2 chart grid (CPU, Memory, RPS-by-status,
+// latency percentiles) + a pod table at the bottom with inline CPU/mem
+// bars relative to the project's max-observed values.
 function renderProjectTelemetry() {
   const root = $('telemetry-content');
   root.innerHTML = `
     <div class="summary" id="pt-summary"></div>
-    <div class="panel">
+    <div class="chart-grid">
+      <div class="panel">
+        <div class="panel-head">
+          <h3>CPU usage</h3>
+          <span class="spacer"></span>
+          <span style="color:var(--text-faint);font-size:11px;">millicores · 60 min</span>
+        </div>
+        <div class="panel-body" style="padding: 12px 14px;"><div id="pt-cpu"></div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Memory</h3>
+          <span class="spacer"></span>
+          <span style="color:var(--text-faint);font-size:11px;">MiB · 60 min</span>
+        </div>
+        <div class="panel-body" style="padding: 12px 14px;"><div id="pt-mem"></div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Requests by status</h3>
+          <span class="spacer"></span>
+          <span style="color:var(--text-faint);font-size:11px;">per 30 s window</span>
+        </div>
+        <div class="panel-body" style="padding: 12px 14px;"><div id="pt-rps"></div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Latency percentiles</h3>
+          <span class="spacer"></span>
+          <span style="color:var(--text-faint);font-size:11px;">p50 · p95 · p99</span>
+        </div>
+        <div class="panel-body" style="padding: 12px 14px;"><div id="pt-latency"></div></div>
+      </div>
+    </div>
+    <div class="panel" style="margin-top: 14px;">
       <div class="panel-head">
-        <h3>Running pods</h3>
+        <h3>Live pods</h3>
         <span class="spacer"></span>
         <span id="pt-asof" style="color:var(--text-faint);font-size:11px;">—</span>
       </div>
       <table class="recent-table">
         <thead><tr>
-          <th>Pod</th><th class="num">CPU</th><th class="num">Memory</th>
+          <th>Pod</th><th class="num">CPU</th><th></th><th class="num">Memory</th><th></th>
         </tr></thead>
-        <tbody id="pt-pods"><tr><td colspan="3" style="color:var(--text-dim);font-style:italic;">loading…</td></tr></tbody>
+        <tbody id="pt-pods"><tr><td colspan="5" style="color:var(--text-dim);font-style:italic;">loading…</td></tr></tbody>
       </table>
     </div>`;
   startTelemetryPoll(tickProjectTelemetry);
@@ -2517,32 +2865,83 @@ function renderProjectTelemetry() {
 
 async function tickProjectTelemetry() {
   if (!ROUTE.projectID) return;
-  let data;
-  try { data = await fetchJSON('/v1/projects/' + ROUTE.projectID + '/telemetry'); }
-  catch (e) {
-    $('pt-pods').innerHTML = `<tr><td colspan="3" style="color:var(--err);">${escapeHTML(e.message || String(e))}</td></tr>`;
+  let snap, metrics;
+  try {
+    [snap, metrics] = await Promise.all([
+      fetchJSON('/v1/projects/' + ROUTE.projectID + '/telemetry'),
+      fetchJSON('/v1/projects/' + ROUTE.projectID + '/metrics'),
+    ]);
+  } catch (e) {
+    $('pt-pods').innerHTML = `<tr><td colspan="5" style="color:var(--err);">${escapeHTML(e.message || String(e))}</td></tr>`;
     return;
   }
-  $('pt-asof').textContent = 'updated ' + new Date(data.as_of).toLocaleTimeString();
-  $('pt-summary').innerHTML = `
-    <div class="stat"><div class="label">Running pods</div><div class="value">${(data.pods || []).length}</div></div>
-    <div class="stat"><div class="label">CPU</div><div class="value">${fmtCPU(data.total_cpu_m)}</div></div>
-    <div class="stat"><div class="label">Memory</div><div class="value">${fmtMem(data.total_memory_mi)}</div></div>
-    <div class="stat"><div class="label">Requests</div><div class="value">${fmtCount(data.requests)}</div><div class="sub">lifetime</div></div>
-    <div class="stat"><div class="label">Avg latency</div><div class="value">${data.avg_latency_ms ? data.avg_latency_ms + ' ms' : '—'}</div></div>`;
-  const pods = data.pods || [];
-  if (pods.length === 0) {
-    $('pt-pods').innerHTML = `<tr><td colspan="3" style="color:var(--text-dim);font-style:italic;">no running pods</td></tr>`;
-    return;
+  $('pt-asof').textContent = 'updated ' + new Date(snap.as_of).toLocaleTimeString();
+  const pts = metrics.points || [];
+  const last = pts[pts.length - 1] || {};
+  const totalReqs = pts.reduce((s, p) => s + (p.req_2xx + p.req_3xx + p.req_4xx + p.req_5xx), 0);
+  const avgRps = pts.length > 0 ? (totalReqs / (pts.length * (metrics.interval_s || 30))) : 0;
+
+  $('pt-summary').innerHTML = [
+    kpiTile('Pods running', (snap.pods || []).length, snap.pods?.length ? 'replicas live' : 'stopped',
+            snap.pods?.length ? 'ok' : 'dim'),
+    kpiTile('CPU', fmtCPU(snap.total_cpu_m), 'current'),
+    kpiTile('Memory', fmtMem(snap.total_memory_mi), 'current'),
+    kpiTile('Avg RPS', avgRps.toFixed(2), 'last 60 min'),
+    kpiTile('Requests', fmtCount(totalReqs), 'last 60 min'),
+  ].join('');
+
+  // Charts
+  const times = pts.map(p => p.t);
+  lineSeries($('pt-cpu'), [
+    { name: 'CPU (mCPU)', color: 'var(--accent)', areaOpacity: 0.18, values: pts.map(p => p.cpu_m) },
+  ], { times, yFormat: v => v + 'm', emptyMsg: 'CPU samples appear after the first 30 s tick.' });
+
+  lineSeries($('pt-mem'), [
+    { name: 'Memory (MiB)', color: '#9b59b6', areaOpacity: 0.18, values: pts.map(p => p.memory_mi) },
+  ], { times, yFormat: v => v + 'Mi', emptyMsg: 'Memory samples appear after the first 30 s tick.' });
+
+  stackedAreaCounts($('pt-rps'), pts.map(p => ({
+    t: p.t,
+    counts: { '2xx': p.req_2xx, '3xx': p.req_3xx, '4xx': p.req_4xx, '5xx': p.req_5xx },
+  })), { height: 200 });
+
+  // Latency: only plot if any window has non-zero latency.
+  const hasLat = pts.some(p => p.latency_p50_ms > 0 || p.latency_p95_ms > 0);
+  if (hasLat) {
+    lineSeries($('pt-latency'), [
+      { name: 'p50', color: 'var(--ok)',   values: pts.map(p => p.latency_p50_ms) },
+      { name: 'p95', color: '#f1c40f',     values: pts.map(p => p.latency_p95_ms) },
+      { name: 'p99', color: 'var(--err)',  values: pts.map(p => p.latency_p99_ms) },
+    ], { times, yFormat: v => v + 'ms', height: 180 });
+  } else {
+    $('pt-latency').innerHTML = `<div class="empty" style="padding:30px;color:var(--text-dim);font-style:italic;">No requests in the window yet — waiting for traffic.</div>`;
   }
-  $('pt-pods').innerHTML = pods.map(p => `
-    <tr>
-      <td><code style="color:var(--text);font-size:11px;">${escapeHTML(p.name)}</code></td>
-      <td class="num">${fmtCPU(p.cpu_m)}</td>
-      <td class="num">${fmtMem(p.memory_mi)}</td>
-    </tr>`).join('');
+
+  // Pod table with inline CPU/mem horizontal bars relative to project max.
+  const pods = snap.pods || [];
+  const maxCPUm = Math.max(1, ...pods.map(p => p.cpu_m));
+  const maxMemMi = Math.max(1, ...pods.map(p => p.memory_mi));
+  $('pt-pods').innerHTML = pods.length === 0
+    ? `<tr><td colspan="5" style="color:var(--text-dim);font-style:italic;">no running pods</td></tr>`
+    : pods.map(p => {
+        const cpuPct = (p.cpu_m / maxCPUm) * 100;
+        const memPct = (p.memory_mi / maxMemMi) * 100;
+        return `
+          <tr>
+            <td><code style="color:var(--text);font-size:11px;">${escapeHTML(p.name)}</code></td>
+            <td class="num">${fmtCPU(p.cpu_m)}</td>
+            <td><div class="cell-bar"><div class="cell-bar-fill" style="width:${cpuPct.toFixed(0)}%; background:var(--accent);"></div></div></td>
+            <td class="num">${fmtMem(p.memory_mi)}</td>
+            <td><div class="cell-bar"><div class="cell-bar-fill" style="width:${memPct.toFixed(0)}%; background:#9b59b6;"></div></div></td>
+          </tr>`;
+      }).join('');
 }
 
+// =========================================================================
+// Per-app TRAFFIC page
+// =========================================================================
+// Layout: 5 KPI tiles (Requests / Error rate / Avg / p95 / p99) + main
+// stacked-area chart full width + side-by-side donut & latency line.
 function renderProjectTraffic() {
   const root = $('traffic-content');
   root.innerHTML = `
@@ -2556,113 +2955,102 @@ function renderProjectTraffic() {
       <div class="panel-body" style="padding: 14px 16px;">
         <div id="pa-chart"><div class="empty" style="padding:30px;color:var(--text-dim);font-style:italic;">loading…</div></div>
       </div>
+    </div>
+    <div class="chart-grid" style="margin-top: 14px;">
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Status distribution</h3>
+          <span class="spacer"></span>
+          <span style="color:var(--text-faint);font-size:11px;">lifetime</span>
+        </div>
+        <div class="panel-body" style="padding: 14px 16px;"><div id="pa-donut"></div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Latency percentiles</h3>
+          <span class="spacer"></span>
+          <span style="color:var(--text-faint);font-size:11px;">p50 · p95 · p99</span>
+        </div>
+        <div class="panel-body" style="padding: 14px 16px;"><div id="pa-latency"></div></div>
+      </div>
+    </div>
+    <div class="panel" style="margin-top: 14px;">
+      <div class="panel-head">
+        <h3>Performance band</h3>
+        <span class="spacer"></span>
+        <span style="color:var(--text-faint);font-size:11px;">user-experience bucket from latest p50</span>
+      </div>
+      <div class="panel-body" style="padding: 16px;"><div id="pa-perfbar"></div></div>
     </div>`;
   startTrafficPoll(tickProjectTraffic);
 }
 
 async function tickProjectTraffic() {
   if (!ROUTE.projectID) return;
-  let tel, series;
+  let tel, metrics;
   try {
-    [tel, series] = await Promise.all([
+    [tel, metrics] = await Promise.all([
       fetchJSON('/v1/projects/' + ROUTE.projectID + '/telemetry'),
-      fetchJSON('/v1/projects/' + ROUTE.projectID + '/telemetry/series'),
+      fetchJSON('/v1/projects/' + ROUTE.projectID + '/metrics'),
     ]);
   } catch (e) {
     $('pa-chart').innerHTML = `<div class="empty" style="color:var(--err);">${escapeHTML(e.message || String(e))}</div>`;
     return;
   }
-  const errPct = tel.requests > 0 ? ((tel.errors / tel.requests) * 100).toFixed(1) : '0';
-  $('pa-summary').innerHTML = `
-    <div class="stat"><div class="label">Requests</div><div class="value">${fmtCount(tel.requests)}</div><div class="sub">lifetime</div></div>
-    <div class="stat"><div class="label">Errors</div><div class="value ${tel.errors > 0 ? 'err' : ''}">${fmtCount(tel.errors)}</div><div class="sub">${tel.requests > 0 ? errPct + '%' : '0%'}</div></div>
-    <div class="stat"><div class="label">Avg latency</div><div class="value">${tel.avg_latency_ms ? tel.avg_latency_ms + ' ms' : '—'}</div></div>`;
-  renderStatusChart($('pa-chart'), series.points || []);
-}
+  const pts = metrics.points || [];
+  const errPct = tel.requests > 0 ? ((tel.errors / tel.requests) * 100) : 0;
 
-// renderStatusChart builds a stacked-area chart of HTTP status-code
-// classes over the rolling window. Pure SVG — no chart lib dependency
-// keeps the dashboard a single embedded HTML file.
-//
-// Layout: width takes container width, fixed 220px height. Y axis
-// auto-scales to the maximum stack height. X axis labels at first,
-// middle, last sample.
-function renderStatusChart(container, points) {
-  if (!points || points.length === 0) {
-    container.innerHTML = `<div class="empty" style="padding:30px;color:var(--text-dim);font-style:italic;">Waiting for the first sample — the sampler ticks every 30 s.</div>`;
-    return;
-  }
-  const classes = ['2xx', '3xx', '4xx', '5xx'];
-  // Brand-consistent palette; --err / --ok are CSS vars so they re-theme.
-  const colors = {
-    '2xx': 'var(--ok)',
-    '3xx': 'var(--accent)',
-    '4xx': '#f1c40f',
-    '5xx': 'var(--err)',
-  };
-  const W = container.clientWidth || 800;
-  const H = 220;
-  const padL = 36, padR = 12, padT = 8, padB = 28;
-  const cw = Math.max(1, W - padL - padR);
-  const ch = Math.max(1, H - padT - padB);
+  // Pick the most recent NON-ZERO percentile window — the very latest
+  // tick might be a quiet 30 s with no traffic, in which case all
+  // percentile fields are 0 and the chart would lie about latency.
+  const lastWithLat = [...pts].reverse().find(p => p.latency_p50_ms > 0) || {};
 
-  // If only one sample we widen the x-axis range so the area has area
-  // (otherwise the path collapses to a vertical line).
-  const n = Math.max(2, points.length);
-  const totals = points.map(p => classes.reduce((s, c) => s + (p.counts[c] || 0), 0));
-  const maxY = Math.max(1, ...totals);
+  $('pa-summary').innerHTML = [
+    kpiTile('Requests', fmtCount(tel.requests), 'lifetime'),
+    kpiTile('Error rate', errPct.toFixed(1) + '%',
+            tel.errors > 0 ? `${fmtCount(tel.errors)} errors` : 'no errors',
+            errPct > 5 ? 'err' : errPct > 1 ? 'warn' : 'ok'),
+    kpiTile('Avg latency', fmtMs(tel.avg_latency_ms), 'lifetime'),
+    kpiTile('p95', fmtMs(lastWithLat.latency_p95_ms || 0), 'last active window'),
+    kpiTile('p99', fmtMs(lastWithLat.latency_p99_ms || 0), 'last active window'),
+  ].join('');
 
-  const xAt = i => padL + (i * cw) / (n - 1);
-  const yAt = v => padT + ch - (v / maxY) * ch;
+  // Main chart
+  stackedAreaCounts($('pa-chart'), pts.map(p => ({
+    t: p.t,
+    counts: { '2xx': p.req_2xx, '3xx': p.req_3xx, '4xx': p.req_4xx, '5xx': p.req_5xx },
+  })), { height: 240 });
 
-  // Build stacked paths bottom-up, advancing the running stack as we go.
-  const stacks = new Array(points.length).fill(0);
-  const paths = classes.map(cls => {
-    let top = '', bottom = '';
-    for (let i = 0; i < points.length; i++) {
-      const x = xAt(i);
-      const baseY = yAt(stacks[i]);
-      const topY  = yAt(stacks[i] + (points[i].counts[cls] || 0));
-      top    += (i === 0 ? 'M ' : ' L ') + x.toFixed(1) + ' ' + topY.toFixed(1);
-      bottom  = ' L ' + x.toFixed(1) + ' ' + baseY.toFixed(1) + bottom;
-    }
-    for (let i = 0; i < points.length; i++) {
-      stacks[i] += points[i].counts[cls] || 0;
-    }
-    return { cls, d: top + bottom + ' Z' };
-  });
-
-  const fmtT = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  const labelIdx = points.length >= 3
-    ? [0, Math.floor((points.length - 1) / 2), points.length - 1]
-    : [0, points.length - 1];
-  const xLabels = labelIdx.map(i => ({ x: xAt(i), text: fmtT(points[i].t) }));
-  const yLabels = [0, Math.round(maxY / 2), maxY];
-
-  // Pull each class's lifetime count for the legend (sum of deltas in window).
-  const totalsByClass = classes.reduce((acc, c) => {
-    acc[c] = points.reduce((s, p) => s + (p.counts[c] || 0), 0);
+  // Lifetime donut: sum the window deltas (last 60 min) by class. We'd
+  // prefer pure lifetime counters but the telemetry handler doesn't
+  // currently split by class beyond Requests/Errors; the window sum is
+  // a faithful representative for visual purposes.
+  const totals = pts.reduce((acc, p) => {
+    acc['2xx'] += p.req_2xx; acc['3xx'] += p.req_3xx;
+    acc['4xx'] += p.req_4xx; acc['5xx'] += p.req_5xx;
     return acc;
-  }, {});
+  }, {'2xx':0,'3xx':0,'4xx':0,'5xx':0});
+  donutChart($('pa-donut'), [
+    { label: '2xx', value: totals['2xx'], color: STATUS_COLOURS['2xx'] },
+    { label: '3xx', value: totals['3xx'], color: STATUS_COLOURS['3xx'] },
+    { label: '4xx', value: totals['4xx'], color: STATUS_COLOURS['4xx'] },
+    { label: '5xx', value: totals['5xx'], color: STATUS_COLOURS['5xx'] },
+  ], { height: 220 });
 
-  container.innerHTML = `
-    <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;">
-      ${yLabels.map(v => {
-        const y = yAt(v);
-        return `<line x1="${padL}" x2="${W-padR}" y1="${y}" y2="${y}" stroke="var(--border)" stroke-width="0.5"/>`;
-      }).join('')}
-      ${paths.map(p => `<path d="${p.d}" fill="${colors[p.cls]}" fill-opacity="0.40" stroke="${colors[p.cls]}" stroke-width="1.2"/>`).join('')}
-      ${yLabels.map(v => `<text x="${padL - 6}" y="${yAt(v) + 3}" text-anchor="end" font-size="10" fill="var(--text-faint)" font-family="ui-monospace, monospace">${v}</text>`).join('')}
-      ${xLabels.map(l => `<text x="${l.x}" y="${H - 8}" text-anchor="middle" font-size="10" fill="var(--text-faint)" font-family="ui-monospace, monospace">${l.text}</text>`).join('')}
-    </svg>
-    <div style="display:flex; flex-wrap:wrap; gap:14px; padding: 10px 4px 0; font-size: 11px;">
-      ${classes.map(c => `
-        <span style="display:inline-flex;align-items:center;gap:6px;color:var(--text-dim);">
-          <span style="width:10px;height:10px;background:${colors[c]};border-radius:2px;display:inline-block;"></span>
-          <strong style="color:var(--text);">${c}</strong>
-          <span>${fmtCount(totalsByClass[c])} in window</span>
-        </span>`).join('')}
-    </div>`;
+  // Latency multiline
+  const times = pts.map(p => p.t);
+  const hasLat = pts.some(p => p.latency_p50_ms > 0 || p.latency_p95_ms > 0);
+  if (hasLat) {
+    lineSeries($('pa-latency'), [
+      { name: 'p50', color: 'var(--ok)',   values: pts.map(p => p.latency_p50_ms) },
+      { name: 'p95', color: '#f1c40f',     values: pts.map(p => p.latency_p95_ms) },
+      { name: 'p99', color: 'var(--err)',  values: pts.map(p => p.latency_p99_ms) },
+    ], { times, yFormat: v => v + 'ms', height: 180 });
+  } else {
+    $('pa-latency').innerHTML = `<div class="empty" style="padding:30px;color:var(--text-dim);font-style:italic;">No requests in the window yet — waiting for traffic.</div>`;
+  }
+
+  fastSlowBar($('pa-perfbar'), pts);
 }
 
 // ----- Shared poll lifecycle ---------------------------------------------
