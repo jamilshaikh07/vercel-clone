@@ -230,11 +230,35 @@
       text-decoration: none;
     }
     .nav-install:hover { color: var(--text); border-color: var(--accent); border-style: solid; text-decoration: none; }
-    /* "+ New project" CTA — uses nav-item layout but a subtler colour
-       so it doesn't compete with the active nav-item. Hover lifts to
-       the accent. */
-    .nav-item.nav-cta { color: var(--accent); }
-    .nav-item.nav-cta:hover { color: var(--accent); background: var(--accent-dim); }
+
+    /* Home row hosts both the Home link and the "+" affordance to add a
+       new project. Flex puts them on the same line; the + stays a fixed
+       compact icon-button on the right. */
+    .nav-row { display: flex; align-items: center; gap: 6px; padding-right: 10px; }
+    .nav-plus {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 24px; height: 24px;
+      border-radius: 6px;
+      color: var(--accent);
+      border: 1px dashed var(--border);
+      background: transparent;
+      text-decoration: none;
+      font-size: 16px; line-height: 1; font-weight: 500;
+      flex-shrink: 0;
+    }
+    .nav-plus:hover { background: var(--accent-dim); border-color: var(--accent); border-style: solid; text-decoration: none; }
+
+    /* Apps list in the main sidebar — slightly tighter than the primary
+       nav so a 6- or 7-app sidebar stays compact. Status pill on the
+       right communicates last deployment state at a glance. */
+    #main-sidebar-apps .nav-item { gap: 8px; }
+    #main-sidebar-apps .nav-item .label {
+      flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    #main-sidebar-apps .nav-item .pill {
+      flex-shrink: 0;
+      padding: 1px 6px; font-size: 9px;
+    }
 
     .sidebar-footer {
       border-top: 1px solid var(--border);
@@ -381,6 +405,20 @@
       margin-top: 4px;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
+    /* Production URL on the home-page app card. We pull it OUT of the
+       card's click-anywhere-to-navigate by stopPropagation, so the
+       affordance reads as: 'click the card to inspect, click the URL
+       to actually open the running app'. */
+    .app-card-url {
+      display: inline-block; margin-top: 8px;
+      font-family: ui-monospace, monospace; font-size: 11px;
+      color: var(--accent); text-decoration: none;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+    }
+    .app-card-url:hover { text-decoration: underline; }
+    .app-card-url.muted { color: var(--text-faint); cursor: default; }
+    .app-card-url.muted:hover { text-decoration: none; }
+
     .app-card-meta {
       display: flex; align-items: center; gap: 10px;
       margin-top: 14px;
@@ -734,10 +772,24 @@
              the app switcher live in the sub-sidebar to the right. -->
         <div class="nav-section">
           <ul class="nav-list">
-            <li><a class="nav-item" id="nav-home" data-globalview="home" href="#/"><span class="label">Home</span></a></li>
-            <li><a class="nav-item nav-cta" href="https://github.com/apps/jamilshaikh-paas-v2/installations/new"
-                   target="_blank" rel="noopener"><span class="label">+ New project</span></a></li>
+            <!-- Home + "connect a new repo" button live on the same row.
+                 The + opens the GitHub App install flow in a new tab so
+                 the dashboard state isn't disrupted by an OAuth bounce. -->
+            <li class="nav-row">
+              <a class="nav-item" id="nav-home" data-globalview="home" href="#/" style="flex:1;"><span class="label">Home</span></a>
+              <a class="nav-plus" href="https://github.com/apps/jamilshaikh-paas-v2/installations/new"
+                 target="_blank" rel="noopener"
+                 title="Connect a new GitHub repo" aria-label="Connect a new GitHub repo">+</a>
+            </li>
           </ul>
+        </div>
+
+        <!-- Apps section — populated by renderSidebar() from DATA.projects.
+             Always visible (when there's at least one project) so users
+             can switch apps in one click from anywhere in the dashboard. -->
+        <div class="nav-section" id="main-sidebar-apps-section" style="display:none;">
+          <div class="nav-section-title">Apps</div>
+          <ul class="nav-list" id="main-sidebar-apps"></ul>
         </div>
 
         <div class="nav-section">
@@ -780,12 +832,6 @@
           <li><a class="nav-item" data-subview="telemetry" href="#"><span class="label">Telemetry</span></a></li>
           <li><a class="nav-item" data-subview="traffic"   href="#"><span class="label">Traffic</span></a></li>
         </ul>
-        <!-- App switcher — populated by renderSidebar() from DATA.projects.
-             Lets the user jump between apps without going back to Home. -->
-        <div class="nav-section" id="sub-sidebar-switcher" style="margin-top: 8px;">
-          <div class="nav-section-title">Switch app</div>
-          <ul class="nav-list" id="sub-sidebar-apps"></ul>
-        </div>
       </div>
     </aside>
 
@@ -1224,6 +1270,9 @@ function renderSidebar() {
   const inProject = ROUTE.scope === 'project';
   appEl.classList.toggle('has-subnav', inProject);
 
+  // Per-app sub-sidebar — only populated when an app is selected. The
+  // app's slug becomes the sub-sidebar title and each per-view nav item
+  // points at the right hash route, with the active one highlighted.
   if (inProject) {
     const proj = findProject(ROUTE.projectID);
     subSidebarTitleEl.textContent = proj ? proj.slug : 'App';
@@ -1232,29 +1281,31 @@ function renderSidebar() {
       a.href = `#/p/${ROUTE.projectID}/${a.dataset.subview}`;
       a.classList.toggle('active', ROUTE.view === a.dataset.subview);
     });
+  }
 
-    // App switcher — every project EXCEPT the active one. Each link
-    // preserves the current view so the user can compare e.g. Telemetry
-    // across apps without re-clicking. The Switch-app section hides
-    // entirely when there's only one project.
-    const projects = (DATA.projects || []).filter(p => p.id !== ROUTE.projectID);
-    const switcher = $('sub-sidebar-switcher');
-    const view = ROUTE.view || 'overview';
-    if (projects.length === 0) {
-      switcher.style.display = 'none';
-    } else {
-      switcher.style.display = '';
-      $('sub-sidebar-apps').innerHTML = projects.map(p => {
-        const latest = (p.deployments || [])[0];
-        const pillCls = latest ? latest.status : '';
-        const pillTxt = latest ? latest.status : '—';
-        return `
-          <li><a class="nav-item" href="#/p/${p.id}/${view}" data-project-id="${p.id}">
-            <span class="label" title="${escapeHTML(p.full_name)}">${escapeHTML(p.slug)}</span>
-            <span class="pill ${pillCls}">${pillTxt}</span>
-          </a></li>`;
-      }).join('');
-    }
+  // Main sidebar Apps list — populated from DATA.projects regardless of
+  // current route, so the user can jump between apps from anywhere
+  // (home, monitoring, mid-project) in a single click. When an app is
+  // active, the matching entry gets the .active highlight; the current
+  // view is preserved when switching apps (Traffic → Traffic, etc).
+  const projects = DATA.projects || [];
+  const appsSection = $('main-sidebar-apps-section');
+  if (projects.length === 0) {
+    appsSection.style.display = 'none';
+  } else {
+    appsSection.style.display = '';
+    const view = (inProject && ROUTE.view) ? ROUTE.view : 'overview';
+    $('main-sidebar-apps').innerHTML = projects.map(p => {
+      const latest = (p.deployments || [])[0];
+      const pillCls = latest ? latest.status : '';
+      const pillTxt = latest ? latest.status : '—';
+      const isActive = inProject && p.id === ROUTE.projectID;
+      return `
+        <li><a class="nav-item ${isActive ? 'active' : ''}" href="#/p/${p.id}/${view}" data-project-id="${p.id}">
+          <span class="label" title="${escapeHTML(p.full_name)}">${escapeHTML(p.slug)}</span>
+          <span class="pill ${pillCls}">${pillTxt}</span>
+        </a></li>`;
+    }).join('');
   }
 
   // Primary nav (Home / Telemetry / Traffic) — exactly one active at a time.
@@ -1342,6 +1393,19 @@ function renderHome() {
     const status = latest ? latest.status : 'none';
     const statusLabel = latest ? latest.status : 'no deploys';
     const when = latest ? timeAgo(latest.created_at) : 'never';
+    // Production URL is reachable as soon as one deployment on the
+    // production branch is READY. We surface the link on every card
+    // unconditionally — the user can copy it / share it even if the
+    // current deploy is failing; it'll route to whatever's healthy.
+    const prodRef = 'refs/heads/' + p.production_branch;
+    const hasProd = (p.deployments || []).some(d => d.status === 'ready' && d.ref === prodRef);
+    const prodHost = `${p.slug}.jamilshaikh.in`;
+    const urlHtml = hasProd
+      ? `<a class="app-card-url" href="https://${prodHost}" target="_blank" rel="noopener"
+            onclick="event.stopPropagation()" title="Open ${prodHost} in a new tab">
+           ${prodHost} <span aria-hidden="true">↗</span>
+         </a>`
+      : `<span class="app-card-url muted" title="No READY production deployment yet">${prodHost}</span>`;
     return `
       <div class="app-card" data-href="#/p/${p.id}" tabindex="0" role="link" aria-label="Open ${escapeHTML(p.slug)}">
         <div class="app-card-head">
@@ -1349,6 +1413,7 @@ function renderHome() {
           <span class="badge ${status}">${statusLabel}</span>
         </div>
         <div class="app-card-repo">${escapeHTML(p.full_name)}</div>
+        ${urlHtml}
         <div class="app-card-meta">
           <span class="branch-pill">${escapeHTML(p.production_branch)}</span>
           <span class="spacer"></span>
