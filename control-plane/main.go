@@ -148,6 +148,11 @@ func main() {
 	bw := &worker{store: s.store, gh: gh, k8s: k8s, log: log}
 	go bw.Run(rootCtx)
 
+	// Self-rebuilder: polls our own git repo for new commits and triggers
+	// a fresh image build + rollout. Lets `git push` actually deploy
+	// control-plane changes without any manual kubectl steps.
+	startSelfRebuilder(rootCtx, k8s, log)
+
 	mux := http.NewServeMux()
 	// Public — health probes + webhook (HMAC auth) + login pages.
 	mux.HandleFunc("GET /healthz", s.healthz)

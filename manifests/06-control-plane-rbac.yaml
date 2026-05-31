@@ -39,6 +39,13 @@ rules:
   - apiGroups: [""]
     resources: ["pods", "pods/log"]
     verbs: ["get", "list", "watch"]
+  # ConfigMap holding the self-rebuilder's last-built-SHA state. Get +
+  # create + update only — the state CM is created on first poll and
+  # then updated on every successful build; never deleted from the
+  # control-plane.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "create", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
