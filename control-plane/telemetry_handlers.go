@@ -141,6 +141,10 @@ type projectTelemetryResponse struct {
 	Requests     float64     `json:"requests"`
 	Errors       float64     `json:"errors"`
 	AvgLatencyMs int64       `json:"avg_latency_ms"`
+	// ByClass holds the lifetime cumulative count per HTTP status class
+	// ("2xx","3xx","4xx","5xx"). Lets the dashboard donut show true
+	// lifetime ratios instead of summing the rolling 60-min window.
+	ByClass map[string]float64 `json:"by_class,omitempty"`
 }
 
 func (s *server) handleProjectTelemetry(w http.ResponseWriter, r *http.Request) {
@@ -168,6 +172,7 @@ func (s *server) handleProjectTelemetry(w http.ResponseWriter, r *http.Request) 
 		out.TotalMemMi += pod.MemoryMi
 	}
 	var durSum, durCnt float64
+	byClass := map[string]float64{}
 	for svcName, t := range snap.Services {
 		if !strings.Contains(svcName, proj.Slug) {
 			continue
@@ -176,9 +181,15 @@ func (s *server) handleProjectTelemetry(w http.ResponseWriter, r *http.Request) 
 		out.Errors += t.Errors
 		durSum += t.Duration
 		durCnt += t.Count
+		for cls, v := range t.ByClass {
+			byClass[cls] += v
+		}
 	}
 	if durCnt > 0 {
 		out.AvgLatencyMs = int64((durSum / durCnt) * 1000)
+	}
+	if len(byClass) > 0 {
+		out.ByClass = byClass
 	}
 	writeJSON(w, http.StatusOK, out)
 }
