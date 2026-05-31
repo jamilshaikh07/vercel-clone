@@ -551,6 +551,53 @@
       color: var(--text); margin-left: auto; font-weight: 500;
     }
 
+    /* === Incident banner =================================================
+       Sits above the KPI tiles on the Traffic page when any anomaly rule
+       fires. We use a coloured left bar (Datadog/PagerDuty convention)
+       rather than a full-bleed coloured background so the page palette
+       stays calm — the eye finds the bar at a glance but the rest of
+       the page is still readable.
+    */
+    .incident-bar { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+    .incident-row {
+      display: grid; grid-template-columns: 36px 1fr auto;
+      gap: 12px; align-items: center;
+      background: var(--panel-2); border-radius: 8px;
+      padding: 12px 14px;
+      border-left: 4px solid var(--border);
+    }
+    .incident-row.critical { border-left-color: var(--err); }
+    .incident-row.warning  { border-left-color: #f1c40f; }
+    .incident-icon {
+      width: 32px; height: 32px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px; font-weight: 700; color: var(--bg);
+    }
+    .incident-row.critical .incident-icon {
+      background: var(--err);
+      animation: incident-pulse 1.8s ease-in-out infinite;
+    }
+    .incident-row.warning .incident-icon { background: #f1c40f; }
+    .incident-title {
+      font-size: 13px; font-weight: 600; color: var(--text);
+    }
+    .incident-detail {
+      font-size: 11px; color: var(--text-dim); margin-top: 2px;
+    }
+    .incident-tag {
+      font-size: 10px; font-family: ui-monospace, monospace;
+      letter-spacing: 0.08em; font-weight: 600;
+      padding: 3px 8px; border-radius: 4px;
+      background: var(--panel-3); color: var(--text-dim);
+    }
+    .incident-row.critical .incident-tag { color: var(--err); }
+    .incident-row.warning  .incident-tag { color: #f1c40f; }
+
+    @keyframes incident-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.55); }
+      50%      { box-shadow: 0 0 0 6px rgba(255, 107, 107, 0.0); }
+    }
+
     /* === Insights page checks ============================================ */
     .insight-list { display: flex; flex-direction: column; gap: 8px; }
     .insight-row {
@@ -2909,6 +2956,101 @@ function fastSlowBar(container, points) {
 }
 
 // =========================================================================
+// Incident detector
+// =========================================================================
+// Three rules — all pure functions of the recent /metrics points so the
+// dashboard can highlight anomalies without any backend changes.
+//
+// Each rule returns either null or an object:
+//   { severity: 'critical'|'warning', icon, title, detail }
+//
+// The list is rendered as a banner above the KPI tiles on the Traffic
+// page. When empty the banner element is hidden — we don't want a
+// "no incidents" pat-on-the-back banner permanently taking up space.
+function detectIncidents(points, intervalS) {
+  if (!points || points.length === 0) return [];
+  const out = [];
+
+  // How many ticks make up "the last N minutes"?
+  const ticksFor = (mins) => Math.max(1, Math.floor((mins * 60) / intervalS));
+
+  // Rule 1: any 5xx in the last 5 minutes → critical incident.
+  const recent5 = points.slice(-ticksFor(5));
+  const recent5xx = recent5.reduce((s, p) => s + (p.req_5xx || 0), 0);
+  if (recent5xx > 0) {
+    out.push({
+      severity: 'critical',
+      icon: '⚠',
+      title: 'Server errors in the last 5 min',
+      detail: `${recent5xx} request${recent5xx === 1 ? '' : 's'} returned 5xx — check the latest deployment logs.`,
+    });
+  }
+
+  // Rule 2: error rate (4xx + 5xx) > 5 % over the last 10 minutes,
+  // with at least 10 requests so we don't flap on single-digit noise.
+  const recent10 = points.slice(-ticksFor(10));
+  const totalReq = recent10.reduce((s, p) => s + (p.req_2xx + p.req_3xx + p.req_4xx + p.req_5xx), 0);
+  const totalErr = recent10.reduce((s, p) => s + (p.req_4xx + p.req_5xx), 0);
+  if (totalReq >= 10) {
+    const rate = (totalErr / totalReq) * 100;
+    if (rate > 5) {
+      out.push({
+        severity: rate > 20 ? 'critical' : 'warning',
+        icon: '⚠',
+        title: `Elevated error rate · ${rate.toFixed(1)}%`,
+        detail: `${totalErr} of ${totalReq} requests in the last 10 min returned 4xx/5xx.`,
+      });
+    }
+  }
+
+  // Rule 3: latency regression — current p95 is > 2× the median of all
+  // non-zero p95 samples in the last hour. Skipped when we don't yet
+  // have at least 6 samples (3 min of history) — too noisy otherwise.
+  const p95s = points.map(p => p.latency_p95_ms).filter(v => v > 0);
+  if (p95s.length >= 6) {
+    const sorted = [...p95s].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    const current = p95s[p95s.length - 1];
+    if (current > median * 2 && current > 100) {
+      out.push({
+        severity: 'warning',
+        icon: '⏱',
+        title: `Latency regression · p95 = ${current} ms`,
+        detail: `Current p95 is ${(current / median).toFixed(1)}× the recent baseline (${median} ms).`,
+      });
+    }
+  }
+
+  return out;
+}
+
+// paintIncidents renders zero-or-more incident rows into #pa-incidents.
+// Hides the container entirely when there are no fired rules — keeps
+// the page calm when everything's fine.
+function paintIncidents(incidents) {
+  const root = $('pa-incidents');
+  if (!root) return;
+  if (!incidents || incidents.length === 0) {
+    root.style.display = 'none';
+    root.innerHTML = '';
+    return;
+  }
+  root.style.display = '';
+  root.innerHTML = `
+    <div class="incident-bar">
+      ${incidents.map(i => `
+        <div class="incident-row ${i.severity}">
+          <div class="incident-icon" aria-hidden="true">${i.icon}</div>
+          <div class="incident-body">
+            <div class="incident-title">${escapeHTML(i.title)}</div>
+            <div class="incident-detail">${escapeHTML(i.detail)}</div>
+          </div>
+          <div class="incident-tag">${i.severity === 'critical' ? 'CRITICAL' : 'WARNING'}</div>
+        </div>`).join('')}
+    </div>`;
+}
+
+// =========================================================================
 // Per-app TELEMETRY page
 // =========================================================================
 // Layout: 4 KPI tiles + 2x2 chart grid (CPU, Memory, RPS-by-status,
@@ -3050,6 +3192,7 @@ async function tickProjectTelemetry() {
 function renderProjectTraffic() {
   const root = $('traffic-content');
   root.innerHTML = `
+    <div id="pa-incidents" style="display:none;"></div>
     <div class="summary" id="pa-summary"></div>
     <div class="panel">
       <div class="panel-head">
@@ -3109,6 +3252,11 @@ async function tickProjectTraffic() {
   // tick might be a quiet 30 s with no traffic, in which case all
   // percentile fields are 0 and the chart would lie about latency.
   const lastWithLat = [...pts].reverse().find(p => p.latency_p50_ms > 0) || {};
+
+  // Anomaly detection — runs client-side from the same /metrics points
+  // we already fetched. Cheap (one pass over <=120 points) and the rules
+  // live next to the rendering code so they're easy to tune.
+  paintIncidents(detectIncidents(pts, metrics.interval_s || 30));
 
   $('pa-summary').innerHTML = [
     kpiTile('Requests', fmtCount(tel.requests), 'lifetime'),
