@@ -183,6 +183,34 @@ func (s *server) handleProjectTelemetry(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, out)
 }
 
+// handleProjectSeries returns the per-project HTTP-status-code time
+// series — a stream of {t, counts{class:count}} points captured by the
+// sampler goroutine on every 30s tick.
+//
+// The response is small (< 10KB for a fully-populated hour) and the
+// caller polls it on the per-app traffic page. We don't paginate or
+// cache here; the seriesStore.RWMutex makes the read effectively free.
+type seriesResponse struct {
+	ProjectID  string        `json:"project_id"`
+	Slug       string        `json:"slug"`
+	IntervalS  int           `json:"interval_s"`
+	Points     []seriesPoint `json:"points"`
+}
+
+func (s *server) handleProjectSeries(w http.ResponseWriter, r *http.Request) {
+	proj := s.authoriseProject(w, r)
+	if proj == nil {
+		return
+	}
+	pts := s.series.pointsForServices(matcherForProject(proj.Slug))
+	writeJSON(w, http.StatusOK, seriesResponse{
+		ProjectID: proj.ID,
+		Slug:      proj.Slug,
+		IntervalS: int(seriesInterval / 1e9),
+		Points:    pts,
+	})
+}
+
 func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

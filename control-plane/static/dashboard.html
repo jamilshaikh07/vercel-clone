@@ -230,6 +230,11 @@
       text-decoration: none;
     }
     .nav-install:hover { color: var(--text); border-color: var(--accent); border-style: solid; text-decoration: none; }
+    /* "+ New project" CTA — uses nav-item layout but a subtler colour
+       so it doesn't compete with the active nav-item. Hover lifts to
+       the accent. */
+    .nav-item.nav-cta { color: var(--accent); }
+    .nav-item.nav-cta:hover { color: var(--accent); background: var(--accent-dim); }
 
     .sidebar-footer {
       border-top: 1px solid var(--border);
@@ -724,12 +729,14 @@
       </a>
       <div class="sidebar-scroll">
         <!-- Primary navigation: Home shows the apps list; Monitoring
-             holds the two cluster-wide views. Per-app navigation (Overview/
-             Logs/Database/SQL/Env vars) lives in the sub-sidebar that
-             appears only when an app is selected. -->
+             holds the two cluster-wide views. Per-app navigation
+             (Overview/Logs/Database/Env vars/Telemetry/Traffic) plus
+             the app switcher live in the sub-sidebar to the right. -->
         <div class="nav-section">
           <ul class="nav-list">
             <li><a class="nav-item" id="nav-home" data-globalview="home" href="#/"><span class="label">Home</span></a></li>
+            <li><a class="nav-item nav-cta" href="https://github.com/apps/jamilshaikh-paas-v2/installations/new"
+                   target="_blank" rel="noopener"><span class="label">+ New project</span></a></li>
           </ul>
         </div>
 
@@ -770,7 +777,15 @@
           <li><a class="nav-item" data-subview="database" href="#"><span class="label">Database</span></a></li>
           <li id="subnav-sql" style="display:none"><a class="nav-item" data-subview="sql" href="#"><span class="label">SQL viewer</span></a></li>
           <li><a class="nav-item" data-subview="env"      href="#"><span class="label">Env vars</span></a></li>
+          <li><a class="nav-item" data-subview="telemetry" href="#"><span class="label">Telemetry</span></a></li>
+          <li><a class="nav-item" data-subview="traffic"   href="#"><span class="label">Traffic</span></a></li>
         </ul>
+        <!-- App switcher — populated by renderSidebar() from DATA.projects.
+             Lets the user jump between apps without going back to Home. -->
+        <div class="nav-section" id="sub-sidebar-switcher" style="margin-top: 8px;">
+          <div class="nav-section-title">Switch app</div>
+          <ul class="nav-list" id="sub-sidebar-apps"></ul>
+        </div>
       </div>
     </aside>
 
@@ -1217,6 +1232,29 @@ function renderSidebar() {
       a.href = `#/p/${ROUTE.projectID}/${a.dataset.subview}`;
       a.classList.toggle('active', ROUTE.view === a.dataset.subview);
     });
+
+    // App switcher — every project EXCEPT the active one. Each link
+    // preserves the current view so the user can compare e.g. Telemetry
+    // across apps without re-clicking. The Switch-app section hides
+    // entirely when there's only one project.
+    const projects = (DATA.projects || []).filter(p => p.id !== ROUTE.projectID);
+    const switcher = $('sub-sidebar-switcher');
+    const view = ROUTE.view || 'overview';
+    if (projects.length === 0) {
+      switcher.style.display = 'none';
+    } else {
+      switcher.style.display = '';
+      $('sub-sidebar-apps').innerHTML = projects.map(p => {
+        const latest = (p.deployments || [])[0];
+        const pillCls = latest ? latest.status : '';
+        const pillTxt = latest ? latest.status : '—';
+        return `
+          <li><a class="nav-item" href="#/p/${p.id}/${view}" data-project-id="${p.id}">
+            <span class="label" title="${escapeHTML(p.full_name)}">${escapeHTML(p.slug)}</span>
+            <span class="pill ${pillCls}">${pillTxt}</span>
+          </a></li>`;
+      }).join('');
+    }
   }
 
   // Primary nav (Home / Telemetry / Traffic) — exactly one active at a time.
@@ -1968,8 +2006,10 @@ async function redeployFromButton(btn) {
 // active page; navigating away clears the interval so we don't burn API
 // calls in the background.
 
-let telemetryTimer = null;
-let telemetryCache = null;   // last response, kept so renderTraffic can reuse it
+// telemetryCache holds the last /v1/telemetry response so the global
+// Traffic page can render without a second round-trip when the user
+// flips between Telemetry and Traffic within a 5s window.
+let telemetryCache = null;
 
 async function fetchTelemetry() {
   try {
@@ -2004,52 +2044,54 @@ function fmtCount(n) {
   return (n / 1e6).toFixed(1) + 'M';
 }
 
+// renderTelemetry / renderTraffic dispatch on ROUTE.scope. Each branch
+// owns its own layout + tick fn, but the poll lifecycle (start/stop)
+// is unified via the timer + scope variables below.
+
 function renderTelemetry() {
-  // Stand up the layout once; subsequent ticks just overwrite #telemetry-rows.
-  const root = $('telemetry-content');
-  if (!root.querySelector('#telemetry-summary')) {
-    root.innerHTML = `
-      <div class="summary" id="telemetry-summary"></div>
-      <div class="panel">
-        <div class="panel-head">
-          <h3>Per-app live signals</h3>
-          <span class="spacer"></span>
-          <span id="telemetry-asof" style="color:var(--text-faint);font-size:11px;">—</span>
-        </div>
-        <table class="recent-table" id="telemetry-table">
-          <thead><tr>
-            <th>App</th>
-            <th class="num">Pods</th>
-            <th class="num">CPU</th>
-            <th class="num">Memory</th>
-            <th class="num">Requests</th>
-            <th class="num">Errors</th>
-            <th class="num">Avg latency</th>
-          </tr></thead>
-          <tbody id="telemetry-rows"><tr><td colspan="7" style="color:var(--text-dim);font-style:italic;">loading…</td></tr></tbody>
-        </table>
-      </div>
-      <div id="telemetry-degraded" style="display:none" class="stub-banner"></div>`;
-  }
-  startTelemetryPoll();
+  if (ROUTE.scope === 'project') return renderProjectTelemetry();
+  return renderGlobalTelemetry();
+}
+function renderTraffic() {
+  if (ROUTE.scope === 'project') return renderProjectTraffic();
+  return renderGlobalTraffic();
 }
 
-async function tickTelemetry() {
+// ----- Global telemetry/traffic (cluster rollup) -------------------------
+
+function renderGlobalTelemetry() {
+  const root = $('telemetry-content');
+  root.innerHTML = `
+    <div class="summary" id="telemetry-summary"></div>
+    <div class="panel">
+      <div class="panel-head">
+        <h3>Per-app live signals</h3>
+        <span class="spacer"></span>
+        <span id="telemetry-asof" style="color:var(--text-faint);font-size:11px;">—</span>
+      </div>
+      <table class="recent-table" id="telemetry-table">
+        <thead><tr>
+          <th>App</th><th class="num">Pods</th><th class="num">CPU</th>
+          <th class="num">Memory</th><th class="num">Requests</th>
+          <th class="num">Errors</th><th class="num">Avg latency</th>
+        </tr></thead>
+        <tbody id="telemetry-rows"><tr><td colspan="7" style="color:var(--text-dim);font-style:italic;">loading…</td></tr></tbody>
+      </table>
+    </div>
+    <div id="telemetry-degraded" style="display:none" class="stub-banner"></div>`;
+  startTelemetryPoll(tickGlobalTelemetry);
+}
+
+async function tickGlobalTelemetry() {
   const data = await fetchTelemetry();
   if (!data) return;
   if (data.error) {
     $('telemetry-rows').innerHTML = `<tr><td colspan="7" style="color:var(--err);">${escapeHTML(data.error)}</td></tr>`;
     return;
   }
-  // The telemetry endpoint can return cached data even if one source
-  // failed; surface that as a soft banner rather than wiping the table.
   const degraded = $('telemetry-degraded');
-  if (data.degraded) {
-    degraded.textContent = '⚠ partial data — ' + data.degraded;
-    degraded.style.display = '';
-  } else {
-    degraded.style.display = 'none';
-  }
+  if (data.degraded) { degraded.textContent = '⚠ partial data — ' + data.degraded; degraded.style.display = ''; }
+  else degraded.style.display = 'none';
 
   $('telemetry-summary').innerHTML = `
     <div class="stat"><div class="label">Running apps</div><div class="value">${(data.apps || []).filter(a => a.pods > 0).length}</div><div class="sub">of ${(data.apps || []).length} deployed</div></div>
@@ -2057,7 +2099,6 @@ async function tickTelemetry() {
     <div class="stat"><div class="label">CPU usage</div><div class="value">${fmtCPU(data.total_cpu_m)}</div></div>
     <div class="stat"><div class="label">Memory</div><div class="value">${fmtMem(data.total_memory_mi)}</div></div>
     <div class="stat"><div class="label">Requests served</div><div class="value">${fmtCount(data.total_requests)}</div><div class="sub">since Traefik start</div></div>`;
-
   $('telemetry-asof').textContent = 'updated ' + new Date(data.as_of).toLocaleTimeString();
 
   const apps = data.apps || [];
@@ -2070,7 +2111,7 @@ async function tickTelemetry() {
     const errCls = a.errors > 0 ? 'style="color:var(--err);"' : '';
     return `
       <tr>
-        <td><a href="#/p/${a.project_id}">${escapeHTML(a.slug)}</a></td>
+        <td><a href="#/p/${a.project_id}/telemetry">${escapeHTML(a.slug)}</a></td>
         <td class="num">${a.pods}</td>
         <td class="num">${fmtCPU(a.cpu_m)}</td>
         <td class="num">${fmtMem(a.memory_mi)}</td>
@@ -2081,48 +2122,27 @@ async function tickTelemetry() {
   }).join('');
 }
 
-function startTelemetryPoll() {
-  stopTelemetryPoll();
-  tickTelemetry();
-  telemetryTimer = setInterval(tickTelemetry, 5000);
-}
-
-function stopTelemetryPoll() {
-  if (telemetryTimer) {
-    clearInterval(telemetryTimer);
-    telemetryTimer = null;
-  }
-}
-
-// Traffic page is a transposition of the telemetry data sorted by
-// requests + a per-app share bar. Reuses the same endpoint so flipping
-// between Telemetry and Traffic costs zero extra round-trips.
-function renderTraffic() {
+function renderGlobalTraffic() {
   const root = $('traffic-content');
-  if (!root.querySelector('#traffic-table')) {
-    root.innerHTML = `
-      <div class="panel">
-        <div class="panel-head">
-          <h3>Traffic per app</h3>
-          <span class="spacer"></span>
-          <span id="traffic-asof" style="color:var(--text-faint);font-size:11px;">—</span>
-        </div>
-        <table class="recent-table" id="traffic-table">
-          <thead><tr>
-            <th>App</th>
-            <th class="num">Requests</th>
-            <th class="num">Errors</th>
-            <th class="num">Avg latency</th>
-            <th style="width:30%">Share</th>
-          </tr></thead>
-          <tbody id="traffic-rows"><tr><td colspan="5" style="color:var(--text-dim);font-style:italic;">loading…</td></tr></tbody>
-        </table>
-      </div>`;
-  }
-  startTrafficPoll();
+  root.innerHTML = `
+    <div class="panel">
+      <div class="panel-head">
+        <h3>Traffic per app</h3>
+        <span class="spacer"></span>
+        <span id="traffic-asof" style="color:var(--text-faint);font-size:11px;">—</span>
+      </div>
+      <table class="recent-table" id="traffic-table">
+        <thead><tr>
+          <th>App</th><th class="num">Requests</th><th class="num">Errors</th>
+          <th class="num">Avg latency</th><th style="width:30%">Share</th>
+        </tr></thead>
+        <tbody id="traffic-rows"><tr><td colspan="5" style="color:var(--text-dim);font-style:italic;">loading…</td></tr></tbody>
+      </table>
+    </div>`;
+  startTrafficPoll(tickGlobalTraffic);
 }
 
-async function tickTraffic() {
+async function tickGlobalTraffic() {
   const data = await fetchTelemetry();
   if (!data || data.error) {
     if (data && data.error) {
@@ -2141,7 +2161,7 @@ async function tickTraffic() {
     const pct = (a.requests / max) * 100;
     return `
       <tr>
-        <td><a href="#/p/${a.project_id}">${escapeHTML(a.slug)}</a></td>
+        <td><a href="#/p/${a.project_id}/traffic">${escapeHTML(a.slug)}</a></td>
         <td class="num">${fmtCount(a.requests)}</td>
         <td class="num" ${a.errors > 0 ? 'style="color:var(--err);"' : ''}>${fmtCount(a.errors)}</td>
         <td class="num">${a.avg_latency_ms ? a.avg_latency_ms + ' ms' : '—'}</td>
@@ -2154,12 +2174,198 @@ async function tickTraffic() {
   }).join('');
 }
 
-function startTrafficPoll() {
-  stopTrafficPoll();
-  tickTraffic();
-  trafficTimer = setInterval(tickTraffic, 5000);
+// ----- Per-app telemetry/traffic (project-scoped) ------------------------
+
+function renderProjectTelemetry() {
+  const root = $('telemetry-content');
+  root.innerHTML = `
+    <div class="summary" id="pt-summary"></div>
+    <div class="panel">
+      <div class="panel-head">
+        <h3>Running pods</h3>
+        <span class="spacer"></span>
+        <span id="pt-asof" style="color:var(--text-faint);font-size:11px;">—</span>
+      </div>
+      <table class="recent-table">
+        <thead><tr>
+          <th>Pod</th><th class="num">CPU</th><th class="num">Memory</th>
+        </tr></thead>
+        <tbody id="pt-pods"><tr><td colspan="3" style="color:var(--text-dim);font-style:italic;">loading…</td></tr></tbody>
+      </table>
+    </div>`;
+  startTelemetryPoll(tickProjectTelemetry);
 }
+
+async function tickProjectTelemetry() {
+  if (!ROUTE.projectID) return;
+  let data;
+  try { data = await fetchJSON('/v1/projects/' + ROUTE.projectID + '/telemetry'); }
+  catch (e) {
+    $('pt-pods').innerHTML = `<tr><td colspan="3" style="color:var(--err);">${escapeHTML(e.message || String(e))}</td></tr>`;
+    return;
+  }
+  $('pt-asof').textContent = 'updated ' + new Date(data.as_of).toLocaleTimeString();
+  $('pt-summary').innerHTML = `
+    <div class="stat"><div class="label">Running pods</div><div class="value">${(data.pods || []).length}</div></div>
+    <div class="stat"><div class="label">CPU</div><div class="value">${fmtCPU(data.total_cpu_m)}</div></div>
+    <div class="stat"><div class="label">Memory</div><div class="value">${fmtMem(data.total_memory_mi)}</div></div>
+    <div class="stat"><div class="label">Requests</div><div class="value">${fmtCount(data.requests)}</div><div class="sub">lifetime</div></div>
+    <div class="stat"><div class="label">Avg latency</div><div class="value">${data.avg_latency_ms ? data.avg_latency_ms + ' ms' : '—'}</div></div>`;
+  const pods = data.pods || [];
+  if (pods.length === 0) {
+    $('pt-pods').innerHTML = `<tr><td colspan="3" style="color:var(--text-dim);font-style:italic;">no running pods</td></tr>`;
+    return;
+  }
+  $('pt-pods').innerHTML = pods.map(p => `
+    <tr>
+      <td><code style="color:var(--text);font-size:11px;">${escapeHTML(p.name)}</code></td>
+      <td class="num">${fmtCPU(p.cpu_m)}</td>
+      <td class="num">${fmtMem(p.memory_mi)}</td>
+    </tr>`).join('');
+}
+
+function renderProjectTraffic() {
+  const root = $('traffic-content');
+  root.innerHTML = `
+    <div class="summary" id="pa-summary"></div>
+    <div class="panel">
+      <div class="panel-head">
+        <h3>Requests by status</h3>
+        <span class="spacer"></span>
+        <span style="color:var(--text-faint);font-size:11px;">last 60 min · 30 s buckets</span>
+      </div>
+      <div class="panel-body" style="padding: 14px 16px;">
+        <div id="pa-chart"><div class="empty" style="padding:30px;color:var(--text-dim);font-style:italic;">loading…</div></div>
+      </div>
+    </div>`;
+  startTrafficPoll(tickProjectTraffic);
+}
+
+async function tickProjectTraffic() {
+  if (!ROUTE.projectID) return;
+  let tel, series;
+  try {
+    [tel, series] = await Promise.all([
+      fetchJSON('/v1/projects/' + ROUTE.projectID + '/telemetry'),
+      fetchJSON('/v1/projects/' + ROUTE.projectID + '/telemetry/series'),
+    ]);
+  } catch (e) {
+    $('pa-chart').innerHTML = `<div class="empty" style="color:var(--err);">${escapeHTML(e.message || String(e))}</div>`;
+    return;
+  }
+  const errPct = tel.requests > 0 ? ((tel.errors / tel.requests) * 100).toFixed(1) : '0';
+  $('pa-summary').innerHTML = `
+    <div class="stat"><div class="label">Requests</div><div class="value">${fmtCount(tel.requests)}</div><div class="sub">lifetime</div></div>
+    <div class="stat"><div class="label">Errors</div><div class="value ${tel.errors > 0 ? 'err' : ''}">${fmtCount(tel.errors)}</div><div class="sub">${tel.requests > 0 ? errPct + '%' : '0%'}</div></div>
+    <div class="stat"><div class="label">Avg latency</div><div class="value">${tel.avg_latency_ms ? tel.avg_latency_ms + ' ms' : '—'}</div></div>`;
+  renderStatusChart($('pa-chart'), series.points || []);
+}
+
+// renderStatusChart builds a stacked-area chart of HTTP status-code
+// classes over the rolling window. Pure SVG — no chart lib dependency
+// keeps the dashboard a single embedded HTML file.
+//
+// Layout: width takes container width, fixed 220px height. Y axis
+// auto-scales to the maximum stack height. X axis labels at first,
+// middle, last sample.
+function renderStatusChart(container, points) {
+  if (!points || points.length === 0) {
+    container.innerHTML = `<div class="empty" style="padding:30px;color:var(--text-dim);font-style:italic;">Waiting for the first sample — the sampler ticks every 30 s.</div>`;
+    return;
+  }
+  const classes = ['2xx', '3xx', '4xx', '5xx'];
+  // Brand-consistent palette; --err / --ok are CSS vars so they re-theme.
+  const colors = {
+    '2xx': 'var(--ok)',
+    '3xx': 'var(--accent)',
+    '4xx': '#f1c40f',
+    '5xx': 'var(--err)',
+  };
+  const W = container.clientWidth || 800;
+  const H = 220;
+  const padL = 36, padR = 12, padT = 8, padB = 28;
+  const cw = Math.max(1, W - padL - padR);
+  const ch = Math.max(1, H - padT - padB);
+
+  // If only one sample we widen the x-axis range so the area has area
+  // (otherwise the path collapses to a vertical line).
+  const n = Math.max(2, points.length);
+  const totals = points.map(p => classes.reduce((s, c) => s + (p.counts[c] || 0), 0));
+  const maxY = Math.max(1, ...totals);
+
+  const xAt = i => padL + (i * cw) / (n - 1);
+  const yAt = v => padT + ch - (v / maxY) * ch;
+
+  // Build stacked paths bottom-up, advancing the running stack as we go.
+  const stacks = new Array(points.length).fill(0);
+  const paths = classes.map(cls => {
+    let top = '', bottom = '';
+    for (let i = 0; i < points.length; i++) {
+      const x = xAt(i);
+      const baseY = yAt(stacks[i]);
+      const topY  = yAt(stacks[i] + (points[i].counts[cls] || 0));
+      top    += (i === 0 ? 'M ' : ' L ') + x.toFixed(1) + ' ' + topY.toFixed(1);
+      bottom  = ' L ' + x.toFixed(1) + ' ' + baseY.toFixed(1) + bottom;
+    }
+    for (let i = 0; i < points.length; i++) {
+      stacks[i] += points[i].counts[cls] || 0;
+    }
+    return { cls, d: top + bottom + ' Z' };
+  });
+
+  const fmtT = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const labelIdx = points.length >= 3
+    ? [0, Math.floor((points.length - 1) / 2), points.length - 1]
+    : [0, points.length - 1];
+  const xLabels = labelIdx.map(i => ({ x: xAt(i), text: fmtT(points[i].t) }));
+  const yLabels = [0, Math.round(maxY / 2), maxY];
+
+  // Pull each class's lifetime count for the legend (sum of deltas in window).
+  const totalsByClass = classes.reduce((acc, c) => {
+    acc[c] = points.reduce((s, p) => s + (p.counts[c] || 0), 0);
+    return acc;
+  }, {});
+
+  container.innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;">
+      ${yLabels.map(v => {
+        const y = yAt(v);
+        return `<line x1="${padL}" x2="${W-padR}" y1="${y}" y2="${y}" stroke="var(--border)" stroke-width="0.5"/>`;
+      }).join('')}
+      ${paths.map(p => `<path d="${p.d}" fill="${colors[p.cls]}" fill-opacity="0.40" stroke="${colors[p.cls]}" stroke-width="1.2"/>`).join('')}
+      ${yLabels.map(v => `<text x="${padL - 6}" y="${yAt(v) + 3}" text-anchor="end" font-size="10" fill="var(--text-faint)" font-family="ui-monospace, monospace">${v}</text>`).join('')}
+      ${xLabels.map(l => `<text x="${l.x}" y="${H - 8}" text-anchor="middle" font-size="10" fill="var(--text-faint)" font-family="ui-monospace, monospace">${l.text}</text>`).join('')}
+    </svg>
+    <div style="display:flex; flex-wrap:wrap; gap:14px; padding: 10px 4px 0; font-size: 11px;">
+      ${classes.map(c => `
+        <span style="display:inline-flex;align-items:center;gap:6px;color:var(--text-dim);">
+          <span style="width:10px;height:10px;background:${colors[c]};border-radius:2px;display:inline-block;"></span>
+          <strong style="color:var(--text);">${c}</strong>
+          <span>${fmtCount(totalsByClass[c])} in window</span>
+        </span>`).join('')}
+    </div>`;
+}
+
+// ----- Shared poll lifecycle ---------------------------------------------
+// One timer each for the telemetry-page tick and the traffic-page tick.
+// The render functions hand in the right tick fn (global vs project) so
+// the polling machinery itself stays simple.
+
+let telemetryTimer = null;
 let trafficTimer = null;
+function startTelemetryPoll(tickFn) {
+  stopTelemetryPoll();
+  tickFn();
+  telemetryTimer = setInterval(tickFn, 5000);
+}
+function stopTelemetryPoll() {
+  if (telemetryTimer) { clearInterval(telemetryTimer); telemetryTimer = null; }
+}
+function startTrafficPoll(tickFn) {
+  stopTrafficPoll();
+  tickFn();
+  trafficTimer = setInterval(tickFn, 5000);
+}
 function stopTrafficPoll() {
   if (trafficTimer) { clearInterval(trafficTimer); trafficTimer = null; }
 }

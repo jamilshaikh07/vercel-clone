@@ -45,12 +45,18 @@ type PodMetric struct {
 // ServiceTraffic accumulates request counts and timings for one Traefik
 // service across all status codes. The Service field is the raw Traefik
 // service name (e.g. "paas-tenant-jamilshaikh07-...@kubernetescrd").
+//
+// ByClass keeps lifetime per-class totals so the time-series sampler can
+// compute deltas per class (2xx/3xx/4xx/5xx) between adjacent ticks
+// without re-scraping. Requests + Errors stay for the dashboard tables
+// that don't care about class breakdown.
 type ServiceTraffic struct {
-	Service  string  `json:"service"`
-	Requests float64 `json:"requests"`     // total since Traefik start
-	Errors   float64 `json:"errors"`       // requests with 4xx/5xx code
-	Duration float64 `json:"duration_sum"` // sum of request_duration_seconds
-	Count    float64 `json:"duration_cnt"` // count for averaging
+	Service  string             `json:"service"`
+	Requests float64            `json:"requests"`     // total since Traefik start
+	Errors   float64            `json:"errors"`       // requests with 4xx/5xx code
+	Duration float64            `json:"duration_sum"` // sum of request_duration_seconds
+	Count    float64            `json:"duration_cnt"` // count for averaging
+	ByClass  map[string]float64 `json:"by_class"`     // {"2xx":..,"3xx":..,"4xx":..,"5xx":..,"1xx":..}
 }
 
 // TelemetrySnapshot is the cached read model returned by the cache. Always
@@ -337,7 +343,7 @@ func parseTraefikMetrics(r io.Reader, snap *TelemetrySnapshot) error {
 		}
 		st, ok := snap.Services[service]
 		if !ok {
-			st = &ServiceTraffic{Service: service}
+			st = &ServiceTraffic{Service: service, ByClass: map[string]float64{}}
 			snap.Services[service] = st
 		}
 		switch {
@@ -346,6 +352,9 @@ func parseTraefikMetrics(r io.Reader, snap *TelemetrySnapshot) error {
 			if len(code) == 3 && (code[0] == '4' || code[0] == '5') {
 				st.Errors += val
 			}
+			// Per-class lifetime totals — used by the time-series sampler
+			// to compute deltas per (service, class) between snapshots.
+			st.ByClass[classifyCode(code)] += val
 		case isDurSum:
 			st.Duration += val
 		case isDurCount:

@@ -54,6 +54,10 @@ type server struct {
 	// + Traefik /metrics endpoints are only hit once per 5s window. Safe
 	// to share across requests — collector serialises on its own mutex.
 	tcache telemetryCache
+	// series holds the rolling 60-minute history of per-service HTTP
+	// status-code counts. Populated by the sampler goroutine; read by
+	// the per-app traffic chart.
+	series *seriesStore
 }
 
 func main() {
@@ -136,6 +140,7 @@ func main() {
 		gh:            gh,
 		auth:          authCfg,
 		log:           log,
+		series:        newSeriesStore(),
 	}
 
 	requeued, err := s.store.RequeueStuck(rootCtx)
@@ -152,6 +157,11 @@ func main() {
 	// a fresh image build + rollout. Lets `git push` actually deploy
 	// control-plane changes without any manual kubectl steps.
 	startSelfRebuilder(rootCtx, k8s, log)
+
+	// Telemetry sampler: every 30s snapshots Traefik counters into the
+	// in-memory ring buffer so the per-app traffic page can draw a real
+	// time-series chart from delta-per-window.
+	startTelemetrySampler(rootCtx, s, log)
 
 	mux := http.NewServeMux()
 	// Public — health probes + webhook (HMAC auth) + login pages.
@@ -182,8 +192,9 @@ func main() {
 		"GET /v1/projects/{id}/env":             s.handleListProjectEnv,
 		"PUT /v1/projects/{id}/env/{name}":      s.handleUpsertProjectEnv,
 		"DELETE /v1/projects/{id}/env/{name}":   s.handleDeleteProjectEnv,
-		"GET /v1/telemetry":                     s.handleGlobalTelemetry,
-		"GET /v1/projects/{id}/telemetry":       s.handleProjectTelemetry,
+		"GET /v1/telemetry":                       s.handleGlobalTelemetry,
+		"GET /v1/projects/{id}/telemetry":         s.handleProjectTelemetry,
+		"GET /v1/projects/{id}/telemetry/series":  s.handleProjectSeries,
 	}
 	for pat, h := range apiHandlers {
 		mux.Handle(pat, s.requireUser(h, "json"))
