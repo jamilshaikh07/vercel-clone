@@ -83,6 +83,13 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # /scale is a distinct RBAC resource even though it lives "under"
+  # Deployments. The Start/Stop endpoint PUTs to the /scale subresource
+  # (the same path `kubectl scale` uses) so this rule is what lets the
+  # control plane flip apps on and off without 403-ing.
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["get", "update", "patch"]
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

@@ -1427,10 +1427,18 @@ function parseHash() {
   }
 
   // #/p/<uuid>[/<view>]
+  // Whitelist every per-app sub-view. Anything not on the list falls
+  // back to overview — protects against typos and old bookmarks but
+  // means new views MUST be added here or they'll silently route to
+  // overview while the sidebar item appears active.
   const pMatch = raw.match(/^p\/([0-9a-fA-F-]+)(?:\/([a-z]+))?$/);
   if (pMatch) {
     const view = pMatch[2] || 'overview';
-    if (!['overview','logs','database','sql','env'].includes(view)) {
+    const allowed = [
+      'overview', 'logs', 'database', 'sql', 'env',
+      'telemetry', 'traffic', 'insights', 'domains',
+    ];
+    if (!allowed.includes(view)) {
       return { scope: 'project', projectID: pMatch[1], view: 'overview' };
     }
     return { scope: 'project', projectID: pMatch[1], view };
