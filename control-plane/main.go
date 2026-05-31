@@ -163,6 +163,12 @@ func main() {
 	// time-series chart from delta-per-window.
 	startTelemetrySampler(rootCtx, s, log)
 
+	// Synthetic-traffic monitor: probes each live app every 30s so the
+	// telemetry/traffic charts populate with real data instead of looking
+	// dead between organic visits. Doubles as a blackbox uptime check.
+	// Disable with PAAS_DISABLE_SYNTHETIC=1.
+	startSyntheticMonitor(rootCtx, s, log)
+
 	mux := http.NewServeMux()
 	// Public — health probes + webhook (HMAC auth) + login pages.
 	mux.HandleFunc("GET /healthz", s.healthz)
