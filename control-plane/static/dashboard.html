@@ -598,6 +598,74 @@
       50%      { box-shadow: 0 0 0 6px rgba(255, 107, 107, 0.0); }
     }
 
+    /* === Domains page ===================================================
+       Per-domain card with a clear "DNS records to publish" block —
+       we show TXT (for verification) and CNAME (for routing) as two
+       inline rows that read like a DNS-zone snippet. Verified vs pending
+       state gets a coloured pill. */
+    .domain-card {
+      background: var(--panel-2); border-radius: 8px;
+      border: 1px solid var(--border);
+      padding: 14px 16px; margin-bottom: 10px;
+    }
+    .domain-head {
+      display: flex; align-items: center; gap: 10px;
+      padding-bottom: 12px; border-bottom: 1px solid var(--border);
+      margin-bottom: 12px;
+    }
+    .domain-host {
+      font-family: ui-monospace, monospace; font-size: 14px;
+      color: var(--text); font-weight: 500;
+    }
+    .domain-tag {
+      font-size: 10px; font-family: ui-monospace, monospace;
+      letter-spacing: 0.08em; font-weight: 600;
+      padding: 3px 8px; border-radius: 4px;
+    }
+    .domain-tag.verified {
+      background: rgba(81, 207, 102, 0.15); color: var(--ok);
+    }
+    .domain-tag.pending {
+      background: rgba(241, 196, 15, 0.15); color: #f1c40f;
+    }
+    .domain-records { display: flex; flex-direction: column; gap: 8px; }
+    .dns-row {
+      display: grid; grid-template-columns: 60px 1fr auto;
+      gap: 12px; align-items: start;
+      padding: 8px 10px;
+      background: var(--panel-3); border-radius: 6px;
+    }
+    .dns-tag {
+      background: var(--panel); color: var(--text);
+      font-family: ui-monospace, monospace; font-size: 10px;
+      font-weight: 600; letter-spacing: 0.06em;
+      padding: 4px 8px; border-radius: 4px;
+      text-align: center;
+    }
+    .dns-detail { display: flex; flex-direction: column; gap: 2px; }
+    .dns-line { font-size: 11px; color: var(--text-dim); }
+    .dns-line code {
+      font-family: ui-monospace, monospace;
+      color: var(--text);
+      background: transparent;
+      padding: 0; word-break: break-all;
+    }
+    .dns-k {
+      display: inline-block; min-width: 50px;
+      color: var(--text-faint); font-family: ui-monospace, monospace;
+    }
+    .dns-hint {
+      font-size: 10px; color: var(--text-faint);
+      font-style: italic; max-width: 160px;
+      text-align: right;
+    }
+    .domain-error {
+      color: var(--err); font-size: 12px;
+      background: rgba(255, 107, 107, 0.08); padding: 8px 12px;
+      border-radius: 6px;
+    }
+    .btn-action.verify { color: var(--accent); }
+
     /* === Insights page checks ============================================ */
     .insight-list { display: flex; flex-direction: column; gap: 8px; }
     .insight-row {
@@ -976,6 +1044,7 @@
           <li><a class="nav-item" data-subview="database" href="#"><span class="label">Database</span></a></li>
           <li id="subnav-sql" style="display:none"><a class="nav-item" data-subview="sql" href="#"><span class="label">SQL viewer</span></a></li>
           <li><a class="nav-item" data-subview="env"      href="#"><span class="label">Env vars</span></a></li>
+          <li><a class="nav-item" data-subview="domains"  href="#"><span class="label">Domains</span></a></li>
           <li><a class="nav-item" data-subview="telemetry" href="#"><span class="label">Telemetry</span></a></li>
           <li><a class="nav-item" data-subview="traffic"   href="#"><span class="label">Traffic</span></a></li>
           <li><a class="nav-item" data-subview="insights"  href="#"><span class="label">Insights</span></a></li>
@@ -1125,6 +1194,16 @@
           </div>
         </div>
 
+        <!-- DOMAINS: per-app custom-domain management. Add/verify/delete
+             hostnames; the verify step does a live DNS TXT lookup and,
+             on success, applies the Traefik IngressRoute that maps the
+             host to the project's latest READY Service. -->
+        <div class="page" id="page-domains">
+          <div class="page-inner">
+            <div id="domains-content"></div>
+          </div>
+        </div>
+
       </div>
     </main>
   </div>
@@ -1182,6 +1261,7 @@ const pageEls = {
   telemetry: $('page-telemetry'),
   traffic:   $('page-traffic'),
   insights:  $('page-insights'),
+  domains:   $('page-domains'),
 };
 // Logs-page DOM (shared with stream logic below).
 const logBody   = $('log-body');
@@ -1519,6 +1599,7 @@ function showPage() {
     case 'telemetry': return renderTelemetry();
     case 'traffic':   return renderTraffic();
     case 'insights':  return renderInsights();
+    case 'domains':   return renderDomains();
   }
 }
 
@@ -1893,6 +1974,214 @@ function renderInsightCheck(c) {
         ${hintHTML}
       </div>
     </div>`;
+}
+
+// =========================================================================
+// Custom domains page
+// =========================================================================
+// Layout:
+//   1. "Add a domain" form        — text input + submit
+//   2. "How DNS works" callout    — TXT for verify + CNAME for routing
+//   3. List of registered domains — each row shows hostname, verified
+//      state, the TXT pair if unverified, and Verify / Delete actions.
+//
+// Verification is on-demand: clicking Verify hits the backend which
+// does a live DNS TXT lookup. We don't poll — DNS propagation is slow
+// and the user knows when they've published the record.
+function renderDomains() {
+  const proj = findProject(ROUTE.projectID);
+  const root = $('domains-content');
+  if (!proj) {
+    root.innerHTML = '<div class="empty">Project not found.</div>';
+    return;
+  }
+  root.innerHTML = `
+    <div class="panel">
+      <div class="panel-head">
+        <h3>Add a custom domain</h3>
+        <span class="spacer"></span>
+        <span style="color:var(--text-faint);font-size:11px;">e.g. blog.example.com</span>
+      </div>
+      <div class="panel-body" style="padding: 14px 16px; display:flex; gap:8px;">
+        <input type="text" id="domain-input" placeholder="your-domain.com" autocomplete="off"
+               style="flex:1; padding:8px 12px; background:var(--panel-2); border:1px solid var(--border);
+                      border-radius:6px; color:var(--text); font-family:inherit; font-size:13px;"/>
+        <button class="btn-primary" id="domain-add-btn">Add domain</button>
+      </div>
+      <div id="domain-add-error" class="domain-error" style="display:none; padding: 0 16px 14px;"></div>
+    </div>
+
+    <div class="panel" style="margin-top: 14px;">
+      <div class="panel-head"><h3>Registered domains</h3></div>
+      <div class="panel-body" style="padding: 8px 16px 16px;">
+        <div id="domains-list">
+          <div class="empty" style="padding:16px; color:var(--text-dim); font-style:italic;">loading…</div>
+        </div>
+      </div>
+    </div>`;
+
+  $('domain-add-btn').addEventListener('click', () => addDomain(proj.id));
+  $('domain-input').addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') { ev.preventDefault(); addDomain(proj.id); }
+  });
+  loadDomains(proj.id);
+}
+
+async function loadDomains(projectID) {
+  let data;
+  try {
+    data = await fetchJSON('/v1/projects/' + projectID + '/domains');
+  } catch (e) {
+    $('domains-list').innerHTML =
+      `<div class="empty" style="color:var(--err);">Failed: ${escapeHTML(e.message || String(e))}</div>`;
+    return;
+  }
+  paintDomains(projectID, data);
+}
+
+function paintDomains(projectID, data) {
+  const domains = data.domains || [];
+  const cnameTarget = data.cname_target || '';
+  if (domains.length === 0) {
+    $('domains-list').innerHTML = `
+      <div class="empty" style="padding:16px; color:var(--text-dim); font-style:italic;">
+        No custom domains yet. Add one above to get started.
+      </div>`;
+    return;
+  }
+  $('domains-list').innerHTML = domains.map(d => renderDomainRow(d, cnameTarget)).join('');
+  // Wire each row's Verify + Delete buttons.
+  $('domains-list').querySelectorAll('[data-domain-action]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const host = btn.dataset.host;
+      const action = btn.dataset.domainAction;
+      if (action === 'verify') verifyDomain(projectID, host);
+      else if (action === 'delete') deleteDomain(projectID, host);
+    });
+  });
+}
+
+function renderDomainRow(d, cnameTarget) {
+  const statusCls = d.verified ? 'verified' : 'pending';
+  const statusLabel = d.verified ? 'VERIFIED' : 'PENDING';
+  // Two DNS records to publish — TXT for verification + CNAME for
+  // actual traffic. We show the CNAME row on every domain because
+  // even verified domains need it to keep routing.
+  const recordsHTML = `
+    <div class="domain-records">
+      <div class="dns-row">
+        <div class="dns-tag">TXT</div>
+        <div class="dns-detail">
+          <div class="dns-line"><span class="dns-k">name:</span> <code>${escapeHTML(d.verify_name)}</code></div>
+          <div class="dns-line"><span class="dns-k">value:</span> <code>${escapeHTML(d.verify_value)}</code></div>
+        </div>
+        <div class="dns-hint">${d.verified ? 'verification complete' : 'add this TXT, then click Verify'}</div>
+      </div>
+      <div class="dns-row">
+        <div class="dns-tag">CNAME</div>
+        <div class="dns-detail">
+          <div class="dns-line"><span class="dns-k">name:</span> <code>${escapeHTML(d.hostname)}</code></div>
+          <div class="dns-line"><span class="dns-k">value:</span> <code>${escapeHTML(cnameTarget)}</code></div>
+        </div>
+        <div class="dns-hint">required for HTTPS traffic to reach your app</div>
+      </div>
+    </div>`;
+  return `
+    <div class="domain-card">
+      <div class="domain-head">
+        <div class="domain-host">${escapeHTML(d.hostname)}</div>
+        <div class="domain-tag ${statusCls}">${statusLabel}</div>
+        <span class="spacer"></span>
+        ${d.verified
+          ? `<a class="url-link" href="https://${escapeHTML(d.hostname)}" target="_blank" rel="noopener">open ↗</a>`
+          : `<button class="btn-action verify" data-domain-action="verify" data-host="${escapeHTML(d.hostname)}">Verify</button>`}
+        <button class="btn-redeploy" data-domain-action="delete" data-host="${escapeHTML(d.hostname)}"
+                style="margin-left:6px;">Remove</button>
+      </div>
+      ${recordsHTML}
+    </div>`;
+}
+
+async function addDomain(projectID) {
+  const input = $('domain-input');
+  const btn = $('domain-add-btn');
+  const errEl = $('domain-add-error');
+  errEl.style.display = 'none';
+  const host = (input.value || '').trim().toLowerCase();
+  if (!host) return;
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = 'Adding…';
+  try {
+    const r = await fetch('/v1/projects/' + projectID + '/domains', {
+      method: 'POST', cache: 'no-store', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hostname: host }),
+    });
+    if (r.status === 401) { window.location.href = '/login'; return; }
+    if (!r.ok) {
+      const msg = (await r.text()).trim() || ('HTTP ' + r.status);
+      errEl.textContent = msg;
+      errEl.style.display = '';
+      return;
+    }
+    input.value = '';
+    await loadDomains(projectID);
+  } catch (e) {
+    errEl.textContent = String(e);
+    errEl.style.display = '';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+}
+
+async function verifyDomain(projectID, host) {
+  const btn = document.querySelector(`button[data-domain-action="verify"][data-host="${CSS.escape(host)}"]`);
+  if (!btn) return;
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = 'Checking DNS…';
+  try {
+    const r = await fetch('/v1/projects/' + projectID + '/domains/' +
+                         encodeURIComponent(host) + '/verify',
+                         { method: 'POST', cache: 'no-store', credentials: 'same-origin' });
+    if (r.status === 401) { window.location.href = '/login'; return; }
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || data.verified === false) {
+      const hint = data.hint || ('HTTP ' + r.status);
+      alert('Not verified yet — ' + hint +
+            (data.found && data.found.length
+              ? '\n\nObserved TXT records:\n  ' + data.found.join('\n  ')
+              : '\n\nNo TXT records found at _paas-verify.' + host));
+      btn.disabled = false;
+      btn.textContent = orig;
+      return;
+    }
+    await loadDomains(projectID);
+  } catch (e) {
+    alert('Verify failed: ' + e);
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+}
+
+async function deleteDomain(projectID, host) {
+  if (!confirm('Remove ' + host + ' from this project?\n\nThe TXT/CNAME records you created can also be deleted from your DNS provider after this.')) {
+    return;
+  }
+  try {
+    const r = await fetch('/v1/projects/' + projectID + '/domains/' + encodeURIComponent(host),
+                         { method: 'DELETE', cache: 'no-store', credentials: 'same-origin' });
+    if (r.status === 401) { window.location.href = '/login'; return; }
+    if (!r.ok && r.status !== 204) {
+      alert('Remove failed: ' + ((await r.text()).trim() || ('HTTP ' + r.status)));
+      return;
+    }
+    await loadDomains(projectID);
+  } catch (e) {
+    alert('Remove failed: ' + e);
+  }
 }
 
 // ----- Logs page ---------------------------------------------------------

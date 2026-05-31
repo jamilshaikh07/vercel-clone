@@ -428,6 +428,23 @@ func (k *kubeClient) applyIngressRoute(ctx context.Context, namespace, name stri
 	return k.apply(ctx, path, name, obj)
 }
 
+// deleteIngressRoute removes a Traefik IngressRoute. 404 is treated as
+// success — the resource is already absent, which is the postcondition
+// we wanted. Used by the custom-domain feature when a user removes a
+// domain.
+func (k *kubeClient) deleteIngressRoute(ctx context.Context, namespace, name string) error {
+	path := fmt.Sprintf("/apis/traefik.io/v1alpha1/namespaces/%s/ingressroutes/%s",
+		url.PathEscape(namespace), url.PathEscape(name))
+	status, body, err := k.do(ctx, "DELETE", path, nil)
+	if err != nil {
+		return err
+	}
+	if status == http.StatusNotFound || status == http.StatusOK {
+		return nil
+	}
+	return fmt.Errorf("delete ingressroute: kube returned %d: %s", status, string(body))
+}
+
 // --- Namespace / Quota / NetworkPolicy (tenant isolation, Slice B) ------
 
 func (k *kubeClient) applyNamespace(ctx context.Context, name string, obj map[string]any) error {

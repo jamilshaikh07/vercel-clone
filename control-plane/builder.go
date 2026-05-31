@@ -323,6 +323,29 @@ func (w *worker) runOne(ctx context.Context, c *claimedDeployment) error {
 			w.log.Info("production alias applied",
 				"deployment_id", c.DeploymentID, "host", prodHost, "target_service", deployName)
 		}
+
+		// Custom domains: re-apply IngressRoutes for every verified
+		// custom hostname so they cut over to the new Service at the
+		// same instant as the production alias. Errors are logged but
+		// non-fatal — the per-SHA URL is already serving and the user
+		// can re-publish individual domains from the Domains page.
+		if domains, err := w.store.ListVerifiedDomainsForProject(ctx, c.ProjectID); err != nil {
+			w.log.Warn("list verified domains failed",
+				"deployment_id", c.DeploymentID, "err", err)
+		} else {
+			for _, host := range domains {
+				routeName := customDomainRouteName(host)
+				if err := w.k8s.applyIngressRoute(ctx, tenantNS, routeName,
+					productionAliasManifest(routeName, tenantNS, host, deployName, c.Slug),
+				); err != nil {
+					w.log.Error("apply custom domain route failed",
+						"deployment_id", c.DeploymentID, "host", host, "err", err)
+					continue
+				}
+				w.log.Info("custom domain route applied",
+					"deployment_id", c.DeploymentID, "host", host, "target_service", deployName)
+			}
+		}
 	}
 
 	// Success status: target_url is the production alias when applicable,
