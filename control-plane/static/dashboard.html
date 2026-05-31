@@ -1309,13 +1309,25 @@ function stripAnsi(s) {
   return s.replace(/\u001b\[[0-9;]*[A-Za-z]/g, '');
 }
 
-async function fetchJSON(url) {
-  const r = await fetch(url, { cache: 'no-store', credentials: 'same-origin' });
+async function fetchJSON(url, init) {
+  // Merge caller-supplied options with our defaults. Without this
+  // merge a POST/PUT/DELETE call would silently downgrade to a GET
+  // and the server would reply 405 (method not allowed) for any
+  // method-specific route — which is exactly what happened to the
+  // Start/Stop button before this fix.
+  const opts = Object.assign(
+    { cache: 'no-store', credentials: 'same-origin' },
+    init || {},
+  );
+  const r = await fetch(url, opts);
   if (r.status === 401) {
     window.location.href = '/login';
     throw new Error('unauthenticated');
   }
   if (!r.ok) throw new Error('HTTP ' + r.status);
+  // 204 No Content is a legitimate response for some POST/DELETE
+  // endpoints; don't try to parse an empty body.
+  if (r.status === 204) return null;
   return r.json();
 }
 
