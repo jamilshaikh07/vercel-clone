@@ -1,12 +1,17 @@
 # vercel-clone
 
-A self-hosted PaaS (Platform-as-a-Service) that aims to replicate the Vercel
-deployment experience — connect a GitHub repo, `git push`, get a live URL —
-on a bare-metal Talos Linux Kubernetes cluster.
+A self-hosted PaaS that replicates the Vercel deployment experience —
+connect a GitHub repo, `git push`, get a live URL — on a bare-metal
+Talos Linux Kubernetes cluster running in a home-lab.
 
-> ✅ **Status:** MVP automation working end-to-end. `git push` to a connected
-> repo produces a live URL in ~2 minutes with zero human intervention.
-> See `architecture.md` for the deeper design and what's still rough.
+> ✅ **Status:** end-to-end automation, multi-tenant, with live telemetry,
+> per-app Postgres, env-var management, runtime log streaming, and a
+> self-rebuilding control-plane. Push to this repo's `main` and the
+> control-plane itself redeploys within ~3 minutes.
+> See [`architecture.md`](./architecture.md) for the full design, C4
+> diagrams, and security model.
+
+> **Live dashboard:** https://paas.jamilshaikh.in
 
 ---
 
@@ -15,18 +20,26 @@ on a bare-metal Talos Linux Kubernetes cluster.
 ```mermaid
 flowchart LR
   dev[Developer] -->|git push| gh[GitHub]
-  gh -->|webhook + HMAC| cf[Cloudflare Tunnel]
-  cf --> traefik[Traefik IngressRoute]
-  traefik --> cp[control-plane Go svc]
-  cp --> db[(Postgres / CNPG)]
-  cp -->|spawn| kaniko[Kaniko Job rootless]
-  kaniko -->|clone repo| gh
-  kaniko -->|push image| reg[ttl.sh / future registry]
-  cp -->|apply Deploy+Svc+IngressRoute| k8s[Talos K8s]
+  gh -->|push webhook + HMAC| cf[Cloudflare Tunnel]
+  dev -->|OAuth login| gh
+  cf --> traefik[Traefik]
+  traefik --> cp[control-plane<br/>Go service]
+
+  cp --> db[(Postgres<br/>CNPG)]
+  cp -->|spawn| kaniko[Kaniko Job<br/>rootless]
+  kaniko -->|clone| gh
+  kaniko -->|push image| reg[ttl.sh]
+
+  cp -->|Deploy + Svc + IngressRoute| k8s[Talos K8s]
+  cp -->|metrics.k8s.io| ms[metrics-server]
+  cp -->|GET /metrics| traefik
+  cp -.->|poll GitHub SHA<br/>every 90s| gh
+  cp -.->|spawn build Job on diff| kaniko
+
   k8s --> pod[tenant pod]
+  pod -.->|DATABASE_URL secret| db
   extdns[external-dns] -->|wildcard CNAME| cflare[Cloudflare DNS]
   cflare -->|*.jamilshaikh.in| cf
-  cf --> traefik
   traefik --> pod
   user[End user] -->|HTTPS| cflare
 ```
@@ -80,38 +93,55 @@ flowchart LR
 
 | URL | What |
 |---|---|
-| `https://paas.jamilshaikh.in/healthz` | Control-plane liveness |
-| `https://paas.jamilshaikh.in/readyz`  | Control-plane + DB readiness |
+| `https://paas.jamilshaikh.in/` | Dashboard (OAuth-gated) |
+| `https://paas.jamilshaikh.in/healthz` | Liveness probe |
+| `https://paas.jamilshaikh.in/readyz` | Readiness (CP + DB) |
 | `https://paas.jamilshaikh.in/webhooks/github` | HMAC-verified webhook intake |
-| `https://paas.jamilshaikh.in/admin/deployments` | Recent deployments (JSON, no auth yet) |
-| `https://sample-paas.jamilshaikh.in/` | First tenant app — built by Kaniko, served by nginx |
+| `https://<slug>.jamilshaikh.in/` | Production alias for an app |
+| `https://<slug>-<sha7>.jamilshaikh.in/` | Per-commit preview URL |
 
 ---
 
 ## What's working today
 
-- ✅ Cloudflare Tunnel → Traefik → pod path validated by real tenant deployments
-- ✅ Wildcard DNS automation via external-dns; per-commit hosts at `<slug>-<sha>.jamilshaikh.in`
-- ✅ Rootless in-cluster builds via Kaniko on Talos under PSA `baseline`
-- ✅ GitHub App + HMAC-signed webhooks delivered to the control plane
-- ✅ Postgres (CNPG) with idempotent schema migrations baked into the binary
-- ✅ Webhook delivery audit log (every event persisted with `delivery_id` as PK)
-- ✅ Dispatched events: `installation`, `installation_repositories`, `push`
-- ✅ **Full automation:** push → mint installation token → clone (alpine/git initContainer)
-  → Kaniko build → ttl.sh push → Deployment + Service + IngressRoute → live URL
-- ✅ Idempotent worker: pod restart mid-build attaches to running Job;
-  periodic stale-state reconcile prevents stranded rows
+**Deploy pipeline**
+- Cloudflare Tunnel → Traefik → tenant pod (no port-forward, free TLS)
+- Wildcard CNAMEs via `external-dns`: `<slug>.host` (prod alias) + `<slug>-<sha>.host` (preview)
+- Rootless in-cluster builds via Kaniko, PSA `restricted` on tenant pods
+- GitHub App + HMAC-verified push webhooks → idempotent build queue
+- Full webhook audit log (every delivery persisted, dedupe via `delivery_id` PK)
 
-## What's next
+**Dashboard** (single-page app embedded in the Go binary)
+- GitHub OAuth login + HMAC-signed session cookies
+- Two-rail navigation: main rail (Home / Monitoring) + sub-sidebar (per-app)
+- Light / dark theme toggle with no flash-of-wrong-theme on load
+- Version pill: shows the commit SHA actually running, sourced from the rebuilder state ConfigMap
+- Apps grid on Home with per-app status pills
+- Per-app pages: Overview, build/runtime logs (SSE), Database, SQL viewer, Env vars
+- Redeploy / rollback button on any past deployment
+- Telemetry & Traffic pages: live CPU / memory / requests / errors / avg-latency per app, refreshed every 5s
 
-1. **Real registry** — replace `ttl.sh` with `registry:2` on MinIO at `registry.jamilshaikh.in`
-3. **Real-time logs** — WebSocket stream of build pod stdout
-4. **Dashboard UI** — Next.js app at `https://paas.jamilshaikh.in/dashboard`
-5. **Multi-tenant auth** — proper OAuth + per-account access controls
-6. **Framework auto-detect** — `next.js`, `vite`, static, etc. (currently `Dockerfile` only)
-7. **Postgres HA** — 3-instance CNPG with sync replicas + scheduled backups to MinIO/S3
+**Tenant-facing features**
+- One-click per-project Postgres (creates a dedicated role + DB, drops `DATABASE_URL` as a tenant Secret, materialised on next build)
+- Browser SQL viewer scoped to the tenant DB
+- Env-var CRUD; values applied to the next build (and surfaced via redeploy)
+- Runtime log SSE that tails the live tenant pod's stdout (not just the build log)
 
-See `architecture.md` for the deeper design rationale.
+**Operations**
+- Self-rebuilding control-plane: a goroutine polls GitHub every 90s, rebuilds the image via Kaniko on diff, and rolls the Deployment with `maxUnavailable: 0`
+- `RequeueStuck` reconciler on boot (recovers stranded `building` rows after pod restart)
+- Manual escape hatch script: `scripts/rebuild-control-plane.sh`
+
+## What's next (deliberately deferred)
+
+1. **Self-hosted registry** — replace `ttl.sh` with `registry:2` on MinIO once the 24h TTL becomes a real issue
+2. **Postgres HA** — 3-instance CNPG with sync replicas + scheduled backups
+3. **Framework auto-detect** — buildpacks for next.js / vite / static (today: bring a `Dockerfile`)
+4. **gVisor / Kata** — tenant kernel isolation (current threat model is covered by PSA `restricted` + NetworkPolicies)
+5. **Persistent log storage** — Loki sidecar so logs survive pod restarts
+6. **Real-time request rate** — today the dashboard shows lifetime Traefik counters; a rate view needs a Prom sidecar or in-process EWMA
+
+See [`architecture.md`](./architecture.md) for the C4 diagrams, request-flow sequence, self-rebuild loop, and security model.
 
 ---
 

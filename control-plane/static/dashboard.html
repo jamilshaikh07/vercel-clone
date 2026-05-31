@@ -4,7 +4,24 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>paas — dashboard</title>
+  <script>
+    // Theme bootstrap — runs synchronously before <style> is parsed so the
+    // body never paints in the wrong palette. Default is 'dark'; the user's
+    // last choice (if any) is persisted in localStorage under 'theme'.
+    (function () {
+      try {
+        var saved = localStorage.getItem('theme');
+        document.documentElement.setAttribute('data-theme', saved === 'light' ? 'light' : 'dark');
+      } catch (e) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
   <style>
+    /* Inline theme bootstrap is in a <script> just above <style> — see the
+       end of <head>. It applies data-theme before paint so we don't see a
+       flash-of-wrong-theme on first load. */
+
     /* === Palette / globals =================================================
        Observability stack vibe: deep slate background, denser sidebar rail,
        subtle accent. Variables consolidated for theme work later. */
@@ -27,6 +44,29 @@
       --building: #5bc0de;
       --sidebar-w: 248px;
       --sub-sidebar-w: 220px;
+      color-scheme: dark;
+    }
+    /* Light theme — overrides the dark defaults via the data-theme
+       attribute on <html>. Keeps the same accent + status colors so
+       brand identity is consistent across modes. */
+    html[data-theme="light"] {
+      --bg: #fafafa;
+      --bg-2: #f3f4f6;
+      --panel: #ffffff;
+      --panel-2: #f3f4f6;
+      --panel-3: #e5e7eb;
+      --border: #e5e7eb;
+      --border-2: #ececf0;
+      --text: #111827;
+      --text-dim: #4b5563;
+      --text-faint: #9ca3af;
+      --accent: #2563eb;
+      --accent-dim: rgba(37, 99, 235, 0.10);
+      --ok: #16a34a;
+      --warn: #ca8a04;
+      --err: #dc2626;
+      --building: #0891b2;
+      color-scheme: light;
     }
     * { box-sizing: border-box; }
     html, body {
@@ -76,6 +116,9 @@
       flex-shrink: 0;
     }
     .brand .logo svg { width: 100%; height: 100%; display: block; }
+    /* The notch cuts through the gradient triangle. Filling it with the
+       page background keeps the silhouette readable in both themes. */
+    .brand .logo svg .logo-notch { fill: var(--panel); }
     .brand .name {
       font-weight: 700; font-size: 15px; letter-spacing: 0.02em;
       background: linear-gradient(135deg, #7aa2f7 0%, #22c55e 100%);
@@ -197,11 +240,15 @@
     .sidebar-footer .me { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text); min-width: 0; flex: 1; }
     .sidebar-footer .me img { width: 22px; height: 22px; border-radius: 50%; }
     .sidebar-footer .me span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .sidebar-footer .signout {
+    .sidebar-footer .signout,
+    .sidebar-footer .theme-toggle {
       background: transparent; border: 1px solid var(--border); color: var(--text-dim);
       font-size: 11px; padding: 4px 8px; border-radius: 6px; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
     }
-    .sidebar-footer .signout:hover { color: var(--text); border-color: var(--accent); }
+    .sidebar-footer .signout:hover,
+    .sidebar-footer .theme-toggle:hover { color: var(--text); border-color: var(--accent); }
+    .sidebar-footer .theme-toggle svg { width: 13px; height: 13px; display: block; }
 
     /* === Content area ==================================================== */
     .content {
@@ -668,7 +715,7 @@
                   fill="url(#brandGrad)"
                   stroke="rgba(0,0,0,0.35)" stroke-width="0.5"
                   stroke-linejoin="round"/>
-            <path d="M16 14 L24 28 L8 28 Z" fill="#13141a"/>
+            <path d="M16 14 L24 28 L8 28 Z" class="logo-notch"/>
             <circle cx="16" cy="22" r="2" fill="url(#brandGrad)"/>
           </svg>
         </span>
@@ -696,6 +743,7 @@
       </div>
       <div class="sidebar-footer">
         <span class="me" id="me"></span>
+        <button class="theme-toggle" id="theme-toggle" title="Toggle theme" aria-label="Toggle theme"></button>
         <button class="signout" id="signout" title="Sign out">⏻</button>
       </div>
     </nav>
@@ -978,6 +1026,59 @@ async function loadMe() {
     const el = document.getElementById('me');
     el.innerHTML = `${me.avatar_url ? `<img src="${me.avatar_url}" alt="">` : ''}<span>${escapeHTML(me.login)}</span>`;
   } catch (e) { /* loadMe runs after fetchJSON already redirects on 401 */ }
+}
+
+// loadVersion fills the brand 'meta' slot with the short SHA of the
+// currently-running control-plane image. Sourced from the self-rebuilder
+// state ConfigMap so it auto-updates after every successful rollout.
+async function loadVersion() {
+  const el = document.querySelector('.brand .meta');
+  if (!el) return;
+  try {
+    const v = await fetch('/v1/version', { credentials: 'same-origin', cache: 'no-store' });
+    if (!v.ok) return;
+    const data = await v.json();
+    if (data.short_sha) {
+      el.textContent = data.short_sha;
+      el.title = (data.sha || '') + (data.updated_at ? ` — built ${data.updated_at}` : '');
+    }
+  } catch (_) { /* keep the default 'v1' placeholder on failure */ }
+}
+
+// --- Theme toggle ---
+// The pre-paint script in <head> already applied data-theme before the
+// stylesheet ran. This wires the footer button to flip + persist the
+// choice, and to swap the icon between sun/moon.
+const THEME_ICONS = {
+  // Outlined sun + moon glyphs, currentColor so they tint to text-dim by default.
+  // 'next' is what the button switches TO when clicked (i.e. opposite of current).
+  light: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5a6 6 0 1 0 7 7Z"/>
+          </svg>`,
+  dark:  `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="8" cy="8" r="3"/>
+            <path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M2.8 2.8l1.1 1.1M12.1 12.1l1.1 1.1M2.8 13.2l1.1-1.1M12.1 3.9l1.1-1.1"/>
+          </svg>`,
+};
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  try { localStorage.setItem('theme', theme); } catch (_) {}
+  const btn = document.getElementById('theme-toggle');
+  if (btn) {
+    // Show the icon for the theme we'd switch TO on next click.
+    btn.innerHTML = theme === 'dark' ? THEME_ICONS.light : THEME_ICONS.dark;
+    btn.title = theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
+  }
+}
+function initThemeToggle() {
+  const current = document.documentElement.getAttribute('data-theme') || 'dark';
+  applyTheme(current);
+  const btn = document.getElementById('theme-toggle');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    const now = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+    applyTheme(now);
+  });
 }
 
 document.getElementById('signout').addEventListener('click', async () => {
@@ -2074,7 +2175,9 @@ document.getElementById('signout').addEventListener('click', async () => {
 // renderHome (which is a small list of project cards).
 window.navigate = navigate;
 
+initThemeToggle();
 loadMe();
+loadVersion();
 applyRoute();
 refresh();
 

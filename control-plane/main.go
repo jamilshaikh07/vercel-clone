@@ -170,6 +170,7 @@ func main() {
 	// detect logout and bounce to /login itself.
 	apiHandlers := map[string]http.HandlerFunc{
 		"GET /v1/me":                            s.handleMe,
+		"GET /v1/version":                       s.handleVersion,
 		"GET /v1/projects":                      s.handleListProjects,
 		"GET /v1/deployments":                   s.handleListDeployments,
 		"GET /v1/deployments/{id}/logs":         s.handleDeploymentLogs,
