@@ -195,6 +195,9 @@ func main() {
 		"GET /v1/telemetry":                       s.handleGlobalTelemetry,
 		"GET /v1/projects/{id}/telemetry":         s.handleProjectTelemetry,
 		"GET /v1/projects/{id}/telemetry/series":  s.handleProjectSeries,
+		"GET /v1/projects/{id}/status":            s.handleProjectStatus,
+		"POST /v1/projects/{id}/scale":            s.handleProjectScale,
+		"GET /v1/projects/{id}/insights":          s.handleProjectInsights,
 	}
 	for pat, h := range apiHandlers {
 		mux.Handle(pat, s.requireUser(h, "json"))

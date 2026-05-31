@@ -333,6 +333,90 @@ func (k *kubeClient) applyDeployment(ctx context.Context, namespace, name string
 	return k.apply(ctx, path, name, obj)
 }
 
+// listDeployments returns the names of Deployments in `namespace` that
+// match `labelSelector` (e.g. "paas.project=my-app"). Used by the
+// Start/Stop endpoint to find every per-commit Deployment belonging to
+// one project so we can scale them as a unit.
+func (k *kubeClient) listDeployments(ctx context.Context, namespace, labelSelector string) ([]string, error) {
+	path := fmt.Sprintf("/apis/apps/v1/namespaces/%s/deployments?labelSelector=%s",
+		url.PathEscape(namespace), url.QueryEscape(labelSelector))
+	status, body, err := k.do(ctx, "GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("list deployments: kube returned %d: %s", status, string(body))
+	}
+	var resp struct {
+		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("decode deployments list: %w", err)
+	}
+	out := make([]string, 0, len(resp.Items))
+	for _, it := range resp.Items {
+		out = append(out, it.Metadata.Name)
+	}
+	return out, nil
+}
+
+// patchDeploymentScale sets a Deployment's replica count via the /scale
+// subresource. Using the subresource (rather than mutating the full
+// Deployment spec) sidesteps resourceVersion races and is the documented
+// path for scaling — it's what `kubectl scale` does under the hood.
+func (k *kubeClient) patchDeploymentScale(ctx context.Context, namespace, name string, replicas int) error {
+	path := fmt.Sprintf("/apis/apps/v1/namespaces/%s/deployments/%s/scale",
+		url.PathEscape(namespace), url.PathEscape(name))
+	obj := map[string]any{
+		"apiVersion": "autoscaling/v1",
+		"kind":       "Scale",
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": namespace,
+		},
+		"spec": map[string]any{"replicas": replicas},
+	}
+	status, body, err := k.do(ctx, "PUT", path, obj)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("scale deployment: kube returned %d: %s", status, string(body))
+	}
+	return nil
+}
+
+// getDeploymentReplicas reads the current spec.replicas on a Deployment.
+// Returns (0, false, nil) if the deployment doesn't exist — callers use
+// the existence bool to distinguish "stopped" from "never deployed".
+func (k *kubeClient) getDeploymentReplicas(ctx context.Context, namespace, name string) (int, bool, error) {
+	path := fmt.Sprintf("/apis/apps/v1/namespaces/%s/deployments/%s",
+		url.PathEscape(namespace), url.PathEscape(name))
+	status, body, err := k.do(ctx, "GET", path, nil)
+	if err != nil {
+		return 0, false, err
+	}
+	if status == http.StatusNotFound {
+		return 0, false, nil
+	}
+	if status != http.StatusOK {
+		return 0, false, fmt.Errorf("get deployment: kube returned %d: %s", status, string(body))
+	}
+	var resp struct {
+		Spec struct {
+			Replicas int `json:"replicas"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return 0, false, fmt.Errorf("decode deployment: %w", err)
+	}
+	return resp.Spec.Replicas, true, nil
+}
+
 func (k *kubeClient) applyService(ctx context.Context, namespace, name string, obj map[string]any) error {
 	path := fmt.Sprintf("/api/v1/namespaces/%s/services", url.PathEscape(namespace))
 	return k.apply(ctx, path, name, obj)

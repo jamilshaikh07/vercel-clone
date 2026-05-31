@@ -476,6 +476,60 @@
     .btn-redeploy:hover { color: var(--text); border-color: var(--accent); }
     .btn-redeploy[disabled] { opacity: 0.4; cursor: not-allowed; }
 
+    /* Start/Stop button on the overview status tile. Two-state colour:
+       Stop is danger-red, Start is success-green. We're explicit about
+       both to make the consequence obvious before the click. */
+    .btn-action {
+      background: transparent; border: 1px solid currentColor;
+      padding: 3px 12px; border-radius: 6px; font-size: 11px; cursor: pointer;
+      font-family: inherit; font-weight: 500;
+    }
+    .btn-action.stop  { color: var(--err); }
+    .btn-action.start { color: var(--ok); }
+    .btn-action:hover { background: currentColor; color: var(--bg) !important; }
+    .btn-action[disabled] { opacity: 0.5; cursor: not-allowed; }
+    .btn-action[disabled]:hover { background: transparent; }
+
+    /* "Run analysis" primary CTA on the Insights page header. */
+    .btn-primary {
+      background: var(--accent); color: var(--bg);
+      border: 1px solid var(--accent);
+      padding: 5px 14px; border-radius: 6px; font-size: 12px; cursor: pointer;
+      font-family: inherit; font-weight: 500;
+    }
+    .btn-primary:hover { background: transparent; color: var(--accent); }
+    .btn-primary[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+    /* === Insights page checks ============================================ */
+    .insight-list { display: flex; flex-direction: column; gap: 8px; }
+    .insight-row {
+      display: grid; grid-template-columns: 32px 1fr; gap: 12px;
+      padding: 12px 14px;
+      background: var(--panel-2); border-radius: 8px;
+      border-left: 3px solid var(--border);
+    }
+    .insight-row.pass { border-left-color: var(--ok); }
+    .insight-row.warn { border-left-color: #f1c40f; }
+    .insight-row.fail { border-left-color: var(--err); }
+    .insight-icon {
+      width: 26px; height: 26px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 700; font-size: 14px;
+      color: var(--bg);
+    }
+    .insight-row.pass .insight-icon { background: var(--ok); }
+    .insight-row.warn .insight-icon { background: #f1c40f; }
+    .insight-row.fail .insight-icon { background: var(--err); }
+    .insight-label { font-size: 13px; color: var(--text); font-weight: 500; }
+    .insight-val {
+      display: inline-block; margin-top: 4px;
+      font-family: ui-monospace, monospace; font-size: 11px;
+      color: var(--text-dim); background: var(--panel-3);
+      padding: 2px 8px; border-radius: 4px; max-width: 100%;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    .insight-hint { margin-top: 4px; font-size: 11px; color: var(--text-faint); }
+
     /* === Database page =================================================== */
     .db-card {
       display: grid; grid-template-columns: 140px 1fr; gap: 10px 16px;
@@ -786,18 +840,13 @@
 
         <!-- Apps section — populated by renderSidebar() from DATA.projects.
              Always visible (when there's at least one project) so users
-             can switch apps in one click from anywhere in the dashboard. -->
+             can switch apps in one click from anywhere in the dashboard.
+             Telemetry / Traffic / Insights are per-app and live in the
+             sub-sidebar; we no longer expose a cluster-wide monitoring
+             rollup here. -->
         <div class="nav-section" id="main-sidebar-apps-section" style="display:none;">
           <div class="nav-section-title">Apps</div>
           <ul class="nav-list" id="main-sidebar-apps"></ul>
-        </div>
-
-        <div class="nav-section">
-          <div class="nav-section-title">Monitoring</div>
-          <ul class="nav-list">
-            <li><a class="nav-item" data-globalview="telemetry" href="#/telemetry"><span class="label">Telemetry</span></a></li>
-            <li><a class="nav-item" data-globalview="traffic"   href="#/traffic"><span class="label">Traffic</span></a></li>
-          </ul>
         </div>
       </div>
       <div class="sidebar-footer">
@@ -831,6 +880,7 @@
           <li><a class="nav-item" data-subview="env"      href="#"><span class="label">Env vars</span></a></li>
           <li><a class="nav-item" data-subview="telemetry" href="#"><span class="label">Telemetry</span></a></li>
           <li><a class="nav-item" data-subview="traffic"   href="#"><span class="label">Traffic</span></a></li>
+          <li><a class="nav-item" data-subview="insights"  href="#"><span class="label">Insights</span></a></li>
         </ul>
       </div>
     </aside>
@@ -968,6 +1018,15 @@
           </div>
         </div>
 
+        <!-- INSIGHTS: per-app SEO + production-readiness checks. The page
+             triggers a server-side fetch of the production URL on demand;
+             the resulting report lists actionable pass/warn/fail checks. -->
+        <div class="page" id="page-insights">
+          <div class="page-inner">
+            <div id="insights-content"></div>
+          </div>
+        </div>
+
       </div>
     </main>
   </div>
@@ -1024,6 +1083,7 @@ const pageEls = {
   env:       $('page-env'),
   telemetry: $('page-telemetry'),
   traffic:   $('page-traffic'),
+  insights:  $('page-insights'),
 };
 // Logs-page DOM (shared with stream logic below).
 const logBody   = $('log-body');
@@ -1360,6 +1420,7 @@ function showPage() {
     case 'env':       return renderEnvPage();
     case 'telemetry': return renderTelemetry();
     case 'traffic':   return renderTraffic();
+    case 'insights':  return renderInsights();
   }
 }
 
@@ -1393,19 +1454,20 @@ function renderHome() {
     const status = latest ? latest.status : 'none';
     const statusLabel = latest ? latest.status : 'no deploys';
     const when = latest ? timeAgo(latest.created_at) : 'never';
-    // Production URL is reachable as soon as one deployment on the
-    // production branch is READY. We surface the link on every card
-    // unconditionally — the user can copy it / share it even if the
-    // current deploy is failing; it'll route to whatever's healthy.
-    const prodRef = 'refs/heads/' + p.production_branch;
-    const hasProd = (p.deployments || []).some(d => d.status === 'ready' && d.ref === prodRef);
-    const prodHost = `${p.slug}.jamilshaikh.in`;
-    const urlHtml = hasProd
-      ? `<a class="app-card-url" href="https://${prodHost}" target="_blank" rel="noopener"
-            onclick="event.stopPropagation()" title="Open ${prodHost} in a new tab">
-           ${prodHost} <span aria-hidden="true">↗</span>
+    // Live URL: prefer the latest READY deployment's url (per-commit URL
+    // that's guaranteed to actually route). We used to point at the
+    // production-alias `<slug>.host` but that's only created when a
+    // deployment happens to be on the project's production branch; many
+    // users push to a different branch (master vs main) so the alias
+    // never materialises and the link was dead.
+    const ready = (p.deployments || []).find(d => d.status === 'ready' && d.url);
+    const fallbackHost = `${p.slug}.jamilshaikh.in`;
+    const urlHtml = ready
+      ? `<a class="app-card-url" href="${escapeHTML(ready.url)}" target="_blank" rel="noopener"
+            onclick="event.stopPropagation()" title="Open ${escapeHTML(ready.url)} in a new tab">
+           ${escapeHTML(ready.url.replace(/^https?:\/\//, ''))} <span aria-hidden="true">↗</span>
          </a>`
-      : `<span class="app-card-url muted" title="No READY production deployment yet">${prodHost}</span>`;
+      : `<span class="app-card-url muted" title="No READY deployment yet">${fallbackHost}</span>`;
     return `
       <div class="app-card" data-href="#/p/${p.id}" tabindex="0" role="link" aria-label="Open ${escapeHTML(p.slug)}">
         <div class="app-card-head">
@@ -1480,7 +1542,14 @@ function renderOverview() {
   const prodRef = 'refs/heads/' + proj.production_branch;
   const hasProd = deps.some(d => d.status === 'ready' && d.ref === prodRef);
   const prodHost = `${proj.slug}.jamilshaikh.in`;
+  // Latest READY deployment is what we ACTUALLY have a working URL for —
+  // the production alias might not exist if the user deploys from a
+  // non-production branch (e.g. master vs the default main).
+  const readyDep = deps.find(d => d.status === 'ready' && d.url);
 
+  // The Status tile is filled in by loadAndRenderProjectStatus once the
+  // /v1/projects/{id}/status request returns. Until then we show a
+  // skeleton placeholder so the layout doesn't reflow when data arrives.
   $('overview-summary').innerHTML = `
     <div class="stat">
       <div class="label">Deployments</div>
@@ -1498,17 +1567,29 @@ function renderOverview() {
       <div class="label">Latest</div>
       <div class="value" style="font-size:14px;font-family:ui-monospace,monospace;">${latest ? latest.status : '—'}</div>
       <div class="sub">${latest ? timeAgo(latest.created_at) : 'no deployments yet'}</div>
+    </div>
+    <div class="stat" id="status-tile">
+      <div class="label">Status</div>
+      <div class="value" style="font-size:14px;color:var(--text-dim);">…</div>
+      <div class="sub">checking</div>
     </div>`;
 
   $('overview-branch').textContent = proj.production_branch;
   const prodLink = $('overview-prod');
+  // Prefer the production alias; fall back to the latest READY commit URL.
   if (hasProd) {
     prodLink.href = `https://${prodHost}`;
     prodLink.textContent = `${prodHost} ↗`;
     prodLink.style.display = '';
+  } else if (readyDep) {
+    prodLink.href = readyDep.url;
+    prodLink.textContent = readyDep.url.replace(/^https?:\/\//, '') + ' ↗';
+    prodLink.style.display = '';
   } else {
     prodLink.style.display = 'none';
   }
+
+  loadAndRenderProjectStatus(proj.id);
 
   const list = $('overview-deployments');
   if (deps.length === 0) {
@@ -1540,6 +1621,179 @@ function renderDeploymentRow(d, projectID) {
               data-commit="${d.commit_sha}"
               ${inFlight ? 'disabled title="already in flight"' : 'title="Re-run this build (rollback or apply env vars)"'}
               onclick="event.stopPropagation()">redeploy</button>
+    </div>`;
+}
+
+// loadAndRenderProjectStatus fills the "Status" stat tile on the
+// overview page. The tile shows Running / Stopped with the Start or
+// Stop button inline. Failure path renders an inert tile so the rest
+// of the page is unaffected.
+async function loadAndRenderProjectStatus(projectID) {
+  const tile = $('status-tile');
+  if (!tile) return;
+  let state;
+  try {
+    state = await fetchJSON('/v1/projects/' + projectID + '/status');
+  } catch (e) {
+    tile.innerHTML = `
+      <div class="label">Status</div>
+      <div class="value" style="font-size:14px;color:var(--text-faint);">unknown</div>
+      <div class="sub" title="${escapeHTML(e.message || String(e))}">${escapeHTML(e.message || 'unreachable')}</div>`;
+    return;
+  }
+  paintStatusTile(projectID, state);
+}
+
+function paintStatusTile(projectID, state) {
+  const tile = $('status-tile');
+  if (!tile) return;
+  // Three cases: never deployed (no Deployments) → no button.
+  //              Running → "Stop" button.
+  //              Stopped → "Start" button.
+  if ((state.deployments || 0) === 0) {
+    tile.innerHTML = `
+      <div class="label">Status</div>
+      <div class="value" style="font-size:14px;color:var(--text-faint);">no deploys</div>
+      <div class="sub">push to start</div>`;
+    return;
+  }
+  const isRunning = !!state.running;
+  const label = isRunning ? 'running' : 'stopped';
+  const valueColor = isRunning ? 'var(--ok)' : 'var(--err)';
+  const action = isRunning ? 'stop' : 'start';
+  const actionLabel = isRunning ? 'Stop' : 'Start';
+  tile.innerHTML = `
+    <div class="label">Status</div>
+    <div class="value" style="font-size:14px; color:${valueColor};">${label}</div>
+    <div class="sub" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+      <span>${state.replicas} of ${state.deployments} replicas</span>
+      <button class="btn-action ${action}" data-action="${action}">${actionLabel}</button>
+    </div>`;
+  tile.querySelector('button').addEventListener('click', async (ev) => {
+    const btn = ev.currentTarget;
+    btn.disabled = true;
+    const orig = btn.textContent;
+    btn.textContent = action === 'stop' ? 'stopping…' : 'starting…';
+    try {
+      const next = await fetchJSON('/v1/projects/' + projectID + '/scale', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      paintStatusTile(projectID, next);
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = orig;
+      alert('Failed: ' + (e.message || String(e)));
+    }
+  });
+}
+
+// renderInsights renders the per-app SEO/production-readiness report.
+// Single GET, no polling — the user explicitly clicks "Refresh" to
+// re-run. Results are not cached server-side; every click does a fresh
+// fetch of the production URL so the user sees the current state.
+function renderInsights() {
+  const proj = findProject(ROUTE.projectID);
+  const root = $('insights-content');
+  if (!proj) {
+    root.innerHTML = '<div class="empty">Project not found.</div>';
+    return;
+  }
+  root.innerHTML = `
+    <div class="summary" id="insights-summary"></div>
+    <div class="panel">
+      <div class="panel-head">
+        <h3>SEO &amp; production-readiness</h3>
+        <span class="spacer"></span>
+        <button class="btn-primary" id="insights-refresh">Run analysis</button>
+      </div>
+      <div class="panel-body" id="insights-body" style="padding: 14px 16px;">
+        <div class="empty" style="padding:30px;color:var(--text-dim);font-style:italic;">
+          Running first analysis — this fetches your live URL and parses the response.
+        </div>
+      </div>
+    </div>`;
+  $('insights-refresh').addEventListener('click', () => loadInsights(proj.id));
+  loadInsights(proj.id);
+}
+
+async function loadInsights(projectID) {
+  const btn = $('insights-refresh');
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = 'Analysing…';
+  try {
+    const data = await fetchJSON('/v1/projects/' + projectID + '/insights');
+    paintInsights(data);
+  } catch (e) {
+    $('insights-body').innerHTML =
+      `<div class="empty" style="color:var(--err);">Failed: ${escapeHTML(e.message || String(e))}</div>`;
+    $('insights-summary').innerHTML = '';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+}
+
+function paintInsights(data) {
+  // Hard-failure path: report-level fetch_err (no ready deploy, network
+  // error, etc). Show the message and bail.
+  if (data.fetch_err && (!data.checks || data.checks.length === 0)) {
+    $('insights-summary').innerHTML = '';
+    $('insights-body').innerHTML =
+      `<div class="empty" style="color:var(--text-dim); font-style:italic;">${escapeHTML(data.fetch_err)}</div>`;
+    return;
+  }
+  // Score colour: same scale as a Lighthouse circle: <50 red, <90 amber, >=90 green.
+  const scoreColour = data.score >= 90 ? 'var(--ok)' : data.score >= 50 ? '#f1c40f' : 'var(--err)';
+  $('insights-summary').innerHTML = `
+    <div class="stat">
+      <div class="label">Score</div>
+      <div class="value" style="color:${scoreColour}; font-size:30px;">${data.score}</div>
+      <div class="sub">/100</div>
+    </div>
+    <div class="stat">
+      <div class="label">HTTP</div>
+      <div class="value" style="font-size:16px;">${data.status || '—'}</div>
+      <div class="sub">${data.fetched_ms ? data.fetched_ms + ' ms' : '—'}</div>
+    </div>
+    <div class="stat">
+      <div class="label">Page size</div>
+      <div class="value" style="font-size:16px;">${data.page_size_kb || 0} <span style="font-size:11px;color:var(--text-dim);">KB</span></div>
+    </div>
+    <div class="stat">
+      <div class="label">URL</div>
+      <div class="value" style="font-size:11px; font-family:ui-monospace,monospace;
+                                overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+        <a href="${escapeHTML(data.url || '#')}" target="_blank" rel="noopener" style="color:var(--accent);">
+          ${escapeHTML((data.url || '').replace(/^https?:\/\//, ''))} ↗
+        </a>
+      </div>
+      <div class="sub">checked ${data.checked_at ? new Date(data.checked_at).toLocaleTimeString() : 'just now'}</div>
+    </div>`;
+  $('insights-body').innerHTML = `
+    <div class="insight-list">
+      ${(data.checks || []).map(renderInsightCheck).join('')}
+    </div>`;
+}
+
+function renderInsightCheck(c) {
+  const icon = c.status === 'pass' ? '✓' : c.status === 'warn' ? '!' : '×';
+  const valueHTML = c.value
+    ? `<code class="insight-val">${escapeHTML(c.value.length > 100 ? c.value.slice(0, 100) + '…' : c.value)}</code>`
+    : '';
+  const hintHTML = c.hint
+    ? `<div class="insight-hint">${escapeHTML(c.hint)}</div>`
+    : '';
+  return `
+    <div class="insight-row ${c.status}">
+      <div class="insight-icon">${icon}</div>
+      <div class="insight-body">
+        <div class="insight-label">${escapeHTML(c.label)}</div>
+        ${valueHTML}
+        ${hintHTML}
+      </div>
     </div>`;
 }
 
