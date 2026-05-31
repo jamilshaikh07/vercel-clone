@@ -26,6 +26,7 @@
       --err: #ff6b6b;
       --building: #5bc0de;
       --sidebar-w: 248px;
+      --sub-sidebar-w: 220px;
     }
     * { box-sizing: border-box; }
     html, body {
@@ -46,6 +47,12 @@
       grid-template-rows: 100vh;
       height: 100vh;
     }
+    /* When an app is the active scope we slot in a second nav column
+       between the main rail and the content area. Toggled from JS via
+       renderSubSidebar() based on ROUTE.scope. */
+    .app.has-subnav {
+      grid-template-columns: var(--sidebar-w) var(--sub-sidebar-w) 1fr;
+    }
 
     /* === Sidebar ========================================================= */
     .sidebar {
@@ -59,21 +66,64 @@
       display: flex; align-items: center; gap: 10px;
       padding: 16px 18px 14px;
       border-bottom: 1px solid var(--border);
+      text-decoration: none;
+      color: inherit;
     }
+    .brand:hover { text-decoration: none; }
     .brand .logo {
       width: 28px; height: 28px;
       display: flex; align-items: center; justify-content: center;
-      background: var(--accent); color: var(--bg);
-      border-radius: 7px; font-weight: 700; font-size: 14px;
-      font-family: ui-monospace, monospace;
+      flex-shrink: 0;
     }
+    .brand .logo svg { width: 100%; height: 100%; display: block; }
     .brand .name {
       font-weight: 700; font-size: 15px; letter-spacing: 0.02em;
+      background: linear-gradient(135deg, #7aa2f7 0%, #22c55e 100%);
+      -webkit-background-clip: text; background-clip: text;
+      -webkit-text-fill-color: transparent;
     }
     .brand .meta {
       margin-left: auto;
       font-size: 10px; color: var(--text-faint);
       font-family: ui-monospace, monospace;
+    }
+
+    /* === Sub-sidebar (per-app navigation) ================================ */
+    .sub-sidebar {
+      background: var(--panel-2);
+      border-right: 1px solid var(--border);
+      display: none;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .app.has-subnav .sub-sidebar { display: flex; }
+    .sub-sidebar-head {
+      padding: 14px 16px 12px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 8px;
+      min-width: 0;
+    }
+    .sub-sidebar-back {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 20px; height: 20px; border-radius: 4px;
+      color: var(--text-dim); text-decoration: none;
+      flex-shrink: 0;
+    }
+    .sub-sidebar-back:hover { background: var(--panel-3); color: var(--text); text-decoration: none; }
+    .sub-sidebar-title {
+      font-weight: 600; font-size: 13px;
+      color: var(--text);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      min-width: 0; flex: 1;
+    }
+    .sub-sidebar-scroll {
+      flex: 1; min-height: 0; overflow-y: auto;
+      padding: 10px 0;
+    }
+    .sub-sidebar .nav-item {
+      padding-left: 18px;
+      font-size: 13px;
     }
     .sidebar-scroll {
       flex: 1; min-height: 0; overflow-y: auto;
@@ -248,6 +298,54 @@
     }
     .panel-body { padding: 4px 0; }
     .panel-body .empty { padding: 14px 16px; color: var(--text-dim); font-style: italic; font-size: 12px; }
+
+    /* === Apps grid (Home page) =========================================== */
+    .apps-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 14px;
+    }
+    .app-card {
+      display: flex; flex-direction: column;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 10px; padding: 16px 18px;
+      cursor: pointer;
+      transition: transform 0.08s ease, border-color 0.08s ease, background 0.08s ease;
+      min-width: 0;
+    }
+    .app-card:hover {
+      background: var(--panel-2);
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+    .app-card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .app-card-slug {
+      font-weight: 600; font-size: 14px; color: var(--text);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      min-width: 0; flex: 1;
+    }
+    .app-card-repo {
+      font-size: 11px; color: var(--text-dim); font-family: ui-monospace, monospace;
+      margin-top: 4px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .app-card-meta {
+      display: flex; align-items: center; gap: 10px;
+      margin-top: 14px;
+      font-size: 11px; color: var(--text-faint);
+    }
+    .app-card-meta .branch-pill {
+      font-family: ui-monospace, monospace; font-size: 10px;
+      background: var(--panel-3); color: var(--text-dim);
+      padding: 2px 7px; border-radius: 4px;
+    }
+    .app-card-meta .spacer { flex: 1; }
+    .app-card-empty {
+      grid-column: 1 / -1;
+      padding: 40px 20px; text-align: center;
+      color: var(--text-dim); font-size: 13px;
+      border: 1px dashed var(--border); border-radius: 10px;
+    }
 
     /* === Deployments list ================================================ */
     .deployment {
@@ -554,33 +652,37 @@
          the bottom pinned via flex.
          ================================================================= -->
     <nav class="sidebar">
-      <div class="brand">
-        <span class="logo">P</span>
+      <a class="brand" href="#/" aria-label="paas home">
+        <span class="logo" aria-hidden="true">
+          <!-- Chevron/triangle mark with gradient fill — feels like a
+               stack of layers (deployments). Inline so it inherits font
+               colors and stays single-file. -->
+          <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="brandGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#7aa2f7"/>
+                <stop offset="100%" stop-color="#22c55e"/>
+              </linearGradient>
+            </defs>
+            <path d="M16 3 L29 28 L3 28 Z"
+                  fill="url(#brandGrad)"
+                  stroke="rgba(0,0,0,0.35)" stroke-width="0.5"
+                  stroke-linejoin="round"/>
+            <path d="M16 14 L24 28 L8 28 Z" fill="#13141a"/>
+            <circle cx="16" cy="22" r="2" fill="url(#brandGrad)"/>
+          </svg>
+        </span>
         <span class="name">paas</span>
         <span class="meta">v1</span>
-      </div>
+      </a>
       <div class="sidebar-scroll">
+        <!-- Primary navigation: Home shows the apps list; Monitoring
+             holds the two cluster-wide views. Per-app navigation (Overview/
+             Logs/Database/SQL/Env vars) lives in the sub-sidebar that
+             appears only when an app is selected. -->
         <div class="nav-section">
-          <div class="nav-section-title">Apps</div>
-          <ul class="nav-list" id="nav-apps">
-            <li class="nav-item" style="color: var(--text-faint); font-style: italic; font-size: 11px;"><span class="label">loading…</span></li>
-          </ul>
-          <a class="nav-install" id="nav-install"
-             href="https://github.com/apps/jamilshaikh-paas-v2/installations/new"
-             target="_blank" rel="noopener"
-             style="display:none">+ Install GitHub App</a>
-        </div>
-
-        <!-- App sub-nav: only visible while a project is the active scope.
-             SQL viewer entry is hidden until we know the project has a DB. -->
-        <div class="nav-section" id="app-subnav" style="display:none">
-          <div class="nav-section-title" id="subnav-title">View</div>
           <ul class="nav-list">
-            <li><a class="nav-item nav-subitem" data-subview="overview" href="#"><span class="label">Overview</span></a></li>
-            <li><a class="nav-item nav-subitem" data-subview="logs"     href="#"><span class="label">Logs</span></a></li>
-            <li><a class="nav-item nav-subitem" data-subview="database" href="#"><span class="label">Database</span></a></li>
-            <li id="subnav-sql" style="display:none"><a class="nav-item nav-subitem" data-subview="sql" href="#"><span class="label">SQL viewer</span></a></li>
-            <li><a class="nav-item nav-subitem" data-subview="env"      href="#"><span class="label">Env vars</span></a></li>
+            <li><a class="nav-item" id="nav-home" data-globalview="home" href="#/"><span class="label">Home</span></a></li>
           </ul>
         </div>
 
@@ -597,6 +699,32 @@
         <button class="signout" id="signout" title="Sign out">⏻</button>
       </div>
     </nav>
+
+    <!-- =================================================================
+         Sub-sidebar — only visible when an app is the active scope. The
+         .has-subnav class on .app slides this in as a second nav column
+         between the main rail and the content area. Populated by
+         renderSubSidebar() with the project's slug + per-view links.
+         ================================================================= -->
+    <aside class="sub-sidebar" id="sub-sidebar" aria-label="App navigation">
+      <div class="sub-sidebar-head">
+        <a href="#/" class="sub-sidebar-back" title="Back to apps" aria-label="Back to apps">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="10,3 5,8 10,13"/>
+          </svg>
+        </a>
+        <span class="sub-sidebar-title" id="sub-sidebar-title">App</span>
+      </div>
+      <div class="sub-sidebar-scroll">
+        <ul class="nav-list">
+          <li><a class="nav-item" data-subview="overview" href="#"><span class="label">Overview</span></a></li>
+          <li><a class="nav-item" data-subview="logs"     href="#"><span class="label">Logs</span></a></li>
+          <li><a class="nav-item" data-subview="database" href="#"><span class="label">Database</span></a></li>
+          <li id="subnav-sql" style="display:none"><a class="nav-item" data-subview="sql" href="#"><span class="label">SQL viewer</span></a></li>
+          <li><a class="nav-item" data-subview="env"      href="#"><span class="label">Env vars</span></a></li>
+        </ul>
+      </div>
+    </aside>
 
     <!-- =================================================================
          Content area. One <div class="page"> is .active at a time; the
@@ -768,10 +896,12 @@
 const $ = (id) => document.getElementById(id);
 
 // --- DOM handles (sidebar + pages) ---
-const navAppsEl     = $('nav-apps');
-const navInstallEl  = $('nav-install');
-const appSubnavEl   = $('app-subnav');
-const subnavTitleEl = $('subnav-title');
+// The apps list now lives on the Home page (as cards), not in the
+// sidebar. The per-app navigation is in a separate sub-sidebar that
+// only shows when an app is the active scope.
+const appEl         = document.querySelector('.app');
+const subSidebarEl  = $('sub-sidebar');
+const subSidebarTitleEl = $('sub-sidebar-title');
 const subnavSqlEl   = $('subnav-sql');
 const crumbsEl      = $('crumbs');
 const meta          = $('meta');
@@ -964,51 +1094,40 @@ function renderUI() {
   }
 }
 
-// Render the apps list + sub-nav for the active project + active state on
-// monitoring entries. Idempotent — safe to call repeatedly on data poll.
+// Refresh sidebar state based on the current route + data. Three jobs:
+//   1. Toggle .has-subnav on .app so CSS slots in the second column when
+//      an app is the active scope.
+//   2. Populate the sub-sidebar header (app slug) + nav-item href targets +
+//      active highlight.
+//   3. Highlight the active primary nav-item (Home / Telemetry / Traffic).
+//
+// Idempotent — safe to call on every render tick. No HTML rebuilds for the
+// sub-sidebar items themselves (they're static in the markup); we just flip
+// href + .active.
 function renderSidebar() {
-  const projects = DATA.projects || [];
+  const inProject = ROUTE.scope === 'project';
+  appEl.classList.toggle('has-subnav', inProject);
 
-  // Apps list: one nav-item per project, with a status pill showing the
-  // most-recent deployment's state. Clicking routes to its overview.
-  if (projects.length === 0) {
-    navAppsEl.innerHTML = `<li class="nav-item" style="color:var(--text-faint);font-style:italic;font-size:11px;"><span class="label">no apps yet</span></li>`;
-    navInstallEl.style.display = '';
-  } else {
-    navAppsEl.innerHTML = projects.map(p => {
-      const latest = (p.deployments || [])[0];
-      const pillCls = latest ? latest.status : '';
-      const pillTxt = latest ? latest.status : '—';
-      const active  = ROUTE.scope === 'project' && ROUTE.projectID === p.id;
-      return `
-        <li><a class="nav-item ${active ? 'active' : ''}"
-               href="#/p/${p.id}"
-               data-project-id="${p.id}">
-          <span class="label">${escapeHTML(p.slug)}</span>
-          <span class="pill ${pillCls}">${pillTxt}</span>
-        </a></li>`;
-    }).join('');
-    navInstallEl.style.display = 'none';
-  }
-
-  // Project sub-nav: only when scope is 'project'. SQL viewer entry is
-  // hidden by default; loadStorage() reveals it when a DB is found.
-  if (ROUTE.scope === 'project') {
+  if (inProject) {
     const proj = findProject(ROUTE.projectID);
-    appSubnavEl.style.display = '';
-    subnavTitleEl.textContent = proj ? proj.slug : 'App';
-    appSubnavEl.querySelectorAll('a[data-subview]').forEach(a => {
-      const target = `#/p/${ROUTE.projectID}/${a.dataset.subview}`;
-      a.href = target;
+    subSidebarTitleEl.textContent = proj ? proj.slug : 'App';
+    subSidebarTitleEl.title = proj ? proj.full_name : '';
+    subSidebarEl.querySelectorAll('a[data-subview]').forEach(a => {
+      a.href = `#/p/${ROUTE.projectID}/${a.dataset.subview}`;
       a.classList.toggle('active', ROUTE.view === a.dataset.subview);
     });
-  } else {
-    appSubnavEl.style.display = 'none';
   }
 
-  // Monitoring entries: active when scope is 'global'.
+  // Primary nav (Home / Telemetry / Traffic) — exactly one active at a time.
   document.querySelectorAll('a[data-globalview]').forEach(a => {
-    a.classList.toggle('active', ROUTE.scope === 'global' && ROUTE.view === a.dataset.globalview);
+    const key = a.dataset.globalview;
+    let active = false;
+    if (key === 'home') {
+      active = ROUTE.scope === 'home';
+    } else {
+      active = ROUTE.scope === 'global' && ROUTE.view === key;
+    }
+    a.classList.toggle('active', active);
   });
 }
 
@@ -1061,6 +1180,8 @@ function renderHome() {
   const installEl = $('home-install');
   const summaryEl = $('home-summary');
 
+  // First-run state: no GitHub App installed yet. The hero install CTA
+  // is enough — skip the grid entirely.
   if (projects.length === 0) {
     installEl.style.display = '';
     summaryEl.innerHTML = '';
@@ -1068,7 +1189,35 @@ function renderHome() {
   }
   installEl.style.display = 'none';
 
-  // Friendly grid of apps with their latest status. Click → go to project.
+  const totalDeploys = projects.reduce((n, p) => n + (p.deployments || []).length, 0);
+  const live = projects.filter(p => {
+    const l = (p.deployments || [])[0];
+    return l && l.status === 'ready';
+  }).length;
+
+  // Card per app. Click anywhere on the card → navigate to the app's
+  // overview. The data-href + delegated handler at the bottom avoids
+  // inline onclick handlers (cleaner CSP-friendly setup).
+  const cards = projects.map(p => {
+    const latest = (p.deployments || [])[0];
+    const status = latest ? latest.status : 'none';
+    const statusLabel = latest ? latest.status : 'no deploys';
+    const when = latest ? timeAgo(latest.created_at) : 'never';
+    return `
+      <div class="app-card" data-href="#/p/${p.id}" tabindex="0" role="link" aria-label="Open ${escapeHTML(p.slug)}">
+        <div class="app-card-head">
+          <span class="app-card-slug">${escapeHTML(p.slug)}</span>
+          <span class="badge ${status}">${statusLabel}</span>
+        </div>
+        <div class="app-card-repo">${escapeHTML(p.full_name)}</div>
+        <div class="app-card-meta">
+          <span class="branch-pill">${escapeHTML(p.production_branch)}</span>
+          <span class="spacer"></span>
+          <span title="${latest ? latest.created_at : ''}">${when}</span>
+        </div>
+      </div>`;
+  }).join('');
+
   summaryEl.innerHTML = `
     <div class="summary">
       <div class="stat">
@@ -1078,31 +1227,39 @@ function renderHome() {
       </div>
       <div class="stat">
         <div class="label">Total deployments</div>
-        <div class="value">${projects.reduce((n, p) => n + (p.deployments || []).length, 0)}</div>
+        <div class="value">${totalDeploys}</div>
       </div>
       <div class="stat">
         <div class="label">Live</div>
-        <div class="value ok">${projects.filter(p => (p.deployments || [])[0] && (p.deployments || [])[0].status === 'ready').length}</div>
+        <div class="value ok">${live}</div>
         <div class="sub">apps with READY production</div>
       </div>
     </div>
     <div class="panel">
-      <div class="panel-head"><h3>Your apps</h3></div>
-      <div class="panel-body">
-        ${projects.map(p => {
-          const latest = (p.deployments || [])[0];
-          const status = latest ? latest.status : 'none';
-          return `
-            <div class="deployment" onclick="navigate('#/p/${p.id}')" style="cursor:pointer">
-              <span class="badge ${status}">${status}</span>
-              <span class="commit"><span class="sha">${escapeHTML(p.slug)}</span> · ${escapeHTML(p.full_name)}</span>
-              <span class="ago">${latest ? timeAgo(latest.created_at) : ''}</span>
-              <span></span>
-              <span></span>
-            </div>`;
-        }).join('')}
+      <div class="panel-head">
+        <h3>Your apps</h3>
+        <span class="spacer"></span>
+        <a class="prod-link" href="https://github.com/apps/jamilshaikh-paas-v2/installations/new"
+           target="_blank" rel="noopener">+ Connect a repo ↗</a>
+      </div>
+      <div class="panel-body" style="padding: 14px 16px;">
+        <div class="apps-grid" id="apps-grid">${cards}</div>
       </div>
     </div>`;
+
+  // Card clicks → navigate. Delegated so we don't re-bind per card.
+  $('apps-grid').addEventListener('click', (ev) => {
+    const card = ev.target.closest('.app-card');
+    if (card && card.dataset.href) navigate(card.dataset.href);
+  });
+  $('apps-grid').addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    const card = ev.target.closest('.app-card');
+    if (card && card.dataset.href) {
+      ev.preventDefault();
+      navigate(card.dataset.href);
+    }
+  });
 }
 
 function renderOverview() {
