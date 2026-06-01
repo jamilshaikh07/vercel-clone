@@ -474,7 +474,7 @@
     /* === Deployments list ================================================ */
     .deployment {
       display: grid;
-      grid-template-columns: 90px 1fr 100px auto auto;
+      grid-template-columns: 22px 90px 1fr 100px auto auto;
       gap: 12px; align-items: center;
       padding: 8px 16px;
       cursor: pointer;
@@ -484,6 +484,32 @@
     .deployment:last-child { border-bottom: none; }
     .deployment:hover { background: var(--panel-2); }
     .deployment.selected { background: var(--accent-dim); }
+
+    /* Live marker: leftmost column on every deployment row.
+       data-state controls which icon (none, serving, idle) renders
+       and whether the pulse animation is active. The wifi-icon is
+       inline SVG; .pulse animates the outer arc's opacity so a
+       glance at the list shows immediately which row is the live
+       one. Idle = same wifi icon but dim + a strike-through line. */
+    .deployment .live-marker {
+      width: 16px; height: 16px;
+      display: inline-flex; align-items: center; justify-content: center;
+      color: var(--text-faint);
+    }
+    .deployment .live-marker svg { width: 16px; height: 16px; display: block; }
+    .deployment .live-marker[data-state=""]      svg { display: none; }
+    .deployment .live-marker[data-state="serving"] { color: var(--ok); }
+    .deployment .live-marker[data-state="serving"] .pulse {
+      animation: live-pulse 1.8s ease-in-out infinite;
+      transform-origin: 8px 14px;
+    }
+    .deployment .live-marker[data-state="idle"]  { color: var(--text-faint); }
+    .deployment .live-marker[data-state="idle"]  .strike { display: inline; }
+    .deployment .live-marker .strike { display: none; }
+    @keyframes live-pulse {
+      0%, 100% { opacity: 0.35; }
+      50%      { opacity: 1; }
+    }
     .deployment .commit {
       color: var(--text-dim); font-family: ui-monospace, monospace; font-size: 12px;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -1858,8 +1884,21 @@ function renderOverview() {
 
 function renderDeploymentRow(d, projectID) {
   const inFlight = (d.status === 'queued' || d.status === 'building' || d.status === 'deploying');
+  // The live-marker starts empty; paintLiveMarkers() (called after
+  // the /status fetch resolves) flips the matching row to 'serving'
+  // or 'idle' depending on replica count. Wifi icon — outer arc
+  // pulses while serving, a diagonal strike line shows on idle.
   return `
     <div class="deployment" data-id="${d.id}" data-commit="${d.commit_sha}" data-status="${d.status}" data-url="${d.url || ''}">
+      <span class="live-marker" data-state="" title="">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path class="pulse" d="M1.5 6 A 9 9 0 0 1 14.5 6"/>
+          <path d="M3.7 8.3 A 6 6 0 0 1 12.3 8.3"/>
+          <path d="M5.9 10.6 A 3 3 0 0 1 10.1 10.6"/>
+          <circle cx="8" cy="13.2" r="0.9" fill="currentColor" stroke="none"/>
+          <line class="strike" x1="2" y1="14" x2="14" y2="2" stroke-width="1.2"/>
+        </svg>
+      </span>
       <span class="badge ${d.status}">${d.status}</span>
       <span class="commit"><span class="sha">${d.commit_sha.slice(0,8)}</span> · ${d.ref.replace('refs/heads/','')}</span>
       <span class="ago" title="${d.created_at}">${timeAgo(d.created_at)}</span>
@@ -1873,9 +1912,11 @@ function renderDeploymentRow(d, projectID) {
 }
 
 // loadAndRenderProjectStatus fills the "Status" stat tile on the
-// overview page. The tile shows Running / Stopped with the Start or
-// Stop button inline. Failure path renders an inert tile so the rest
-// of the page is unaffected.
+// overview page AND lights up the live-marker on the matching
+// deployment row. The tile shows Running / Stopped with the Start /
+// Stop button inline; the row marker shows the wifi icon on the
+// single deployment that's currently serving traffic. Failure path
+// renders an inert tile and clears any prior marker.
 async function loadAndRenderProjectStatus(projectID) {
   const tile = $('status-tile');
   if (!tile) return;
@@ -1887,9 +1928,44 @@ async function loadAndRenderProjectStatus(projectID) {
       <div class="label">Status</div>
       <div class="value" style="font-size:14px;color:var(--text-faint);">unknown</div>
       <div class="sub" title="${escapeHTML(e.message || String(e))}">${escapeHTML(e.message || 'unreachable')}</div>`;
+    paintLiveMarkers(projectID, null);
     return;
   }
   paintStatusTile(projectID, state);
+  paintLiveMarkers(projectID, state);
+}
+
+// paintLiveMarkers walks the visible deployment rows for projectID
+// and toggles the leftmost wifi icon: 'serving' (pulsing green) on
+// the single deployment that's serving traffic right now,
+// 'idle' (dim, struck-through) when the project is stopped, '' on
+// all other rows. Idempotent so it can run from both the status
+// fetch and the Stop/Start click handler.
+function paintLiveMarkers(projectID, state) {
+  const proj = findProject(projectID);
+  if (!proj) return;
+  const live = liveDeploymentForProject(proj);
+  const isRunning = !!(state && state.running);
+  const list = $('overview-deployments');
+  if (!list) return;
+  list.querySelectorAll('.deployment').forEach(row => {
+    const marker = row.querySelector('.live-marker');
+    if (!marker) return;
+    if (live && row.dataset.id === live.id) {
+      if (state == null) {
+        marker.dataset.state = '';
+        marker.title = '';
+        return;
+      }
+      marker.dataset.state = isRunning ? 'serving' : 'idle';
+      marker.title = isRunning
+        ? 'Serving traffic'
+        : 'Live deployment — stopped (0 replicas)';
+    } else {
+      marker.dataset.state = '';
+      marker.title = '';
+    }
+  });
 }
 
 function paintStatusTile(projectID, state) {
@@ -1929,6 +2005,9 @@ function paintStatusTile(projectID, state) {
         body: JSON.stringify({ action }),
       });
       paintStatusTile(projectID, next);
+      // The same scale payload tells us the post-action replica count,
+      // so flip the live-marker without a second /status round-trip.
+      paintLiveMarkers(projectID, next);
     } catch (e) {
       btn.disabled = false;
       btn.textContent = orig;
