@@ -249,8 +249,14 @@
     .nav-plus:hover { background: var(--accent-dim); border-color: var(--accent); border-style: solid; text-decoration: none; }
 
     /* Apps list in the main sidebar — slightly tighter than the primary
-       nav so a 6- or 7-app sidebar stays compact. Status pill on the
-       right communicates last deployment state at a glance. */
+       nav so a 6- or 7-app sidebar stays compact. Each row carries two
+       pieces of state:
+         • run-state icon (left): play = serving, pause = stopped —
+           reflects whether the app's pods are scaled > 0 right now.
+         • pill (right): last deployment build status (ready/failed/…).
+       Both live in the same row so the user can see, at a glance,
+       'is the build OK?' and 'is the app actually up?' without
+       opening the project. */
     #main-sidebar-apps .nav-item { gap: 8px; }
     #main-sidebar-apps .nav-item .label {
       flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -258,6 +264,26 @@
     #main-sidebar-apps .nav-item .pill {
       flex-shrink: 0;
       padding: 1px 6px; font-size: 9px;
+    }
+    #main-sidebar-apps .runstate {
+      width: 12px; height: 12px;
+      display: inline-flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      color: var(--text-faint);
+    }
+    #main-sidebar-apps .runstate svg { width: 12px; height: 12px; display: block; }
+    #main-sidebar-apps .runstate .play,
+    #main-sidebar-apps .runstate .pause { display: none; }
+    #main-sidebar-apps .runstate[data-runstate="running"] { color: var(--ok); }
+    #main-sidebar-apps .runstate[data-runstate="running"] .play { display: inline; }
+    #main-sidebar-apps .runstate[data-runstate="running"] .play {
+      animation: live-pulse 1.8s ease-in-out infinite;
+    }
+    #main-sidebar-apps .runstate[data-runstate="stopped"] { color: var(--text-faint); }
+    #main-sidebar-apps .runstate[data-runstate="stopped"] .pause { display: inline; }
+    @keyframes live-pulse {
+      0%, 100% { opacity: 0.45; }
+      50%      { opacity: 1; }
     }
 
     .sidebar-footer {
@@ -472,9 +498,14 @@
     }
 
     /* === Deployments list ================================================ */
+    /* Six columns: status badge, commit + branch, ArgoCD-style 'current'
+       tag (empty on every row except the one currently in production),
+       timestamp, open-url link, redeploy/rollback button. The current-tag
+       column is auto-sized so it collapses to zero width when empty,
+       keeping legacy rows visually identical to the pre-tag layout. */
     .deployment {
       display: grid;
-      grid-template-columns: 22px 90px 1fr 100px auto auto;
+      grid-template-columns: 90px 1fr auto 100px auto auto;
       gap: 12px; align-items: center;
       padding: 8px 16px;
       cursor: pointer;
@@ -485,30 +516,22 @@
     .deployment:hover { background: var(--panel-2); }
     .deployment.selected { background: var(--accent-dim); }
 
-    /* Live marker: leftmost column on every deployment row.
-       Classic play ▶︎ (serving) / pause ⏸︎ (idle) glyphs share
-       the same SVG node — CSS shows whichever matches data-state,
-       hides both when state is empty. Serving gets a gentle
-       opacity pulse so the live row catches the eye without
-       flickering aggressively. */
-    .deployment .live-marker {
-      width: 16px; height: 16px;
-      display: inline-flex; align-items: center; justify-content: center;
-      color: var(--text-faint);
+    /* 'current' tag — marks the deployment that the production alias
+       is pointing at right now. ArgoCD-style: small uppercase pill in
+       the accent colour, with a left-border highlight on the row so
+       it's findable in a long list at a glance. */
+    .deployment .current-tag {
+      display: none;
+      font-size: 9px; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      padding: 2px 8px; border-radius: 20px;
+      color: var(--ok); border: 1px solid var(--ok);
+      background: rgba(127, 211, 142, 0.08);
+      white-space: nowrap;
     }
-    .deployment .live-marker svg { width: 16px; height: 16px; display: block; }
-    .deployment .live-marker .play,
-    .deployment .live-marker .pause { display: none; }
-    .deployment .live-marker[data-state="serving"] { color: var(--ok); }
-    .deployment .live-marker[data-state="serving"] .play { display: inline; }
-    .deployment .live-marker[data-state="serving"] .play {
-      animation: live-pulse 1.8s ease-in-out infinite;
-    }
-    .deployment .live-marker[data-state="idle"]  { color: var(--text-faint); }
-    .deployment .live-marker[data-state="idle"]  .pause { display: inline; }
-    @keyframes live-pulse {
-      0%, 100% { opacity: 0.45; }
-      50%      { opacity: 1; }
+    .deployment.is-current .current-tag { display: inline-block; }
+    .deployment.is-current {
+      box-shadow: inset 3px 0 0 var(--ok);
     }
     .deployment .commit {
       color: var(--text-dim); font-family: ui-monospace, monospace; font-size: 12px;
@@ -1316,6 +1339,14 @@ let logMode = 'build';            // build | runtime — persisted across deploy
 // 10s background poll doesn't wipe the user's textarea or result table.
 const sqlState = {};
 
+// Run-state cache: { [projectID]: scaleStateResponse } from
+// /v1/projects/{id}/status. The sidebar play/pause icon next to each
+// app is painted from this map; pollAllProjectStatuses fan-outs the
+// fetches on every refresh() tick so the icons stay accurate without
+// the user having to open each project. Empty on first paint —
+// CSS hides the SVG until the first response lands.
+const projectStatusMap = {};
+
 // Endpoint + placeholder per log-mode. Keeps streamLogsFor symmetric.
 const LOG_SOURCES = {
   build:   { path: 'logs',         empty: 'Pick a deployment on the left to tail its build logs.' },
@@ -1448,10 +1479,56 @@ async function refresh() {
     const n = (DATA.projects || []).length;
     meta.textContent = (n === 1 ? '1 project' : n + ' projects') + ' · updated ' + new Date().toLocaleTimeString();
     renderUI();
+    // Kick off the run-state fan-out without awaiting it — the
+    // sidebar will repaint each icon as its /status response lands,
+    // so a slow status check on one project doesn't hold up the
+    // rest of the UI.
+    pollAllProjectStatuses();
   } catch (e) {
     if (e.message === 'unauthenticated') return;
     crumbsEl.textContent = 'Failed to load: ' + e.message;
   }
+}
+
+// pollAllProjectStatuses fans out /v1/projects/{id}/status across every
+// project in DATA. Each response feeds projectStatusMap and triggers
+// an idempotent sidebar repaint, so icons appear / update as soon as
+// the cluster reports back. Errors are swallowed per-project so one
+// transient k8s blip can't blank the whole sidebar.
+async function pollAllProjectStatuses() {
+  const projects = DATA.projects || [];
+  if (projects.length === 0) return;
+  await Promise.all(projects.map(async (p) => {
+    try {
+      const state = await fetchJSON('/v1/projects/' + p.id + '/status');
+      projectStatusMap[p.id] = state;
+    } catch (_) {
+      // Keep any previously-cached state so the icon doesn't flicker
+      // empty on a single failed poll. Persistent failures will just
+      // leave the cached state intact until the next refresh.
+    }
+  }));
+  paintSidebarRunStates();
+}
+
+// paintSidebarRunStates is a cheap, idempotent walk over the sidebar
+// Apps list that flips data-runstate on each run-state span without
+// rebuilding the markup — keeps animations smooth on poll ticks.
+function paintSidebarRunStates() {
+  document.querySelectorAll('#main-sidebar-apps .runstate').forEach(el => {
+    const li = el.closest('a[data-project-id]');
+    if (!li) return;
+    const rs = projectStatusMap[li.dataset.projectId];
+    if (!rs) {
+      el.dataset.runstate = '';
+      el.title = 'Loading run-state…';
+      return;
+    }
+    el.dataset.runstate = rs.running ? 'running' : 'stopped';
+    el.title = rs.running
+      ? 'App is serving traffic'
+      : 'App is stopped (0 replicas)';
+  });
 }
 
 // ----- Router ------------------------------------------------------------
@@ -1610,8 +1687,26 @@ function renderSidebar() {
       const pillCls = latest ? latest.status : '';
       const pillTxt = latest ? latest.status : '—';
       const isActive = inProject && p.id === ROUTE.projectID;
+      // Run-state icon is seeded from the cache filled by the fan-out
+      // poller; on first paint after a fresh login the cache is empty
+      // so data-runstate="" — CSS hides the SVG. paintSidebarRunStates()
+      // flips it to running/stopped as soon as /status returns.
+      const rs = projectStatusMap[p.id];
+      const runstate = rs ? (rs.running ? 'running' : 'stopped') : '';
+      const runTitle = rs
+        ? (rs.running ? 'App is serving traffic' : 'App is stopped (0 replicas)')
+        : 'Loading run-state…';
       return `
         <li><a class="nav-item ${isActive ? 'active' : ''}" href="#/p/${p.id}/${view}" data-project-id="${p.id}">
+          <span class="runstate" data-runstate="${runstate}" title="${runTitle}">
+            <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+              <polygon class="play" points="4,2.5 13,8 4,13.5"/>
+              <g class="pause">
+                <rect x="3.5" y="3" width="3" height="10" rx="0.8"/>
+                <rect x="9.5" y="3" width="3" height="10" rx="0.8"/>
+              </g>
+            </svg>
+          </span>
           <span class="label" title="${escapeHTML(p.full_name)}">${escapeHTML(p.slug)}</span>
           <span class="pill ${pillCls}">${pillTxt}</span>
         </a></li>`;
@@ -1880,46 +1975,38 @@ function renderOverview() {
       navigate('#/p/' + proj.id + '/logs');
     });
   });
+  // ArgoCD-style 'current' tag + button relabel on every row that
+  // isn't the production target. Runs after the rows are wired so
+  // the button text/title overrides land cleanly on top.
+  paintLiveDeploymentRow(proj.id);
 }
 
 function renderDeploymentRow(d, projectID) {
   const inFlight = (d.status === 'queued' || d.status === 'building' || d.status === 'deploying');
-  // The live-marker starts empty; paintLiveMarkers() (called after
-  // the /status fetch resolves) flips the matching row to 'serving'
-  // (play ▶ in green, gently pulsing) or 'idle' (pause ⏸ in grey).
-  // Both glyphs live in the same SVG; CSS shows whichever matches
-  // data-state and hides both when the state is empty.
+  // The current-tag slot is empty by default; paintLiveDeploymentRow()
+  // adds .is-current to the row whose commit the production alias is
+  // pointing at, which both reveals the tag and lights up the left
+  // edge of the row — ArgoCD's revision-history style.
   return `
     <div class="deployment" data-id="${d.id}" data-commit="${d.commit_sha}" data-status="${d.status}" data-url="${d.url || ''}">
-      <span class="live-marker" data-state="" title="">
-        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-          <!-- Play triangle (serving): right-pointing filled wedge. -->
-          <polygon class="play" points="4,2.5 13,8 4,13.5"/>
-          <!-- Pause bars (idle): two filled rounded rectangles. -->
-          <g class="pause">
-            <rect x="3.5" y="3" width="3" height="10" rx="0.8"/>
-            <rect x="9.5" y="3" width="3" height="10" rx="0.8"/>
-          </g>
-        </svg>
-      </span>
       <span class="badge ${d.status}">${d.status}</span>
       <span class="commit"><span class="sha">${d.commit_sha.slice(0,8)}</span> · ${d.ref.replace('refs/heads/','')}</span>
+      <span class="current-tag" title="This commit is currently serving production traffic">current</span>
       <span class="ago" title="${d.created_at}">${timeAgo(d.created_at)}</span>
       ${d.url ? `<a class="url-link" href="${d.url}" target="_blank" rel="noopener" onclick="event.stopPropagation()">open ↗</a>` : '<span></span>'}
       <button class="btn-redeploy"
               data-deployment-id="${d.id}"
               data-commit="${d.commit_sha}"
-              ${inFlight ? 'disabled title="already in flight"' : 'title="Re-run this build (rollback or apply env vars)"'}
+              ${inFlight ? 'disabled title="already in flight"' : 'title="Re-run this build for the commit shown"'}
               onclick="event.stopPropagation()">redeploy</button>
     </div>`;
 }
 
 // loadAndRenderProjectStatus fills the "Status" stat tile on the
-// overview page AND lights up the live-marker on the matching
-// deployment row. The tile shows Running / Stopped with the Start /
-// Stop button inline; the row marker shows the wifi icon on the
-// single deployment that's currently serving traffic. Failure path
-// renders an inert tile and clears any prior marker.
+// overview page and feeds the run-state cache so the sidebar
+// play/pause icon for this project stays in sync without waiting
+// for the next fan-out poll. Failure path renders an inert tile
+// and leaves the cache untouched so prior state survives blips.
 async function loadAndRenderProjectStatus(projectID) {
   const tile = $('status-tile');
   if (!tile) return;
@@ -1931,42 +2018,41 @@ async function loadAndRenderProjectStatus(projectID) {
       <div class="label">Status</div>
       <div class="value" style="font-size:14px;color:var(--text-faint);">unknown</div>
       <div class="sub" title="${escapeHTML(e.message || String(e))}">${escapeHTML(e.message || 'unreachable')}</div>`;
-    paintLiveMarkers(projectID, null);
     return;
   }
   paintStatusTile(projectID, state);
-  paintLiveMarkers(projectID, state);
+  // Cache the result + repaint the sidebar so the play/pause icon
+  // next to this app reflects the latest run-state without waiting
+  // for the fan-out poller to come around again.
+  projectStatusMap[projectID] = state;
+  paintSidebarRunStates();
 }
 
-// paintLiveMarkers walks the visible deployment rows for projectID
-// and toggles the leftmost wifi icon: 'serving' (pulsing green) on
-// the single deployment that's serving traffic right now,
-// 'idle' (dim, struck-through) when the project is stopped, '' on
-// all other rows. Idempotent so it can run from both the status
-// fetch and the Stop/Start click handler.
-function paintLiveMarkers(projectID, state) {
+// paintLiveDeploymentRow flips .is-current onto the single row whose
+// commit is currently routed to by the production alias — ArgoCD's
+// revision-history pattern. Older / non-live rows have their button
+// relabelled to 'rollback' so the redeploy semantics on those rows
+// are visually distinct: pressing it promotes that commit back to
+// production. Idempotent; safe to call on every paint tick.
+function paintLiveDeploymentRow(projectID) {
   const proj = findProject(projectID);
   if (!proj) return;
   const live = liveDeploymentForProject(proj);
-  const isRunning = !!(state && state.running);
   const list = $('overview-deployments');
   if (!list) return;
   list.querySelectorAll('.deployment').forEach(row => {
-    const marker = row.querySelector('.live-marker');
-    if (!marker) return;
-    if (live && row.dataset.id === live.id) {
-      if (state == null) {
-        marker.dataset.state = '';
-        marker.title = '';
-        return;
-      }
-      marker.dataset.state = isRunning ? 'serving' : 'idle';
-      marker.title = isRunning
-        ? 'Serving traffic'
-        : 'Live deployment — stopped (0 replicas)';
+    const isLive = !!(live && row.dataset.id === live.id);
+    row.classList.toggle('is-current', isLive);
+    const btn = row.querySelector('.btn-redeploy');
+    if (!btn || btn.disabled) return;
+    if (row.dataset.status === 'ready' && !isLive) {
+      btn.textContent = 'rollback';
+      btn.title = 'Rebuild this commit and promote it to production';
     } else {
-      marker.dataset.state = '';
-      marker.title = '';
+      btn.textContent = 'redeploy';
+      btn.title = isLive
+        ? 'Re-run the current production build'
+        : 'Re-run this build for the commit shown';
     }
   });
 }
@@ -2008,9 +2094,11 @@ function paintStatusTile(projectID, state) {
         body: JSON.stringify({ action }),
       });
       paintStatusTile(projectID, next);
-      // The same scale payload tells us the post-action replica count,
-      // so flip the live-marker without a second /status round-trip.
-      paintLiveMarkers(projectID, next);
+      // Reuse the scale payload to repaint the sidebar icon without a
+      // second /status round-trip — the user gets immediate feedback
+      // on the app's run-state from anywhere in the dashboard.
+      projectStatusMap[projectID] = next;
+      paintSidebarRunStates();
     } catch (e) {
       btn.disabled = false;
       btn.textContent = orig;
