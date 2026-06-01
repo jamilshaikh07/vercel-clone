@@ -303,6 +303,40 @@
     .content-head .meta { color: var(--text-dim); font-size: 12px; }
     .content-head .meta .live { color: var(--ok); font-weight: 600; }
 
+    /* 'Visit' button: the most-asked-for action when looking at an app.
+       Lives in the content-head so it's reachable from every sub-page
+       (Overview, Logs, Domains, etc.) not just Overview. Two-line:
+       primary 'Visit ↗' label on top, hostname underneath in a smaller
+       muted line so users can see WHICH url they're about to open. */
+    .content-head .visit-btn {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      border-radius: 6px;
+      border: 1px solid var(--accent);
+      background: rgba(99, 102, 241, 0.08);
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1.1;
+      transition: background 120ms, transform 80ms;
+    }
+    .content-head .visit-btn:hover {
+      background: rgba(99, 102, 241, 0.18);
+    }
+    .content-head .visit-btn:active { transform: translateY(1px); }
+    .content-head .visit-btn.shown { display: inline-flex; }
+    .content-head .visit-btn .visit-host {
+      display: block;
+      font-weight: 400;
+      font-size: 10px;
+      color: var(--text-dim);
+      font-family: ui-monospace, monospace;
+      margin-top: 2px;
+    }
+
     .pages {
       flex: 1; min-height: 0; position: relative;
       display: flex; flex-direction: column;
@@ -1061,6 +1095,12 @@
       <header class="content-head">
         <span class="crumbs" id="crumbs">Loading…</span>
         <span class="spacer"></span>
+        <a id="visit-app" class="visit-btn" target="_blank" rel="noopener" title="Open this app in a new tab">
+          <span>
+            Visit ↗
+            <span class="visit-host" id="visit-app-host"></span>
+          </span>
+        </a>
         <span class="meta" id="meta">loading…</span>
       </header>
       <div class="pages">
@@ -1588,6 +1628,11 @@ function renderSidebar() {
 }
 
 function renderCrumbs() {
+  // Hide the Visit button by default; only project scope with a known
+  // READY URL re-enables it below.
+  const visitBtn = $('visit-app');
+  visitBtn.classList.remove('shown');
+
   if (ROUTE.scope === 'home') {
     crumbsEl.innerHTML = `<strong>Overview</strong>`;
     return;
@@ -1603,6 +1648,34 @@ function renderCrumbs() {
     sql: 'SQL viewer', env: 'Env vars'
   })[ROUTE.view] || ROUTE.view;
   crumbsEl.innerHTML = `Apps <span class="sep">/</span> <strong>${escapeHTML(proj ? proj.slug : '?')}</strong> <span class="sep">/</span> ${escapeHTML(viewLabel)}`;
+
+  // Compute the live URL for the Visit button using the same rules
+  // as the per-page overview-prod link: production-branch alias
+  // beats latest-READY commit URL, both beat nothing-yet.
+  if (proj) {
+    const url = liveURLForProject(proj);
+    if (url) {
+      visitBtn.href = url;
+      $('visit-app-host').textContent = url.replace(/^https?:\/\//, '');
+      visitBtn.classList.add('shown');
+    }
+  }
+}
+
+// liveURLForProject returns the best URL to point a user at for an app:
+//   1. Production alias (<slug>.jamilshaikh.in) if any READY deployment
+//      is on the production branch — that's the stable customer URL.
+//   2. Otherwise, the URL of the latest READY per-commit deployment —
+//      useful for apps whose production branch isn't 'main' or hasn't
+//      had a successful build yet.
+//   3. null when no READY deploys exist; caller hides the button.
+function liveURLForProject(proj) {
+  const deps = proj.deployments || [];
+  const prodRef = 'refs/heads/' + proj.production_branch;
+  const hasProd = deps.some(d => d.status === 'ready' && d.ref === prodRef);
+  if (hasProd) return `https://${proj.slug}.jamilshaikh.in`;
+  const readyDep = deps.find(d => d.status === 'ready' && d.url);
+  return readyDep ? readyDep.url : null;
 }
 
 // Show the page matching ROUTE; hide all others. Then call the page's
@@ -1746,13 +1819,6 @@ function renderOverview() {
   const ready = deps.filter(d => d.status === 'ready').length;
   const failed = deps.filter(d => d.status === 'failed').length;
   const latest = deps[0];
-  const prodRef = 'refs/heads/' + proj.production_branch;
-  const hasProd = deps.some(d => d.status === 'ready' && d.ref === prodRef);
-  const prodHost = `${proj.slug}.jamilshaikh.in`;
-  // Latest READY deployment is what we ACTUALLY have a working URL for —
-  // the production alias might not exist if the user deploys from a
-  // non-production branch (e.g. master vs the default main).
-  const readyDep = deps.find(d => d.status === 'ready' && d.url);
 
   // The Status tile is filled in by loadAndRenderProjectStatus once the
   // /v1/projects/{id}/status request returns. Until then we show a
@@ -1783,14 +1849,11 @@ function renderOverview() {
 
   $('overview-branch').textContent = proj.production_branch;
   const prodLink = $('overview-prod');
-  // Prefer the production alias; fall back to the latest READY commit URL.
-  if (hasProd) {
-    prodLink.href = `https://${prodHost}`;
-    prodLink.textContent = `${prodHost} ↗`;
-    prodLink.style.display = '';
-  } else if (readyDep) {
-    prodLink.href = readyDep.url;
-    prodLink.textContent = readyDep.url.replace(/^https?:\/\//, '') + ' ↗';
+  // Same selection rules as the global Visit button; see liveURLForProject.
+  const liveURL = liveURLForProject(proj);
+  if (liveURL) {
+    prodLink.href = liveURL;
+    prodLink.textContent = liveURL.replace(/^https?:\/\//, '') + ' ↗';
     prodLink.style.display = '';
   } else {
     prodLink.style.display = 'none';
