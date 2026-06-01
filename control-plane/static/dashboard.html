@@ -486,28 +486,28 @@
     .deployment.selected { background: var(--accent-dim); }
 
     /* Live marker: leftmost column on every deployment row.
-       data-state controls which icon (none, serving, idle) renders
-       and whether the pulse animation is active. The wifi-icon is
-       inline SVG; .pulse animates the outer arc's opacity so a
-       glance at the list shows immediately which row is the live
-       one. Idle = same wifi icon but dim + a strike-through line. */
+       Classic play ▶︎ (serving) / pause ⏸︎ (idle) glyphs share
+       the same SVG node — CSS shows whichever matches data-state,
+       hides both when state is empty. Serving gets a gentle
+       opacity pulse so the live row catches the eye without
+       flickering aggressively. */
     .deployment .live-marker {
       width: 16px; height: 16px;
       display: inline-flex; align-items: center; justify-content: center;
       color: var(--text-faint);
     }
     .deployment .live-marker svg { width: 16px; height: 16px; display: block; }
-    .deployment .live-marker[data-state=""]      svg { display: none; }
+    .deployment .live-marker .play,
+    .deployment .live-marker .pause { display: none; }
     .deployment .live-marker[data-state="serving"] { color: var(--ok); }
-    .deployment .live-marker[data-state="serving"] .pulse {
+    .deployment .live-marker[data-state="serving"] .play { display: inline; }
+    .deployment .live-marker[data-state="serving"] .play {
       animation: live-pulse 1.8s ease-in-out infinite;
-      transform-origin: 8px 14px;
     }
     .deployment .live-marker[data-state="idle"]  { color: var(--text-faint); }
-    .deployment .live-marker[data-state="idle"]  .strike { display: inline; }
-    .deployment .live-marker .strike { display: none; }
+    .deployment .live-marker[data-state="idle"]  .pause { display: inline; }
     @keyframes live-pulse {
-      0%, 100% { opacity: 0.35; }
+      0%, 100% { opacity: 0.45; }
       50%      { opacity: 1; }
     }
     .deployment .commit {
@@ -1886,17 +1886,20 @@ function renderDeploymentRow(d, projectID) {
   const inFlight = (d.status === 'queued' || d.status === 'building' || d.status === 'deploying');
   // The live-marker starts empty; paintLiveMarkers() (called after
   // the /status fetch resolves) flips the matching row to 'serving'
-  // or 'idle' depending on replica count. Wifi icon — outer arc
-  // pulses while serving, a diagonal strike line shows on idle.
+  // (play ▶ in green, gently pulsing) or 'idle' (pause ⏸ in grey).
+  // Both glyphs live in the same SVG; CSS shows whichever matches
+  // data-state and hides both when the state is empty.
   return `
     <div class="deployment" data-id="${d.id}" data-commit="${d.commit_sha}" data-status="${d.status}" data-url="${d.url || ''}">
       <span class="live-marker" data-state="" title="">
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path class="pulse" d="M1.5 6 A 9 9 0 0 1 14.5 6"/>
-          <path d="M3.7 8.3 A 6 6 0 0 1 12.3 8.3"/>
-          <path d="M5.9 10.6 A 3 3 0 0 1 10.1 10.6"/>
-          <circle cx="8" cy="13.2" r="0.9" fill="currentColor" stroke="none"/>
-          <line class="strike" x1="2" y1="14" x2="14" y2="2" stroke-width="1.2"/>
+        <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          <!-- Play triangle (serving): right-pointing filled wedge. -->
+          <polygon class="play" points="4,2.5 13,8 4,13.5"/>
+          <!-- Pause bars (idle): two filled rounded rectangles. -->
+          <g class="pause">
+            <rect x="3.5" y="3" width="3" height="10" rx="0.8"/>
+            <rect x="9.5" y="3" width="3" height="10" rx="0.8"/>
+          </g>
         </svg>
       </span>
       <span class="badge ${d.status}">${d.status}</span>
