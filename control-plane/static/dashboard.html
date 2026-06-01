@@ -844,36 +844,18 @@
     .env-toast { padding: 0 16px 14px; font-size: 11px; color: var(--ok); min-height: 14px; }
     .env-toast.err { color: var(--err); }
 
-    /* === Logs page ======================================================= */
-    .logs-layout {
-      flex: 1; min-height: 0;
-      display: grid;
-      grid-template-columns: 300px 1fr;
-      gap: 1px;
-      background: var(--border);
-    }
-    .logs-deps {
-      background: var(--panel);
-      overflow-y: auto;
-    }
-    .logs-deps .empty { padding: 16px; color: var(--text-dim); font-style: italic; font-size: 12px; }
-    .logs-deps .dep-row {
-      display: grid; grid-template-columns: 70px 1fr 50px;
-      gap: 8px; align-items: center;
-      padding: 8px 12px;
-      cursor: pointer; border-bottom: 1px solid var(--border-2);
-      font-size: 12px;
-    }
-    .logs-deps .dep-row:hover { background: var(--panel-2); }
-    .logs-deps .dep-row.selected { background: var(--accent-dim); }
-    .logs-deps .dep-row .sha { font-family: ui-monospace, monospace; color: var(--text); }
-    .logs-deps .dep-row .ago { color: var(--text-faint); font-size: 11px; text-align: right; }
-
+    /* === Logs page =======================================================
+       Single-column pane: a header strip with mode label / commit / open
+       link, and a flex-grown body that scrolls vertically. No deployment
+       picker, no Build/Runtime tab strip — the page auto-selects what to
+       tail (runtime logs of the live pod by default, build logs when
+       deep-linked to a specific deployment). */
     .logs-pane {
+      flex: 1; min-height: 0;
       display: flex; flex-direction: column;
       background: var(--bg-2);
-      min-height: 0;
     }
+    #page-logs { padding: 0; }
     .log-head {
       display: flex; align-items: center; gap: 10px;
       padding: 8px 16px;
@@ -890,12 +872,6 @@
       text-decoration: none;
     }
     .log-head a:hover, .log-head button:hover { color: var(--text); border-color: var(--accent); text-decoration: none; }
-    .log-tabs { display: flex; gap: 4px; }
-    .log-tabs .tab {
-      background: transparent; border: 1px solid var(--border); color: var(--text-dim);
-      padding: 3px 12px; border-radius: 6px; font-size: 11px; cursor: pointer;
-    }
-    .log-tabs .tab.active { background: var(--accent-dim); color: var(--text); border-color: var(--accent); }
     .log-line { display: grid; grid-template-columns: 64px 1fr; gap: 8px; }
     .log-line .c { color: var(--text-dim); font-weight: 600; user-select: none; }
     .log-line.kaniko .c { color: var(--building); }
@@ -1076,7 +1052,6 @@
           <li><a class="nav-item" data-subview="overview" href="#"><span class="label">Overview</span></a></li>
           <li><a class="nav-item" data-subview="logs"     href="#"><span class="label">Logs</span></a></li>
           <li><a class="nav-item" data-subview="database" href="#"><span class="label">Database</span></a></li>
-          <li id="subnav-sql" style="display:none"><a class="nav-item" data-subview="sql" href="#"><span class="label">SQL viewer</span></a></li>
           <li><a class="nav-item" data-subview="env"      href="#"><span class="label">Env vars</span></a></li>
           <li><a class="nav-item" data-subview="domains"  href="#"><span class="label">Domains</span></a></li>
           <li><a class="nav-item" data-subview="telemetry" href="#"><span class="label">Telemetry</span></a></li>
@@ -1134,30 +1109,33 @@
           </div>
         </div>
 
-        <!-- LOGS: split pane. Left = deployment picker (this project's
-             builds). Right = log viewer with Build/Runtime tabs. -->
+        <!-- LOGS: a single, focused viewer. By default it tails the
+             RUNNING pod's stdout/stderr (live runtime logs) for the
+             currently-live deployment. When the user deep-links to a
+             specific deployment (via #d=<uuid>, the redeploy flow, or
+             the Overview deployments list) the page transparently
+             switches to that deployment's build logs and shows a
+             "← Back to live logs" link to return. Build logs are
+             only retained while the build pod exists (~1h post
+             completion). -->
         <div class="page" id="page-logs">
-          <div class="logs-layout">
-            <div class="logs-deps" id="logs-deps"></div>
-            <div class="logs-pane">
-              <div class="log-head">
-                <span class="title" id="log-title">Logs</span>
-                <span class="log-tabs" id="log-tabs">
-                  <button class="tab active" data-mode="build">Build</button>
-                  <button class="tab" data-mode="runtime">Runtime</button>
-                </span>
-                <span class="commit" id="log-commit">— select a deployment</span>
-                <span class="spacer"></span>
-                <a id="log-url" target="_blank" rel="noopener" style="display:none">open ↗</a>
-              </div>
-              <div class="log-body" id="log-body">
-                <div class="log-placeholder">Pick a deployment on the left to tail its logs.</div>
-              </div>
+          <div class="logs-pane">
+            <div class="log-head">
+              <span class="title" id="log-title">Live</span>
+              <span class="commit" id="log-commit">—</span>
+              <a id="log-back-to-live" href="#" style="display:none" title="Tail the running pod instead">← Live logs</a>
+              <span class="spacer"></span>
+              <a id="log-url" target="_blank" rel="noopener" style="display:none">open ↗</a>
+            </div>
+            <div class="log-body" id="log-body">
+              <div class="log-placeholder">Loading…</div>
             </div>
           </div>
         </div>
 
-        <!-- DATABASE: provision or show connection details. -->
+        <!-- DATABASE: provision details + inline SQL viewer when a
+             database exists. SQL panel is hidden until the DB is
+             provisioned (renderStorage toggles 'sql-panel.shown'). -->
         <div class="page" id="page-database">
           <div class="page-inner">
             <div class="panel">
@@ -1168,13 +1146,7 @@
               </div>
               <div id="ws-storage">loading…</div>
             </div>
-          </div>
-        </div>
-
-        <!-- SQL VIEWER: only navigable when DB exists. -->
-        <div class="page" id="page-sql">
-          <div class="page-inner">
-            <div class="panel">
+            <div class="panel sql-panel" id="sql-panel" style="display:none;margin-top:18px;">
               <div class="panel-head">
                 <h3>SQL viewer</h3>
                 <span class="spacer"></span>
@@ -1287,7 +1259,6 @@ const $ = (id) => document.getElementById(id);
 const appEl         = document.querySelector('.app');
 const subSidebarEl  = $('sub-sidebar');
 const subSidebarTitleEl = $('sub-sidebar-title');
-const subnavSqlEl   = $('subnav-sql');
 const crumbsEl      = $('crumbs');
 const meta          = $('meta');
 
@@ -1296,7 +1267,6 @@ const pageEls = {
   overview:  $('page-overview'),
   logs:      $('page-logs'),
   database:  $('page-database'),
-  sql:       $('page-sql'),
   env:       $('page-env'),
   telemetry: $('page-telemetry'),
   traffic:   $('page-traffic'),
@@ -1308,8 +1278,7 @@ const logBody   = $('log-body');
 const logTitle  = $('log-title');
 const logCommit = $('log-commit');
 const logUrl    = $('log-url');
-const logTabs   = $('log-tabs');
-const logsDeps  = $('logs-deps');
+const logBackToLive = $('log-back-to-live');
 
 // --- State ---
 let DATA  = { projects: [] };     // last /v1/projects payload
@@ -1472,6 +1441,15 @@ function parseHash() {
     const dep = findDeployment(dMatch[1]);
     if (dep) return { scope: 'project', projectID: dep.projectID, view: 'logs', deploymentID: dMatch[1] };
     return { scope: 'home', pendingDeploymentID: dMatch[1] };
+  }
+
+  // Legacy /sql sub-route: the SQL viewer now lives inline inside
+  // the Database page. Remap any bookmark / status-check that still
+  // points at /sql so the breadcrumb and sub-nav highlight stay in
+  // sync with where the user actually lands.
+  const sqlRemap = raw.match(/^p\/([0-9a-fA-F-]{36})\/sql$/);
+  if (sqlRemap) {
+    return { scope: 'project', projectID: sqlRemap[1], view: 'database' };
   }
 
   // #/p/<uuid>[/<view>]
@@ -1645,7 +1623,7 @@ function renderCrumbs() {
   const proj = findProject(ROUTE.projectID);
   const viewLabel = ({
     overview: 'Overview', logs: 'Logs', database: 'Database',
-    sql: 'SQL viewer', env: 'Env vars'
+    env: 'Env vars'
   })[ROUTE.view] || ROUTE.view;
   crumbsEl.innerHTML = `Apps <span class="sep">/</span> <strong>${escapeHTML(proj ? proj.slug : '?')}</strong> <span class="sep">/</span> ${escapeHTML(viewLabel)}`;
 
@@ -1694,8 +1672,8 @@ function showPage() {
     case 'home':      return renderHome();
     case 'overview':  return renderOverview();
     case 'logs':      return renderLogsPage();
-    case 'database':  return renderDatabasePage();
-    case 'sql':       return renderSQLPage();
+    case 'database':
+    case 'sql':       return renderDatabasePage();
     case 'env':       return renderEnvPage();
     case 'telemetry': return renderTelemetry();
     case 'traffic':   return renderTraffic();
@@ -2277,68 +2255,78 @@ async function deleteDomain(projectID, host) {
 
 // ----- Logs page ---------------------------------------------------------
 
+// renderLogsPage decides what to tail without any UI choosing:
+//   1. If selectedDeploymentID points at a known deployment, show
+//      that deployment's BUILD logs — the deep-link / redeploy /
+//      "click a deployment row on Overview" flow lands here.
+//   2. Otherwise stream the RUNNING pod's stdout/stderr for the
+//      currently-live deployment (latest READY on the production
+//      branch, else latest READY anywhere).
+// In build mode we surface a small "← Live logs" link that flips
+// back to runtime view without a navigation.
 function renderLogsPage() {
   const proj = findProject(ROUTE.projectID);
   if (!proj) {
-    logsDeps.innerHTML = '<div class="empty">Project not found.</div>';
+    logBody.innerHTML = '<div class="log-placeholder">Project not found.</div>';
     return;
   }
   const deps = proj.deployments || [];
   if (deps.length === 0) {
-    logsDeps.innerHTML = '<div class="empty">No deployments yet.</div>';
+    closeStream();
+    logTitle.textContent = 'Live';
+    logCommit.textContent = '—';
+    logUrl.style.display = 'none';
+    logBackToLive.style.display = 'none';
+    logBody.innerHTML = '<div class="log-placeholder">No deployments yet. Push a commit to ' +
+      escapeHTML(proj.production_branch) + ' to see logs here.</div>';
     return;
   }
-  logsDeps.innerHTML = deps.map(d => `
-    <div class="dep-row" data-id="${d.id}" data-commit="${d.commit_sha}" data-url="${d.url || ''}">
-      <span class="badge ${d.status}">${d.status}</span>
-      <span class="sha">${d.commit_sha.slice(0,8)}</span>
-      <span class="ago">${timeAgo(d.created_at)}</span>
-    </div>`).join('');
-  logsDeps.querySelectorAll('.dep-row').forEach(row => {
-    row.addEventListener('click', () => {
-      logsDeps.querySelectorAll('.dep-row.selected').forEach(x => x.classList.remove('selected'));
-      row.classList.add('selected');
-      selectedDeploymentID = row.dataset.id;
-      streamSelectedDeployment();
-    });
-  });
 
-  // Auto-select: deep-link target, or previously-selected, or the most recent.
-  const targetID = selectedDeploymentID || deps[0].id;
-  const targetRow = logsDeps.querySelector(`.dep-row[data-id="${targetID}"]`);
-  if (targetRow) {
-    targetRow.classList.add('selected');
-    selectedDeploymentID = targetID;
-    streamSelectedDeployment();
+  // Did someone deep-link to a specific build (Overview row click,
+  // #d=<uuid>, redeploy flow)? If so, tail its build logs.
+  const pinned = selectedDeploymentID && deps.find(d => d.id === selectedDeploymentID);
+  if (pinned) {
+    logMode = 'build';
+    logBackToLive.style.display = '';
+    logUrl.style.display = pinned.url ? '' : 'none';
+    if (pinned.url) logUrl.href = pinned.url;
+    streamLogsFor(pinned.id, pinned.commit_sha, 'build');
+    return;
   }
-}
 
-function streamSelectedDeployment() {
-  if (!selectedDeploymentID) return;
-  const row = logsDeps.querySelector(`.dep-row[data-id="${selectedDeploymentID}"]`);
-  if (!row) return;
-  const url = row.dataset.url;
-  if (url) {
-    logUrl.textContent = 'open ↗';
-    logUrl.href = url;
-    logUrl.style.display = '';
-  } else {
+  // Default: the live pod's runtime logs.
+  logMode = 'runtime';
+  logBackToLive.style.display = 'none';
+  const live = liveDeploymentForProject(proj);
+  if (!live) {
+    closeStream();
+    logTitle.textContent = 'Live';
+    logCommit.textContent = 'no ready deployment';
     logUrl.style.display = 'none';
+    logBody.innerHTML = '<div class="log-placeholder">Waiting for a successful deployment…</div>';
+    return;
   }
-  // Sync tab strip with current mode.
-  logTabs.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.mode === logMode));
-  streamLogsFor(selectedDeploymentID, row.dataset.commit, logMode);
+  logUrl.style.display = live.url ? '' : 'none';
+  if (live.url) logUrl.href = live.url;
+  streamLogsFor(live.id, live.commit_sha, 'runtime');
 }
 
-// Tab strip: re-stream in new mode.
-logTabs.querySelectorAll('.tab').forEach(t => {
-  t.addEventListener('click', () => {
-    const mode = t.dataset.mode;
-    if (mode === logMode) return;
-    logMode = mode;
-    logTabs.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
-    streamSelectedDeployment();
-  });
+// liveDeploymentForProject picks the deployment whose pod is currently
+// serving traffic: production-branch READY first, latest READY fallback.
+function liveDeploymentForProject(proj) {
+  const deps = proj.deployments || [];
+  const prodRef = 'refs/heads/' + proj.production_branch;
+  return deps.find(d => d.status === 'ready' && d.ref === prodRef) ||
+         deps.find(d => d.status === 'ready') ||
+         null;
+}
+
+// "← Live logs" pill flips the page back to runtime mode without a
+// navigation: clear the pinned-deployment intent and re-render.
+logBackToLive.addEventListener('click', (ev) => {
+  ev.preventDefault();
+  selectedDeploymentID = null;
+  renderLogsPage();
 });
 
 // streamLogsFor opens an SSE stream. Safe to call repeatedly — always
@@ -2346,7 +2334,7 @@ logTabs.querySelectorAll('.tab').forEach(t => {
 function streamLogsFor(id, commit, mode) {
   closeStream();
   logBody.innerHTML = '';
-  logTitle.textContent = mode === 'runtime' ? 'Runtime' : 'Build';
+  logTitle.textContent = mode === 'runtime' ? 'Live' : 'Build';
   logCommit.textContent = commit.slice(0, 8) + ' · streaming…';
 
   const path = LOG_SOURCES[mode].path;
@@ -2421,9 +2409,10 @@ async function renderDatabasePage() {
 
 function renderStorage(projectID, db) {
   const host = $('ws-storage');
+  const sqlPanel = $('sql-panel');
   if (!db) {
-    // Hide SQL viewer in the sub-nav.
-    subnavSqlEl.style.display = 'none';
+    // No DB → hide the inline SQL panel until one is provisioned.
+    sqlPanel.style.display = 'none';
     host.innerHTML = `
       <div class="db-empty">
         <p>Connect a per-project Postgres database. The next deploy will receive <code>DATABASE_URL</code> as an env var.</p>
@@ -2432,8 +2421,12 @@ function renderStorage(projectID, db) {
     host.querySelector('[data-add-db]').addEventListener('click', (ev) => addDatabase(projectID, ev.currentTarget));
     return;
   }
-  // DB exists → reveal SQL viewer nav entry.
-  subnavSqlEl.style.display = '';
+  // DB exists → reveal the inline SQL viewer below the connection card
+  // and restore any prior editor state for this project.
+  sqlPanel.style.display = '';
+  const saved = sqlState[projectID];
+  wsSql.value = (saved && saved.sql) ? saved.sql : '';
+  wsResult.innerHTML = (saved && saved.resultHTML) ? saved.resultHTML : '';
   host.innerHTML = `
     <div class="db-card">
       <div class="k">database</div>     <div class="v"><span class="pill">${escapeHTML(db.db_name)}</span></div>
@@ -2502,13 +2495,6 @@ wsSql.addEventListener('keydown', (ev) => {
 wsSql.addEventListener('input', () => {
   if (ROUTE.projectID) sqlState[ROUTE.projectID] = { ...(sqlState[ROUTE.projectID] || {}), sql: wsSql.value };
 });
-
-function renderSQLPage() {
-  // Restore per-project SQL editor state.
-  const saved = sqlState[ROUTE.projectID];
-  wsSql.value = (saved && saved.sql) ? saved.sql : '';
-  wsResult.innerHTML = (saved && saved.resultHTML) ? saved.resultHTML : '';
-}
 
 async function runQuery(projectID, ta, btn, resEl) {
   const sql = ta.value.trim();
