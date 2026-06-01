@@ -291,11 +291,19 @@ func (s *store) ListRecentDeployments(ctx context.Context, limit int) ([]deploym
 // projectRow is the dashboard-facing summary of a project. We intentionally
 // don't expose installation_id or repo_id — those are GitHub-internal IDs.
 type projectRow struct {
-	ID               string `json:"id"`
-	Slug             string `json:"slug"`
-	FullName         string `json:"full_name"`
-	ProductionBranch string `json:"production_branch"`
-	CreatedAt        string `json:"created_at"`
+	ID               string  `json:"id"`
+	Slug             string  `json:"slug"`
+	FullName         string  `json:"full_name"`
+	ProductionBranch string  `json:"production_branch"`
+	CreatedAt        string  `json:"created_at"`
+	// ProductionDeploymentID is the deployment whose Service the
+	// prod-<slug> Traefik IngressRoute is currently pointing at. NULL
+	// for projects that have never had a ready production build (e.g.
+	// brand-new repo, only failed builds so far). The dashboard uses
+	// this to pick the 'current' row in the deployments list — this
+	// is the source of truth after an instant rollback, not the
+	// 'latest READY by created_at' heuristic.
+	ProductionDeploymentID *string `json:"production_deployment_id,omitempty"`
 }
 
 // ListProjectsForUser returns the projects owned by one user. Pass an
@@ -307,14 +315,16 @@ func (s *store) ListProjectsForUser(ctx context.Context, userID string) ([]proje
 	if userID == "" {
 		rows, err = s.pool.Query(ctx, `
 			SELECT id::text, slug, full_name, production_branch,
-			       to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+			       to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+			       production_deployment_id::text
 			  FROM projects
 			 ORDER BY created_at DESC
 		`)
 	} else {
 		rows, err = s.pool.Query(ctx, `
 			SELECT id::text, slug, full_name, production_branch,
-			       to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+			       to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+			       production_deployment_id::text
 			  FROM projects
 			 WHERE owner_user_id = $1
 			 ORDER BY created_at DESC
@@ -327,9 +337,11 @@ func (s *store) ListProjectsForUser(ctx context.Context, userID string) ([]proje
 	var out []projectRow
 	for rows.Next() {
 		var p projectRow
-		if err := rows.Scan(&p.ID, &p.Slug, &p.FullName, &p.ProductionBranch, &p.CreatedAt); err != nil {
+		var prodDepID *string
+		if err := rows.Scan(&p.ID, &p.Slug, &p.FullName, &p.ProductionBranch, &p.CreatedAt, &prodDepID); err != nil {
 			return nil, err
 		}
+		p.ProductionDeploymentID = prodDepID
 		out = append(out, p)
 	}
 	return out, rows.Err()
@@ -803,6 +815,25 @@ func (s *store) MarkDeploying(ctx context.Context, deploymentID, image string) e
 		       image = $2
 		 WHERE id = $1::uuid
 	`, deploymentID, image)
+	return err
+}
+
+// SetProductionDeployment records which deployment the production-alias
+// Traefik IngressRoute (prod-<slug>) now points at. Called from:
+//   * builder.go runOne() after applying the alias on a fresh
+//     production-branch build.
+//   * promote_handlers.go handlePromoteDeployment() after an instant
+//     rollback re-points the alias at an older commit.
+// The dashboard reads this field on every /v1/projects load to pick
+// the 'current' row in the deployments list — so a rollback shows
+// up immediately in the UI even though the rolled-back commit is
+// older than the topmost READY row.
+func (s *store) SetProductionDeployment(ctx context.Context, projectID, deploymentID string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE projects
+		   SET production_deployment_id = $2::uuid
+		 WHERE id = $1::uuid
+	`, projectID, deploymentID)
 	return err
 }
 

@@ -197,6 +197,7 @@ func main() {
 		"GET /v1/deployments/{id}/logs":         s.handleDeploymentLogs,
 		"GET /v1/deployments/{id}/runtime-logs": s.handleDeploymentRuntimeLogs,
 		"POST /v1/deployments/{id}/redeploy":    s.handleRedeploy,
+		"POST /v1/deployments/{id}/promote":     s.handlePromoteDeployment,
 		"GET /v1/projects/{id}/database":        s.handleGetProjectDatabase,
 		"POST /v1/projects/{id}/database":       s.handleCreateProjectDatabase,
 		"POST /v1/projects/{id}/database/query": s.handleRunQuery,

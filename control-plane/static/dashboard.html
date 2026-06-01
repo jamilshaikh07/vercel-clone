@@ -2046,13 +2046,19 @@ function paintLiveDeploymentRow(projectID) {
     const btn = row.querySelector('.btn-redeploy');
     if (!btn || btn.disabled) return;
     if (row.dataset.status === 'ready' && !isLive) {
+      // Instant rollback: swap the production-alias IngressRoute to
+      // this deployment's already-built Service. No rebuild, no
+      // Kaniko round-trip — the cluster has every prior commit's
+      // Deployment + Service objects still in place.
       btn.textContent = 'rollback';
-      btn.title = 'Rebuild this commit and promote it to production';
+      btn.title = 'Instantly promote this commit to production (no rebuild)';
+      btn.dataset.action = 'promote';
     } else {
       btn.textContent = 'redeploy';
       btn.title = isLive
-        ? 'Re-run the current production build'
+        ? 'Re-run the current production build (picks up env-var / dependency changes)'
         : 'Re-run this build for the commit shown';
+      btn.dataset.action = 'redeploy';
     }
   });
 }
@@ -2482,9 +2488,28 @@ function renderLogsPage() {
 }
 
 // liveDeploymentForProject picks the deployment whose pod is currently
-// serving traffic: production-branch READY first, latest READY fallback.
+// behind the production-alias IngressRoute.
+//
+// Source of truth is projects.production_deployment_id, written by the
+// builder when it applies the alias on a fresh production-branch
+// build, AND by the promote endpoint when an instant rollback re-points
+// the alias at an older commit. Using a column instead of "latest
+// READY by time" is what lets a rollback to an older commit visibly
+// move the 'current' tag without a new build sitting on top.
+//
+// Fallbacks (in order) cover the corner cases:
+//   1. Explicit pointer in projects.production_deployment_id.
+//   2. Latest READY on the production branch — covers projects from
+//      before this column existed, until the next build/promote
+//      backfills the pointer.
+//   3. Latest READY anywhere — covers feature-branch-only repos that
+//      haven't shipped to production yet.
 function liveDeploymentForProject(proj) {
   const deps = proj.deployments || [];
+  if (proj.production_deployment_id) {
+    const explicit = deps.find(d => d.id === proj.production_deployment_id);
+    if (explicit) return explicit;
+  }
   const prodRef = 'refs/heads/' + proj.production_branch;
   return deps.find(d => d.status === 'ready' && d.ref === prodRef) ||
          deps.find(d => d.status === 'ready') ||
@@ -2918,10 +2943,24 @@ wsEnvAdd.addEventListener('click', () => {
 
 // ----- Redeploy ----------------------------------------------------------
 
+// Dispatch the row-action button. The button does double duty:
+//   data-action="redeploy" → enqueue a fresh Kaniko build for this
+//     commit (used on the live row and for retrying failed builds).
+//   data-action="promote"  → instant rollback. Re-points the
+//     production alias at this commit's already-built Service.
+//     No build, no waiting — traffic cuts over in ~100ms.
+// Default is 'redeploy' so any unstamped button (e.g. the Domains
+// page Remove button which shares the class) keeps its old shape.
 async function redeployFromButton(btn) {
+  if (btn.disabled) return;
+  const action = btn.dataset.action || 'redeploy';
+  if (action === 'promote') return promoteFromButton(btn);
+  return rebuildFromButton(btn);
+}
+
+async function rebuildFromButton(btn) {
   const id  = btn.dataset.deploymentId;
   const sha = (btn.dataset.commit || '').slice(0, 8);
-  if (btn.disabled) return;
   if (!confirm('Redeploy commit ' + sha + '?\n\nThis enqueues a fresh build for the same commit. ' +
                'Use it to apply env-var changes or to roll back to a previous version.')) {
     return;
@@ -2949,6 +2988,44 @@ async function redeployFromButton(btn) {
     refresh();
   } catch (e) {
     alert('Redeploy failed: ' + e);
+    btn.disabled = false; btn.textContent = orig;
+  }
+}
+
+// Instant rollback: hit /v1/deployments/{id}/promote, which re-applies
+// the prod-<slug> IngressRoute (and every verified custom domain) so
+// they point at this deployment's existing Service. No Kaniko rebuild,
+// no new deployment row — just an alias swap at the Traefik layer.
+// After success we refresh() so the 'current' tag visibly migrates to
+// this row in the deployments list.
+async function promoteFromButton(btn) {
+  const id  = btn.dataset.deploymentId;
+  const sha = (btn.dataset.commit || '').slice(0, 8);
+  if (!confirm('Roll back to commit ' + sha + '?\n\n' +
+               'This re-points production at this commit\'s existing build — ' +
+               'no rebuild, traffic cuts over instantly. The pod\'s env vars / ' +
+               'image are whatever they were when that commit was first built.')) {
+    return;
+  }
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = 'promoting…';
+  try {
+    const r = await fetch('/v1/deployments/' + id + '/promote', {
+      method: 'POST', cache: 'no-store', credentials: 'same-origin',
+    });
+    if (r.status === 401) { window.location.href = '/login'; return; }
+    if (!r.ok) {
+      alert('Rollback failed: ' + ((await r.text()).trim() || ('HTTP ' + r.status)));
+      btn.disabled = false; btn.textContent = orig;
+      return;
+    }
+    // refresh() will re-render the deployments list; paintLiveDeploymentRow
+    // picks the new live row purely off DATA (latest READY on prod branch),
+    // which is exactly this commit now that the alias points at it.
+    refresh();
+  } catch (e) {
+    alert('Rollback failed: ' + e);
     btn.disabled = false; btn.textContent = orig;
   }
 }

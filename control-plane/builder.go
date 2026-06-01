@@ -322,6 +322,15 @@ func (w *worker) runOne(ctx context.Context, c *claimedDeployment) error {
 			prodURL = "https://" + prodHost
 			w.log.Info("production alias applied",
 				"deployment_id", c.DeploymentID, "host", prodHost, "target_service", deployName)
+			// Source-of-truth: record which deployment the alias now
+			// points at. The dashboard reads this from /v1/projects
+			// to pick the 'current' row in the deployments list.
+			// Non-fatal: a stale pointer just falls back to the old
+			// 'latest READY' heuristic in the UI on next refresh.
+			if err := w.store.SetProductionDeployment(ctx, c.ProjectID, c.DeploymentID); err != nil {
+				w.log.Warn("set production_deployment_id failed",
+					"deployment_id", c.DeploymentID, "project_id", c.ProjectID, "err", err)
+			}
 		}
 
 		// Custom domains: re-apply IngressRoutes for every verified
