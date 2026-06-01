@@ -29,6 +29,15 @@ done
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MANIFEST="$REPO_ROOT/manifests/03-build-control-plane.yaml"
+RBAC_MANIFEST="$REPO_ROOT/manifests/06-control-plane-rbac.yaml"
+
+# 0. Re-apply RBAC first. The control-plane Role evolves as new code
+#    paths talk to new kube resources (e.g. deployments/scale). Without
+#    this step a freshly rebuilt image still runs against the old Role
+#    and 403s on the new calls — exactly what happened with the
+#    Start/Stop 500. apply is idempotent.
+echo "[0/4] Applying control-plane RBAC (idempotent)…"
+kubectl apply -f "$RBAC_MANIFEST"
 
 echo "[1/4] Deleting old build job (Jobs are immutable, can't re-apply in place)…"
 kubectl -n paas-system delete job build-control-plane --ignore-not-found --wait=true

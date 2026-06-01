@@ -1324,7 +1324,15 @@ async function fetchJSON(url, init) {
     window.location.href = '/login';
     throw new Error('unauthenticated');
   }
-  if (!r.ok) throw new Error('HTTP ' + r.status);
+  if (!r.ok) {
+    // Read the body so server-side detail (e.g. "scale failed: kube
+    // returned 403: ...") reaches the user instead of bare "HTTP 500".
+    // .text() is best-effort: a body read failure or empty body still
+    // produces a useful "HTTP <status>" message.
+    let detail = '';
+    try { detail = (await r.text()).trim(); } catch (_) { /* ignore */ }
+    throw new Error(detail ? `HTTP ${r.status}: ${detail}` : `HTTP ${r.status}`);
+  }
   // 204 No Content is a legitimate response for some POST/DELETE
   // endpoints; don't try to parse an empty body.
   if (r.status === 204) return null;
