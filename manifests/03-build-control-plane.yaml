@@ -20,6 +20,16 @@ spec:
         app.kubernetes.io/component: builder
     spec:
       restartPolicy: Never
+      volumes:
+        # Registry credentials so Kaniko can push to the in-cluster registry.
+        # Same Secret tenant builds use; covers the internal push host and the
+        # public pull host (registry.spinup.in).
+        - name: docker-config
+          secret:
+            secretName: registry-dockercfg
+            items:
+              - key: .dockerconfigjson
+                path: config.json
       containers:
         - name: kaniko
           image: gcr.io/kaniko-project/executor:v1.23.2
@@ -27,11 +37,19 @@ spec:
             - --context=git://github.com/jamilshaikh07/vercel-clone.git#refs/heads/main
             - --context-sub-path=control-plane
             - --dockerfile=Dockerfile
-            - --destination=ttl.sh/spinup-control-plane-05836ffc:24h
+            # Push to the in-cluster, MinIO-backed registry over plain HTTP.
+            # The Deployment (manifest 04) pulls the same image via HTTPS at
+            # registry.spinup.in. ttl.sh is no longer in the loop.
+            - --destination=registry.paas-system.svc.cluster.local:5000/spinup-control-plane:latest
+            - --insecure
             - --snapshot-mode=redo
             - --use-new-run
             - --cache=false
             - --verbosity=info
+          volumeMounts:
+            - name: docker-config
+              mountPath: /kaniko/.docker
+              readOnly: true
           resources:
             requests:
               cpu: 500m

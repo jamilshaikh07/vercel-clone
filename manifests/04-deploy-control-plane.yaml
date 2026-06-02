@@ -29,6 +29,10 @@ spec:
         app.kubernetes.io/component: control-plane
     spec:
       serviceAccountName: control-plane
+      # Pull the self-built image from the in-cluster, MinIO-backed registry
+      # via its public HTTPS endpoint. registry-dockercfg holds the creds.
+      imagePullSecrets:
+        - name: registry-dockercfg
       securityContext:
         # The projected Secret files are owned by root:fsGroup; fsGroup=65532
         # matches the distroless nonroot uid/gid so defaultMode 0440 is readable.
@@ -36,7 +40,7 @@ spec:
         fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: control-plane
-          image: ttl.sh/spinup-control-plane-05836ffc:24h
+          image: registry.spinup.in/spinup-control-plane:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
@@ -82,6 +86,13 @@ spec:
                   key: session-secret
             - name: DASHBOARD_BASE_URL
               value: https://spinup.in
+            # Pre-launch abuse guardrail: invite-only sign-in. Only these
+            # GitHub logins can complete login; everyone else hits the
+            # waitlist screen and never gets a session or tenant namespace.
+            # Comma/space separated. Leave EMPTY to disable (open signup).
+            # Edit + `kubectl rollout restart deploy/control-plane` to update.
+            - name: ALLOWED_GH_LOGINS
+              value: "jamilshaikh07"
             # Superuser connection for the tenant-DB provisioner. Only
             # used by db_provisioner.go — never by the app data path.
             - name: PG_SUPERUSER_URI

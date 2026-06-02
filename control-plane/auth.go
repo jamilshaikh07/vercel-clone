@@ -29,6 +29,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -47,6 +48,13 @@ type authConfig struct {
 	// construct redirect_uri values for GitHub. Must match the callback
 	// configured on the GitHub App exactly.
 	baseURL string
+	// allowedLogins gates sign-in. When non-empty, only these GitHub logins
+	// (lower-cased) may complete login — everyone else hits the waitlist
+	// screen and never gets a session or a tenant namespace. Empty disables
+	// the gate (fully open signup). This is the pre-launch abuse guardrail
+	// (e.g. keeping crypto miners out). Set via ALLOWED_GH_LOGINS,
+	// comma/space/newline separated.
+	allowedLogins map[string]bool
 }
 
 const (
@@ -85,7 +93,33 @@ func loadAuthConfig() (*authConfig, error) {
 		clientSecret:  cs,
 		sessionSecret: raw,
 		baseURL:       strings.TrimRight(base, "/"),
+		allowedLogins: parseAllowlist(os.Getenv("ALLOWED_GH_LOGINS")),
 	}, nil
+}
+
+// parseAllowlist splits a comma/space/newline/semicolon-separated list of
+// GitHub logins into a lower-cased set. Blank input yields an empty set,
+// which disables the gate.
+func parseAllowlist(raw string) map[string]bool {
+	m := map[string]bool{}
+	for _, f := range strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\n' || r == '\r' || r == '\t' || r == ';'
+	}) {
+		if f = strings.ToLower(strings.TrimSpace(f)); f != "" {
+			m[f] = true
+		}
+	}
+	return m
+}
+
+// loginAllowed reports whether the given GitHub login may sign in. An empty
+// allowlist disables the gate (everyone allowed) — so a misconfigured/empty
+// env never locks the owner out, it just reverts to open signup.
+func (a *authConfig) loginAllowed(login string) bool {
+	if len(a.allowedLogins) == 0 {
+		return true
+	}
+	return a.allowedLogins[strings.ToLower(strings.TrimSpace(login))]
 }
 
 // --- Tokens, hashing, state -----------------------------------------------
@@ -235,6 +269,16 @@ func (s *server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Pre-launch abuse guardrail: if an allowlist is configured, only listed
+	// GitHub logins may sign in. We block here — before UpsertUserFromGitHub,
+	// session minting, and installation claiming — so a non-allowed account
+	// never lands a row, a session, or a tenant namespace.
+	if !s.auth.loginAllowed(gh.Login) {
+		s.log.Warn("login blocked by allowlist", "user", gh.Login, "id", gh.ID, "ip", clientIP(r))
+		s.renderWaitlist(w, gh.Login)
+		return
+	}
+
 	expires := time.Time{}
 	if tok.ExpiresIn > 0 {
 		expires = time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second)
@@ -293,6 +337,45 @@ func (s *server) handleCallback(w http.ResponseWriter, r *http.Request) {
 	s.log.Info("user signed in", "user", gh.Login, "id", userID)
 	http.Redirect(w, r, "/", http.StatusFound)
 }
+
+// renderWaitlist serves the invite-only screen to a GitHub user who passed
+// OAuth but isn't on the allowlist. 403 so it's clearly "authenticated but
+// not authorized", and no session cookie is set.
+func (s *server) renderWaitlist(w http.ResponseWriter, login string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = fmt.Fprintf(w, waitlistHTML, html.EscapeString(login))
+}
+
+const waitlistHTML = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spinup — Access pending</title>
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:grid;place-items:center;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:#0b0b0f;color:#e8e8ea}
+  .card{max-width:460px;padding:40px;text-align:center}
+  .logo{font-weight:800;font-size:26px;letter-spacing:-.02em;margin-bottom:24px}
+  .logo span{color:#e5484d}
+  h1{font-size:22px;margin:0 0 12px}
+  p{color:#a1a1aa;line-height:1.6;margin:0 0 12px}
+  .who{display:inline-block;margin-top:8px;padding:6px 12px;border:1px solid #2a2a31;
+    border-radius:999px;color:#e8e8ea;font-size:13px}
+  a{color:#e5484d;text-decoration:none}
+  .foot{margin-top:28px;font-size:13px}
+</style></head>
+<body><div class="card">
+  <div class="logo">spin<span>up</span></div>
+  <h1>You're on the waitlist</h1>
+  <p>Spinup is invite-only while we scale up safely. Your GitHub account
+     isn't on the access list yet.</p>
+  <div class="who">signed in as @%s</div>
+  <p class="foot"><a href="mailto:hello@spinup.in">Request access</a>
+     &nbsp;·&nbsp; <a href="/login">Try another account</a></p>
+</div></body></html>`
 
 func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil && c.Value != "" {

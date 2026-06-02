@@ -64,8 +64,11 @@ func TestGithubLatestSHA(t *testing.T) {
 // otherwise the rebuilder builds to one tag and the deployment pulls from
 // another, silently never picking up the new image.
 func TestRebuilderConstants(t *testing.T) {
-	if !strings.Contains(rebuilderImageRef, "spinup-control-plane") {
-		t.Errorf("rebuilderImageRef out of sync with deployment manifest: %q", rebuilderImageRef)
+	if !strings.Contains(rebuilderImagePushRef, "spinup-control-plane") {
+		t.Errorf("rebuilderImagePushRef out of sync with deployment manifest: %q", rebuilderImagePushRef)
+	}
+	if !strings.HasPrefix(rebuilderImagePushRef, registryPushHost+"/") {
+		t.Errorf("rebuilderImagePushRef must push to the in-cluster registry %q, got %q", registryPushHost, rebuilderImagePushRef)
 	}
 	if rebuilderJobName != "build-control-plane" {
 		t.Errorf("rebuilderJobName must match manifests/03 metadata.name, got %q", rebuilderJobName)

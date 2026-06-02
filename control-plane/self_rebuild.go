@@ -57,9 +57,14 @@ const (
 	rebuilderDeployName    = "control-plane"
 	rebuilderNamespace     = "paas-system"
 	rebuilderBuildTimeout  = 8 * time.Minute
-	// Kaniko destination — must match the deployment's image: field so the
-	// rolled pod pulls the just-built layer.
-	rebuilderImageRef = "ttl.sh/spinup-control-plane-05836ffc:24h"
+	// Self-rebuild bakes into the in-cluster, MinIO-backed registry — ttl.sh
+	// is no longer in the loop. Kaniko pushes to the internal Service over
+	// plain HTTP (--insecure, same as tenant builds); the Deployment in
+	// manifests/04 pulls the same image via the public HTTPS endpoint
+	// (registry.spinup.in/spinup-control-plane:latest). The tag is mutable
+	// and imagePullPolicy: Always on the Deployment forces a fresh pull on
+	// every rollout, so the restartedAt patch alone picks up the new layer.
+	rebuilderImagePushRef = "registry.paas-system.svc.cluster.local:5000/spinup-control-plane:latest"
 )
 
 // startSelfRebuilder spawns the poller goroutine. Returns immediately; the
@@ -266,6 +271,20 @@ func triggerBuildJob(ctx context.Context, k *kubeClient, log *slog.Logger) error
 				},
 				"spec": map[string]any{
 					"restartPolicy": "Never",
+					// Registry credentials for the in-cluster push host. Kaniko
+					// reads docker auth from /kaniko/.docker/config.json — same
+					// Secret tenant builds use (covers both push + pull hosts).
+					"volumes": []any{
+						map[string]any{
+							"name": "docker-config",
+							"secret": map[string]any{
+								"secretName": dockerCfgSecret,
+								"items": []any{
+									map[string]any{"key": ".dockerconfigjson", "path": "config.json"},
+								},
+							},
+						},
+					},
 					"containers": []any{
 						map[string]any{
 							"name":  "kaniko",
@@ -274,11 +293,15 @@ func triggerBuildJob(ctx context.Context, k *kubeClient, log *slog.Logger) error
 								"--context=git://github.com/" + selfRepoFullName + ".git#refs/heads/" + selfRepoBranch,
 								"--context-sub-path=control-plane",
 								"--dockerfile=Dockerfile",
-								"--destination=" + rebuilderImageRef,
+								"--destination=" + rebuilderImagePushRef,
+								"--insecure",
 								"--snapshot-mode=redo",
 								"--use-new-run",
 								"--cache=false",
 								"--verbosity=info",
+							},
+							"volumeMounts": []any{
+								map[string]any{"name": "docker-config", "mountPath": "/kaniko/.docker", "readOnly": true},
 							},
 							"resources": map[string]any{
 								"requests": map[string]string{"cpu": "500m", "memory": "1Gi"},
