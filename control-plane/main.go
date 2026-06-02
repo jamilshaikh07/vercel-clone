@@ -406,6 +406,19 @@ func (s *server) dispatch(ctx context.Context, event string, body []byte, env en
 				"repo", env.Repository.FullName, "installation_id", env.Installation.ID)
 			return nil
 		}
+		if res.Deduped {
+			// Non-production push of a commit SHA we already built (e.g. the
+			// "Open improvement PR" bot forking a branch off main's HEAD).
+			// Same image + preview URL, so we skip the redundant build.
+			s.log.Info("push for already-built commit — skipping duplicate build",
+				"project_id", res.ProjectID,
+				"slug", res.Slug,
+				"repo", env.Repository.FullName,
+				"ref", env.Ref,
+				"sha", env.After,
+			)
+			return nil
+		}
 		s.log.Info("deployment queued",
 			"deployment_id", res.DeploymentID,
 			"project_id", res.ProjectID,

@@ -157,6 +157,11 @@ type deploymentEnqueued struct {
 	ProjectID    string
 	DeploymentID string
 	Slug         string
+	// Deduped is true when we deliberately skipped creating a row because
+	// this project + commit_sha was already built (and the push was not to
+	// the production branch). ProjectID + Slug are still populated so the
+	// caller can log a meaningful message; DeploymentID is empty.
+	Deduped bool
 }
 
 func (s *store) EnqueueDeployment(
@@ -174,19 +179,53 @@ func (s *store) EnqueueDeployment(
 		triggeredBy = "webhook"
 	}
 	var (
-		projectID string
-		slug      string
+		projectID        string
+		slug             string
+		productionBranch string
 	)
 	err := s.pool.QueryRow(ctx, `
-		SELECT id::text, slug
+		SELECT id::text, slug, production_branch
 		  FROM projects
 		 WHERE installation_id = $1 AND repo_id = $2
-	`, installationID, repoID).Scan(&projectID, &slug)
+	`, installationID, repoID).Scan(&projectID, &slug, &productionBranch)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("lookup project: %w", err)
+	}
+
+	// Dedupe: a NON-production push whose commit SHA we've already built
+	// for this project is redundant — the image and the per-commit preview
+	// URL (<slug>-<sha>) are keyed by SHA, so rebuilding produces the exact
+	// same artifact. The classic case is the "Open improvement PR" bot
+	// forking a branch off the production HEAD: that ref-create push carries
+	// a SHA main already built. Production-branch pushes are NEVER deduped
+	// so the prod alias is always (re)promoted, even on a fast-forward or
+	// rebase merge that reuses an already-built SHA.
+	prodRef := ""
+	if productionBranch != "" {
+		prodRef = "refs/heads/" + productionBranch
+	}
+	// Only webhook-driven pushes are deduped. Manual 'Deploy now', install
+	// auto-deploy, and redeploys are explicit user intent and must always
+	// build, even if the SHA was seen before.
+	if triggeredBy == "webhook" && ref != prodRef {
+		var existing string
+		derr := s.pool.QueryRow(ctx, `
+			SELECT id::text
+			  FROM deployments
+			 WHERE project_id = $1::uuid AND commit_sha = $2
+			 LIMIT 1
+		`, projectID, commitSHA).Scan(&existing)
+		switch {
+		case derr == nil:
+			return &deploymentEnqueued{ProjectID: projectID, Slug: slug, Deduped: true}, nil
+		case errors.Is(derr, pgx.ErrNoRows):
+			// Not seen before — fall through and build it.
+		default:
+			return nil, fmt.Errorf("dedupe lookup: %w", derr)
+		}
 	}
 
 	var deploymentID string
