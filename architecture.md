@@ -77,6 +77,7 @@ flowchart TB
       pgcluster[("paas-db<br/>(CloudNativePG, 1 replica)")]
       builder["Kaniko Job<br/>(per build, ephemeral)"]
       rebuilderState[("ConfigMap:<br/>rebuilder-state")]
+      registry["registry (registry:2)<br/>control-plane + tenant images"]
     end
 
     subgraph tenantNS["namespace: paas-tenant-&lt;login&gt;"]
@@ -84,10 +85,12 @@ flowchart TB
       tenantDB[("tenant DB<br/>(role-isolated in paas-db)")]
     end
 
+    minioInt[("MinIO<br/>(in-cluster, registry blobs)")]
+    dr["Velero + etcd-snapshot CronJob<br/>(cluster DR)"]
     metricsServer["metrics-server<br/>(kube-system)"]
   end
 
-  reg[(ttl.sh registry<br/>24h TTL)]:::ext
+  truenas[(TrueNAS MinIO<br/>off-box backup store)]:::ext
   gh[GitHub]:::ext
 
   cf --> traefik
@@ -96,7 +99,9 @@ flowchart TB
 
   cp -- "spawn Job" --> builder
   builder -- "clone + build" --> gh
-  builder -- "push image" --> reg
+  builder -- "push image" --> registry
+  registry -- "blobs" --> minioInt
+  cp -- "self-build push ↻" --> registry
   cp -- "apply Deploy/Svc/IngressRoute" --> tenantPod
   cp -- "list pods.metrics.k8s.io" --> metricsServer
   cp -- "GET /metrics" --> traefik
@@ -104,7 +109,9 @@ flowchart TB
   cp -- "DDL + secrets" --> tenantDB
   cp -- "rebuild ↻" --> rebuilderState
   extdns -- "wildcard CNAME" --> cf
-  tenantPod -- "image pull" --> reg
+  tenantPod -- "image pull" --> registry
+  dr -- "nightly backups" --> truenas
+  pgcluster -- "PITR WAL + base" --> truenas
 
   classDef ext fill:#fef3c7,stroke:#d97706,color:#7c2d12
 ```
@@ -119,8 +126,10 @@ flowchart TB
 | **control-plane** | The brain — see L3 below | Single Go pod, ~5MB binary |
 | **paas-db (CNPG)** | Platform Postgres + tenant DBs | Single instance for MVP; HA next |
 | **Kaniko Job** | Rootless image build | Spawned per deployment, TTL-cleaned |
+| **registry (registry:2)** | In-cluster registry for control-plane + tenant images | Blobs in in-cluster MinIO; pushed over plain HTTP, pulled via `registry.spinup.in` (HTTPS) — **replaced ttl.sh** |
 | **rebuilder-state ConfigMap** | `last_sha` of the self-built control-plane image | Source-of-truth for `/v1/version` |
 | **tenant pod** | The user's app | Per-tenant namespace; PSA `restricted` |
+| **Velero + etcd-snapshot CronJob** | Cluster disaster-recovery | All k8s objects (Velero) + nightly Talos etcd snapshots → TrueNAS MinIO |
 | **metrics-server** | Pod CPU/memory | Standard kube-system install |
 
 ---
@@ -227,6 +236,7 @@ sequenceDiagram
   participant DB as paas-db
   participant K8s as K8s API
   participant K as Kaniko Job
+  participant Reg as registry (in-cluster)
   participant TR as Traefik
   participant Pod as tenant pod
 
@@ -241,7 +251,7 @@ sequenceDiagram
   CP->>K8s: create Kaniko Job + git-clone init-container
   K->>GH: clone repo @ commit SHA
   K->>K: build image from Dockerfile
-  K->>K8s: push to ttl.sh
+  K->>Reg: push image (in-cluster registry)
   K-->>CP: Job condition=Complete
   CP->>K8s: apply Deployment + Service + IngressRoute
   K8s->>Pod: schedule + start
@@ -300,6 +310,7 @@ Safety properties:
 | Public → cluster | Cloudflare Tunnel (no port-forward, no exposed IPs) |
 | GitHub → control-plane | HMAC-SHA256 over webhook body, `X-Hub-Signature-256` |
 | Browser → control-plane | OAuth (GitHub App) → HMAC-signed session cookie, `SameSite=Lax` |
+| Signup → platform | Invite-only allowlist (`ALLOWED_GH_LOGINS`): non-listed GitHub logins are blocked at the OAuth callback **before** any user row, session, or tenant namespace is created |
 | Control-plane RBAC | Namespaced Role for paas-system; ClusterRole for tenant resources only |
 | Tenant code → host | PSA `restricted` (no root, no host paths, drop ALL caps, RuntimeDefault seccomp) |
 | Tenant ↔ tenant | NetworkPolicy: deny-all + per-namespace allow |
@@ -331,6 +342,10 @@ Safety properties:
 | Light / dark theme + persisted preference | ✅ | `data-theme` on `<html>`, pre-paint bootstrap |
 | Version pill (commit SHA from rebuilder state CM) | ✅ | `version_handler.go` + dashboard `loadVersion()` |
 | **Auto-deploy on push to this repo's own main** | ✅ | `self_rebuild.go` — 90s poll → Kaniko → rollout |
+| Self-hosted in-cluster registry (replaced ttl.sh) | ✅ | `manifests/03`,`04` + `self_rebuild.go`; blobs in in-cluster MinIO, no external TTL |
+| Invite-only signup allowlist | ✅ | `auth.go::loginAllowed` + `ALLOWED_GH_LOGINS` |
+| Cluster DR: Velero + Talos etcd snapshots | ✅ | `manifests/09-velero.yaml`, `manifests/10-etcd-backup.yaml` → TrueNAS MinIO (scoped `os:etcd:backup` cred) |
+| Postgres object-store backups (CNPG) | ✅ | CNPG `barmanObjectStore` → TrueNAS MinIO |
 
 ---
 
@@ -338,7 +353,6 @@ Safety properties:
 
 | Item | Why deferred |
 |---|---|
-| Self-hosted registry (replace ttl.sh) | Working with MinIO + `registry:2` is straightforward; the 24h TTL hasn't bitten us yet |
 | Postgres HA (3-instance CNPG) | One replica is fine for MVP; we have CNPG primitives ready |
 | Framework auto-detect (next.js / vite / static) | All current tenants ship a Dockerfile |
 | gVisor / Kata for tenant pods | PSA `restricted` covers our current threat model |

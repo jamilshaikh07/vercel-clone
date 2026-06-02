@@ -1,0 +1,144 @@
+---
+# Talos etcd snapshots -> TrueNAS MinIO
+# =====================================================================
+# The last DR layer: a consistent point-in-time snapshot of the cluster's
+# etcd (the Kubernetes "brain"). Complements the other layers:
+#   * Velero  -> all k8s API objects                 (manifest 09)
+#   * CNPG    -> tenant/platform Postgres PITR        (manifests 05/08)
+#   * registry-> tenant + control-plane images        (rebuildable from git)
+# With an etcd snapshot we can bootstrap a brand-new Talos control plane
+# from scratch (talosctl bootstrap --recover-from=<snapshot>).
+#
+# Least privilege: the mounted talosconfig is a SCOPED credential with only
+# the `os:etcd:backup` role (NOT os:admin), minted via:
+#   talosctl --talosconfig <admin> config new etcd-backup.talosconfig \
+#            --roles os:etcd:backup --crt-ttl 87600h
+# and loaded out-of-band (not committed) as Secret talos-etcd-backup:
+#   kubectl -n etcd-backup create secret generic talos-etcd-backup \
+#           --from-file=talosconfig=./etcd-backup.talosconfig
+# S3 creds live in Secret etcd-backup-s3 (AWS_ACCESS_KEY_ID,
+# AWS_SECRET_ACCESS_KEY, S3_URL) — also out-of-band.
+#
+# RESTORE / DR (single control-plane recovery):
+#   mc cp tn/etcd-snapshots/etcd-<ts>.snapshot ./snap        # fetch
+#   talosctl bootstrap --recover-from=./snap -n <cp-ip>      # on a fresh CP
+# (See Talos "Disaster Recovery" docs for the full single/multi-node flow.)
+# =====================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: etcd-backup
+  labels:
+    app.kubernetes.io/part-of: paas
+    # baseline is enough: pods are nonroot with caps dropped, but the mc/
+    # talosctl images aren't built to satisfy the stricter `restricted`.
+    pod-security.kubernetes.io/enforce: baseline
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: etcd-snapshot
+  namespace: etcd-backup
+  labels:
+    app.kubernetes.io/component: etcd-backup
+    app.kubernetes.io/part-of: paas
+spec:
+  # 01:30 daily — ahead of the paas-db base backup (02:00) and Velero (02:30).
+  schedule: "30 1 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 600
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/component: etcd-backup
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          volumes:
+            - name: talos
+              secret:
+                secretName: talos-etcd-backup
+            - name: backup
+              emptyDir: {}
+            - name: tmp
+              emptyDir: {}
+          # Phase 1: snapshot etcd to a shared emptyDir using the scoped cred.
+          initContainers:
+            - name: snapshot
+              image: ghcr.io/siderolabs/talosctl:v1.12.6
+              env:
+                - name: HOME
+                  value: /tmp
+              args:
+                - --talosconfig=/talos/talosconfig
+                - --nodes=192.168.60.40
+                - --endpoints=192.168.60.40
+                - etcd
+                - snapshot
+                - /backup/etcd.snapshot
+              volumeMounts:
+                - name: talos
+                  mountPath: /talos
+                  readOnly: true
+                - name: backup
+                  mountPath: /backup
+                - name: tmp
+                  mountPath: /tmp
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests: {cpu: 50m, memory: 64Mi}
+                limits: {cpu: 500m, memory: 512Mi}
+          # Phase 2: upload to TrueNAS MinIO + prune snapshots older than 30d.
+          containers:
+            - name: upload
+              image: minio/mc:latest
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  TS=$(date -u +%Y%m%dT%H%M%SZ)
+                  mc alias set tn "$S3_URL" "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" >/dev/null
+                  mc cp /backup/etcd.snapshot "tn/etcd-snapshots/etcd-$TS.snapshot"
+                  echo "uploaded etcd-$TS.snapshot ($(stat -c %s /backup/etcd.snapshot) bytes)"
+                  mc rm --recursive --force --older-than 30d "tn/etcd-snapshots/" || true
+              env:
+                - name: HOME
+                  value: /tmp
+                - name: MC_CONFIG_DIR
+                  value: /tmp/.mc
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom: {secretKeyRef: {name: etcd-backup-s3, key: AWS_ACCESS_KEY_ID}}
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom: {secretKeyRef: {name: etcd-backup-s3, key: AWS_SECRET_ACCESS_KEY}}
+                - name: S3_URL
+                  valueFrom: {secretKeyRef: {name: etcd-backup-s3, key: S3_URL}}
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests: {cpu: 50m, memory: 64Mi}
+                limits: {cpu: 500m, memory: 256Mi}
