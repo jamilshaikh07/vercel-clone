@@ -343,14 +343,14 @@
 
     /* 'Visit' button: the most-asked-for action when looking at an app.
        Lives in the content-head so it's reachable from every sub-page
-       (Overview, Logs, Domains, etc.) not just Overview. Two-line:
-       primary 'Visit ↗' label on top, hostname underneath in a smaller
-       muted line so users can see WHICH url they're about to open. */
+       (Overview, Logs, Domains, etc.) not just Overview. Single-line
+       pill — the URL doesn't ride along, so the button is the same
+       narrow width for every service no matter how long the hostname. */
     .content-head .visit-btn {
       display: none;
       align-items: center;
       gap: 8px;
-      padding: 6px 12px;
+      padding: 5px 12px;
       border-radius: 6px;
       border: 1px solid var(--accent);
       background: rgba(99, 102, 241, 0.08);
@@ -358,7 +358,7 @@
       text-decoration: none;
       font-size: 12px;
       font-weight: 600;
-      line-height: 1.1;
+      line-height: 1.4;
       transition: background 120ms, transform 80ms;
     }
     .content-head .visit-btn:hover {
@@ -366,14 +366,6 @@
     }
     .content-head .visit-btn:active { transform: translateY(1px); }
     .content-head .visit-btn.shown { display: inline-flex; }
-    .content-head .visit-btn .visit-host {
-      display: block;
-      font-weight: 400;
-      font-size: 10px;
-      color: var(--text-dim);
-      font-family: ui-monospace, monospace;
-      margin-top: 2px;
-    }
 
     .pages {
       flex: 1; min-height: 0; position: relative;
@@ -1317,12 +1309,7 @@
       <header class="content-head">
         <span class="crumbs" id="crumbs">Loading…</span>
         <span class="spacer"></span>
-        <a id="visit-app" class="visit-btn" target="_blank" rel="noopener" title="Open this app in a new tab">
-          <span>
-            Visit ↗
-            <span class="visit-host" id="visit-app-host"></span>
-          </span>
-        </a>
+        <a id="visit-app" class="visit-btn" target="_blank" rel="noopener" title="Open this app in a new tab">Visit ↗</a>
         <span class="meta" id="meta">loading…</span>
       </header>
       <div class="pages">
@@ -2000,7 +1987,9 @@ function renderCrumbs() {
     const url = liveURLForProject(proj);
     if (url) {
       visitBtn.href = url;
-      $('visit-app-host').textContent = url.replace(/^https?:\/\//, '');
+      // Live URL exposed via the tooltip so the button itself stays a
+      // narrow fixed-width pill that doesn't reflow per service.
+      visitBtn.title = 'Open ' + url.replace(/^https?:\/\//, '') + ' in a new tab';
       visitBtn.classList.add('shown');
     }
   }
