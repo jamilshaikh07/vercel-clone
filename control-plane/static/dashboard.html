@@ -270,16 +270,17 @@
     }
     .nav-plus:hover { background: var(--accent-dim); border-color: var(--accent); border-style: solid; text-decoration: none; }
 
-    /* Apps list in the main sidebar — each row shows just the app name
-       and a single colour-coded run-state icon. The icon collapses
-       three orthogonal signals into one glance:
-         • green play  → app is running, serving traffic.
-         • yellow pause → app is paused (scaled to 0 intentionally,
-                          last build was clean).
-         • red stop    → app is down because the last build failed
-                          and no prior revision is serving traffic.
-       The old 'ready/failed' text pill was pulled out because the
-       icon already conveys the same information without the noise. */
+    /* Apps list in the main sidebar — each row shows the app name and
+       a single colour-coded run-state icon that answers one question:
+       is the app serving traffic right now?
+         • green play → yes, running.
+         • red stop  → no, scaled to zero (whether intentionally paused
+                       or because the latest build broke — the user can
+                       drill in to see which).
+       We deliberately collapsed an earlier three-way model (which
+       included an amber 'paused' state) down to two because the
+       paused-vs-failed nuance was visible in the per-project view
+       anyway and didn't justify a third colour in a 12×12 sidebar dot. */
     #main-sidebar-apps .nav-item { gap: 8px; }
     #main-sidebar-apps .nav-item .label {
       flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -292,7 +293,6 @@
     }
     #main-sidebar-apps .runstate svg { width: 12px; height: 12px; display: block; }
     #main-sidebar-apps .runstate .play,
-    #main-sidebar-apps .runstate .pause,
     #main-sidebar-apps .runstate .stop { display: none; }
 
     /* Running: green pulsing play — healthy and serving. */
@@ -301,12 +301,9 @@
       display: inline;
       animation: live-pulse 1.8s ease-in-out infinite;
     }
-    /* Paused: amber pause — intentionally stopped, no failure. */
-    #main-sidebar-apps .runstate[data-runstate="paused"] { color: var(--warn); }
-    #main-sidebar-apps .runstate[data-runstate="paused"] .pause { display: inline; }
-    /* Failed: red stop — latest build broke, nothing serving. */
-    #main-sidebar-apps .runstate[data-runstate="failed"] { color: var(--err); }
-    #main-sidebar-apps .runstate[data-runstate="failed"] .stop { display: inline; }
+    /* Stopped: red stop — scaled to zero for any reason. */
+    #main-sidebar-apps .runstate[data-runstate="stopped"] { color: var(--err); }
+    #main-sidebar-apps .runstate[data-runstate="stopped"] .stop { display: inline; }
     @keyframes live-pulse {
       0%, 100% { opacity: 0.45; }
       50%      { opacity: 1; }
@@ -1701,7 +1698,7 @@ let lastStreamKey = '';
 const sqlState = {};
 
 // Run-state cache: { [projectID]: scaleStateResponse } from
-// /v1/projects/{id}/status. The sidebar play/pause icon next to each
+// /v1/projects/{id}/status. The sidebar play/stop icon next to each
 // app is painted from this map; pollAllProjectStatuses fan-outs the
 // fetches on every refresh() tick so the icons stay accurate without
 // the user having to open each project. Empty on first paint —
@@ -1937,25 +1934,18 @@ async function pollAllProjectStatuses() {
   paintSidebarRunStates();
 }
 
-// computeRunState collapses (run-state cache, latest deployment status)
-// into one of four sidebar-icon states. It's the single source of truth
-// shared by the initial render and the post-poll repaint so the icon
-// never disagrees with itself across a refresh tick.
+// computeRunState reduces the run-state cache into one of three sidebar
+// icon states. Shared by the initial render and the post-poll repaint
+// so the icon can't disagree with itself across a refresh tick.
 //
 //   running → green pulsing play  (scaled > 0; live)
-//   failed  → red stop square     (scaled = 0 AND latest build failed)
-//   paused  → amber pause         (scaled = 0; latest build is fine,
-//                                  intentionally stopped by the user)
+//   stopped → red stop square     (scaled = 0; cause is shown inside the project)
 //   ''       → loading              (cache empty; CSS hides every glyph)
 function computeRunState(proj) {
   const rs = projectStatusMap[proj.id];
   if (!rs) return { state: '', title: 'Loading run-state…' };
   if (rs.running) return { state: 'running', title: 'App is serving traffic' };
-  const latest = (proj.deployments || [])[0];
-  if (latest && latest.status === 'failed') {
-    return { state: 'failed', title: 'Latest build failed — nothing serving' };
-  }
-  return { state: 'paused', title: 'App is paused (0 replicas)' };
+  return { state: 'stopped', title: 'App is stopped (0 replicas)' };
 }
 
 // paintSidebarRunStates is a cheap, idempotent walk over the sidebar
@@ -2139,10 +2129,6 @@ function renderSidebar() {
           <span class="runstate" data-runstate="${state}" title="${escapeHTML(title)}">
             <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
               <polygon class="play" points="4,2.5 13,8 4,13.5"/>
-              <g class="pause">
-                <rect x="3.5" y="3" width="3" height="10" rx="0.8"/>
-                <rect x="9.5" y="3" width="3" height="10" rx="0.8"/>
-              </g>
               <rect class="stop" x="3" y="3" width="10" height="10" rx="1"/>
             </svg>
           </span>
@@ -2723,7 +2709,7 @@ function downloadBuildLogs(deploymentID, commit, btn) {
 
 // loadAndRenderProjectStatus fills the "Status" stat tile on the
 // overview page and feeds the run-state cache so the sidebar
-// play/pause icon for this project stays in sync without waiting
+// play/stop icon for this project stays in sync without waiting
 // for the next fan-out poll. Failure path renders an inert tile
 // and leaves the cache untouched so prior state survives blips.
 async function loadAndRenderProjectStatus(projectID) {
@@ -2740,7 +2726,7 @@ async function loadAndRenderProjectStatus(projectID) {
     return;
   }
   paintStatusTile(projectID, state);
-  // Cache the result + repaint the sidebar so the play/pause icon
+  // Cache the result + repaint the sidebar so the play/stop icon
   // next to this app reflects the latest run-state without waiting
   // for the fan-out poller to come around again.
   projectStatusMap[projectID] = state;
