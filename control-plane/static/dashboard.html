@@ -1698,6 +1698,8 @@ function renderSidebar() {
         : 'Loading run-state…';
       return `
         <li><a class="nav-item ${isActive ? 'active' : ''}" href="#/p/${p.id}/${view}" data-project-id="${p.id}">
+          <span class="label" title="${escapeHTML(p.full_name)}">${escapeHTML(p.slug)}</span>
+          <span class="pill ${pillCls}">${pillTxt}</span>
           <span class="runstate" data-runstate="${runstate}" title="${runTitle}">
             <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
               <polygon class="play" points="4,2.5 13,8 4,13.5"/>
@@ -1707,8 +1709,6 @@ function renderSidebar() {
               </g>
             </svg>
           </span>
-          <span class="label" title="${escapeHTML(p.full_name)}">${escapeHTML(p.slug)}</span>
-          <span class="pill ${pillCls}">${pillTxt}</span>
         </a></li>`;
     }).join('');
   }
