@@ -271,16 +271,21 @@
     .nav-plus:hover { background: var(--accent-dim); border-color: var(--accent); border-style: solid; text-decoration: none; }
 
     /* Apps list in the main sidebar — each row shows the app name and
-       a single colour-coded run-state icon that answers one question:
-       is the app serving traffic right now?
-         • green play → yes, running.
-         • red stop  → no, scaled to zero (whether intentionally paused
-                       or because the latest build broke — the user can
-                       drill in to see which).
-       We deliberately collapsed an earlier three-way model (which
-       included an amber 'paused' state) down to two because the
-       paused-vs-failed nuance was visible in the per-project view
-       anyway and didn't justify a third colour in a 12×12 sidebar dot. */
+       a single colour-coded run-state icon. Three meaningful states,
+       chosen to surface the signal the user pushed code FOR ("did my
+       latest commit land?") above the secondary question of whether
+       the pod is awake:
+         • green play  → running and serving traffic.
+         • red exclam. → latest deployment FAILED. Takes priority over
+                         play/stop because a previous READY version may
+                         still be serving while the new push is broken,
+                         and that's exactly the situation the user
+                         needs to know about at a glance.
+         • red stop   → scaled to zero, no recent failure (intentional
+                         pause; cause visible inside the project view).
+       Failed used to be folded into 'stopped' — fine when nothing was
+       running, but misleading whenever an older READY deployment kept
+       traffic alive while the new build broke. */
     #main-sidebar-apps .nav-item { gap: 8px; }
     #main-sidebar-apps .nav-item .label {
       flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -293,7 +298,8 @@
     }
     #main-sidebar-apps .runstate svg { width: 12px; height: 12px; display: block; }
     #main-sidebar-apps .runstate .play,
-    #main-sidebar-apps .runstate .stop { display: none; }
+    #main-sidebar-apps .runstate .stop,
+    #main-sidebar-apps .runstate .fail { display: none; }
 
     /* Running: green pulsing play — healthy and serving. */
     #main-sidebar-apps .runstate[data-runstate="running"] { color: var(--ok); }
@@ -301,9 +307,17 @@
       display: inline;
       animation: live-pulse 1.8s ease-in-out infinite;
     }
-    /* Stopped: red stop — scaled to zero for any reason. */
+    /* Stopped: red stop — scaled to zero, no recent failure. */
     #main-sidebar-apps .runstate[data-runstate="stopped"] { color: var(--err); }
     #main-sidebar-apps .runstate[data-runstate="stopped"] .stop { display: inline; }
+    /* Failed: red exclamation with a slower attention pulse — deliberately
+       louder than the static red stop so a broken push reads as "this
+       needs your attention" rather than the calmer "it's just off". */
+    #main-sidebar-apps .runstate[data-runstate="failed"] { color: var(--err); }
+    #main-sidebar-apps .runstate[data-runstate="failed"] .fail {
+      display: inline;
+      animation: live-pulse 2.4s ease-in-out infinite;
+    }
     @keyframes live-pulse {
       0%, 100% { opacity: 0.45; }
       50%      { opacity: 1; }
@@ -1946,16 +1960,29 @@ async function pollAllProjectStatuses() {
   paintSidebarRunStates();
 }
 
-// computeRunState reduces the run-state cache into one of three sidebar
-// icon states. Shared by the initial render and the post-poll repaint
-// so the icon can't disagree with itself across a refresh tick.
+// computeRunState reduces (run-state cache, latest deployment status)
+// into one of four sidebar-icon states. Shared by the initial render
+// and the post-poll repaint so the icon can't disagree with itself
+// across a refresh tick.
 //
-//   running → green pulsing play  (scaled > 0; live)
-//   stopped → red stop square     (scaled = 0; cause is shown inside the project)
+//   running → green pulsing play  (scaled > 0 AND latest build is OK)
+//   failed  → red pulsing exclam. (latest deployment row is in 'failed'
+//                                   status — takes priority even when
+//                                   a previous READY revision is still
+//                                   serving traffic, because the user
+//                                   needs to know their last push broke)
+//   stopped → red stop square     (scaled = 0 AND no failed build)
 //   ''       → loading              (cache empty; CSS hides every glyph)
 function computeRunState(proj) {
   const rs = projectStatusMap[proj.id];
   if (!rs) return { state: '', title: 'Loading run-state…' };
+  // Failed wins over running/stopped: even if an older READY revision
+  // is still serving traffic, the user just pushed something that
+  // didn't land and that's the signal worth surfacing.
+  const latest = (proj.deployments || [])[0];
+  if (latest && latest.status === 'failed') {
+    return { state: 'failed', title: 'Latest deployment failed — click to inspect' };
+  }
   if (rs.running) return { state: 'running', title: 'App is serving traffic' };
   return { state: 'stopped', title: 'App is stopped (0 replicas)' };
 }
@@ -2142,6 +2169,13 @@ function renderSidebar() {
             <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
               <polygon class="play" points="4,2.5 13,8 4,13.5"/>
               <rect class="stop" x="3" y="3" width="10" height="10" rx="1"/>
+              <!-- Exclamation: vertical bar (top) + dot (bottom). Reads
+                   as '!' at 12px and inherits currentColor from the
+                   data-runstate="failed" rule above. -->
+              <g class="fail">
+                <rect x="7" y="2.5" width="2" height="7" rx="0.8"/>
+                <rect x="7" y="11" width="2" height="2" rx="0.8"/>
+              </g>
             </svg>
           </span>
         </a></li>`;
