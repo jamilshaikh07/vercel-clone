@@ -1234,6 +1234,50 @@
     }
     .insight-hint { margin-top: 4px; font-size: 11px; color: var(--text-faint); }
 
+    /* Seobility-style score card: a conic-gradient donut for the overall
+       score next to per-category sub-score bars. */
+    .insight-scorecard {
+      display: flex; gap: 28px; align-items: center; flex-wrap: wrap;
+      padding: 6px 6px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .insight-donut {
+      width: 132px; height: 132px; border-radius: 50%; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .insight-donut-hole {
+      width: 100px; height: 100px; border-radius: 50%;
+      background: var(--panel);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+    }
+    .insight-donut-num { font-size: 30px; font-weight: 700; line-height: 1; }
+    .insight-donut-num span { font-size: 15px; font-weight: 600; }
+    .insight-donut-lbl {
+      font-size: 9px; color: var(--text-faint); text-transform: uppercase;
+      letter-spacing: 0.07em; margin-top: 4px;
+    }
+    .insight-cats {
+      flex: 1; min-width: 260px;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px 28px;
+    }
+    .insight-cat-head {
+      display: flex; justify-content: space-between; align-items: baseline;
+      font-size: 12px; color: var(--text); margin-bottom: 6px;
+    }
+    .insight-cat-bar {
+      height: 6px; border-radius: 3px; background: var(--panel-3); overflow: hidden;
+    }
+    .insight-cat-bar > div { height: 100%; border-radius: 3px; transition: width 0.4s ease; }
+    .insight-cat-sub { font-size: 10px; color: var(--text-faint); margin-top: 5px; }
+    .insight-group { margin-top: 18px; }
+    .insight-group:first-child { margin-top: 0; }
+    .insight-group-title {
+      font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+      color: var(--text-faint); font-weight: 600;
+      margin: 0 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--border-2);
+    }
+
     /* === Insights → "Open improvement PR" result strip ====================
        Sits below the checks list inside the same panel. Three visual
        states keyed off the .ok / .warn / (default = pending) classes
@@ -4043,10 +4087,50 @@ function paintInsights(data) {
       </div>
       <div class="sub">checked ${data.checked_at ? new Date(data.checked_at).toLocaleTimeString() : 'just now'}</div>
     </div>`;
-  $('insights-body').innerHTML = `
-    <div class="insight-list">
-      ${(data.checks || []).map(renderInsightCheck).join('')}
+  // Per-category sub-scores (Seobility-style): a donut for the headline
+  // number + a bar per category. Same red/amber/green scale as the donut.
+  const catColour = (s) => s >= 90 ? 'var(--ok)' : s >= 50 ? '#f1c40f' : 'var(--err)';
+  const cats = data.categories || [];
+  const checks = data.checks || [];
+  const donutCol = catColour(data.score);
+  const scorecard = `
+    <div class="insight-scorecard">
+      <div class="insight-donut" style="background:conic-gradient(${donutCol} ${(data.score || 0) * 3.6}deg, var(--panel-3) 0deg);">
+        <div class="insight-donut-hole">
+          <div class="insight-donut-num" style="color:${donutCol};">${data.score || 0}<span>%</span></div>
+          <div class="insight-donut-lbl">On-page score</div>
+        </div>
+      </div>
+      <div class="insight-cats">
+        ${cats.map(c => `
+          <div class="insight-cat">
+            <div class="insight-cat-head">
+              <span>${escapeHTML(c.label)}</span>
+              <span style="color:${catColour(c.score)};font-weight:600;">${c.score}%</span>
+            </div>
+            <div class="insight-cat-bar"><div style="width:${c.score}%;background:${catColour(c.score)};"></div></div>
+            <div class="insight-cat-sub">${c.pass}/${c.total} checks passed</div>
+          </div>`).join('')}
+      </div>
     </div>`;
+  // Group the detailed checks under their category headings, in the same
+  // order the bars use. Anything uncategorised falls into "Other".
+  const order = cats.map(c => c.id);
+  const groups = cats
+    .map(c => ({ label: c.label, rows: checks.filter(ch => ch.category === c.id) }))
+    .filter(g => g.rows.length);
+  const leftover = checks.filter(ch => !order.includes(ch.category));
+  if (leftover.length) groups.push({ label: 'Other', rows: leftover });
+  const listHTML = groups.map(g => `
+    <div class="insight-group">
+      <div class="insight-group-title">${escapeHTML(g.label)}</div>
+      <div class="insight-list">${g.rows.map(renderInsightCheck).join('')}</div>
+    </div>`).join('');
+  // Fallback to a flat list if the backend didn't send categories (older
+  // report shape) so the page never renders empty.
+  $('insights-body').innerHTML = cats.length
+    ? scorecard + listHTML
+    : `<div class="insight-list">${checks.map(renderInsightCheck).join('')}</div>`;
   // Enable the "Open improvement PR" button only once we have a real
   // report to act on. A perfect score (100) still lets the user click —
   // the backend will return "nothing to do" gracefully and we surface

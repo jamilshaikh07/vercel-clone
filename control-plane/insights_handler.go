@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -35,23 +36,35 @@ const (
 )
 
 type insightCheck struct {
-	ID     string `json:"id"`
-	Label  string `json:"label"`
-	Status string `json:"status"` // pass | warn | fail
-	Value  string `json:"value,omitempty"`
-	Hint   string `json:"hint,omitempty"`
-	Weight int    `json:"weight"` // contribution to overall score, 1..5
+	ID       string `json:"id"`
+	Category string `json:"category"` // meta | structure | server | quality | links
+	Label    string `json:"label"`
+	Status   string `json:"status"` // pass | warn | fail
+	Value    string `json:"value,omitempty"`
+	Hint     string `json:"hint,omitempty"`
+	Weight   int    `json:"weight"` // contribution to overall score, 1..5
+}
+
+// categoryScore is a per-group roll-up (Meta data, Server, …) so the UI
+// can render Seobility-style sub-score bars next to the headline number.
+type categoryScore struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Score int    `json:"score"` // 0..100, weighted within the group
+	Pass  int    `json:"pass"`  // checks that passed outright
+	Total int    `json:"total"` // checks in the group
 }
 
 type insightReport struct {
-	URL          string         `json:"url"`
-	CheckedAt    time.Time      `json:"checked_at"`
-	Status       int            `json:"status"`
-	FetchedMs    int64          `json:"fetched_ms"`
-	PageSizeKB   int            `json:"page_size_kb"`
-	Score        int            `json:"score"`           // 0..100
-	Checks       []insightCheck `json:"checks"`
-	FetchErr     string         `json:"fetch_err,omitempty"`
+	URL        string          `json:"url"`
+	CheckedAt  time.Time       `json:"checked_at"`
+	Status     int             `json:"status"`
+	FetchedMs  int64           `json:"fetched_ms"`
+	PageSizeKB int             `json:"page_size_kb"`
+	Score      int             `json:"score"` // 0..100
+	Categories []categoryScore `json:"categories"`
+	Checks     []insightCheck  `json:"checks"`
+	FetchErr   string          `json:"fetch_err,omitempty"`
 }
 
 // handleProjectInsights generates a report on demand. We always re-run
@@ -127,31 +140,115 @@ func runInsightChecks(parent context.Context, target string) *insightReport {
 	rpt.PageSizeKB = (len(body) + 1023) / 1024
 	html := string(body)
 
-	// --- Run all checks. Each appendCheck() argument set is a single
-	//     focussed assertion, so adding a new SEO signal stays a 3-line
-	//     change rather than a sprawl. ---
-	rpt.Checks = append(rpt.Checks, checkStatus(resp.StatusCode))
-	rpt.Checks = append(rpt.Checks, checkContentType(resp.Header.Get("Content-Type")))
-	rpt.Checks = append(rpt.Checks, checkHTTPS(target))
-	rpt.Checks = append(rpt.Checks, checkTitle(html))
-	rpt.Checks = append(rpt.Checks, checkMeta(html, "description", "Meta description",
+	// --- Run all checks. add() stamps each check with its category so the
+	//     report can roll up Seobility-style per-group sub-scores. Adding a
+	//     new SEO signal stays a one-line change at the right group. ---
+	add := func(cat string, c insightCheck) {
+		c.Category = cat
+		rpt.Checks = append(rpt.Checks, c)
+	}
+
+	// Server / configuration
+	add(catServer, checkStatus(resp.StatusCode))
+	add(catServer, checkHTTPS(target))
+	add(catServer, checkContentType(resp.Header.Get("Content-Type")))
+	add(catServer, checkResponseTime(rpt.FetchedMs))
+
+	// Meta data
+	add(catMeta, checkTitle(html))
+	add(catMeta, checkMeta(html, "description", "Meta description",
 		"50-160 chars summarising the page — shown in Google results."))
-	rpt.Checks = append(rpt.Checks, checkViewport(html))
-	rpt.Checks = append(rpt.Checks, checkCanonical(html, target))
-	rpt.Checks = append(rpt.Checks, checkOG(html, "og:title", "OpenGraph title"))
-	rpt.Checks = append(rpt.Checks, checkOG(html, "og:description", "OpenGraph description"))
-	rpt.Checks = append(rpt.Checks, checkOG(html, "og:image", "OpenGraph image"))
-	rpt.Checks = append(rpt.Checks, checkH1(html))
-	rpt.Checks = append(rpt.Checks, checkLang(html))
-	rpt.Checks = append(rpt.Checks, checkFavicon(html))
-	rpt.Checks = append(rpt.Checks, checkPageSize(rpt.PageSizeKB))
-	rpt.Checks = append(rpt.Checks, probePath(ctx, client, target, "/robots.txt", "robots.txt",
+	add(catMeta, checkCanonical(html, target))
+	add(catMeta, checkCharset(html, resp.Header.Get("Content-Type")))
+	add(catMeta, checkLang(html))
+	add(catMeta, checkOG(html, "og:title", "OpenGraph title"))
+	add(catMeta, checkOG(html, "og:description", "OpenGraph description"))
+	add(catMeta, checkOG(html, "og:image", "OpenGraph image"))
+	add(catMeta, checkFavicon(html))
+
+	// Page structure
+	add(catStructure, checkH1(html))
+	add(catStructure, checkHeadings(html))
+	add(catStructure, checkWordCount(html))
+
+	// Page quality
+	add(catQuality, checkViewport(html))
+	add(catQuality, checkImagesAlt(html))
+	add(catQuality, checkPageSize(rpt.PageSizeKB))
+	add(catQuality, probePath(ctx, client, target, "/robots.txt", "robots.txt",
 		"Tells search engines which paths to crawl."))
-	rpt.Checks = append(rpt.Checks, probePath(ctx, client, target, "/sitemap.xml", "sitemap.xml",
+	add(catQuality, probePath(ctx, client, target, "/sitemap.xml", "sitemap.xml",
 		"Lists pages for search engines to index — recommended for multi-page sites."))
 
+	// Links
+	add(catLinks, checkLinks(html, target))
+
 	rpt.Score = computeScore(rpt.Checks)
+	rpt.Categories = computeCategories(rpt.Checks)
 	return rpt
+}
+
+// Category IDs — shared by the checks above and computeCategories so a
+// typo can't silently drop a check into an orphan group.
+const (
+	catMeta      = "meta"
+	catStructure = "structure"
+	catServer    = "server"
+	catQuality   = "quality"
+	catLinks     = "links"
+)
+
+// categoryMeta is the fixed display order + human labels for the groups,
+// mirroring the layout of mainstream SEO checkers (Meta data, Page
+// structure, Server, Page quality, Links).
+var categoryMeta = []struct{ id, label string }{
+	{catMeta, "Meta data"},
+	{catStructure, "Page structure"},
+	{catServer, "Server"},
+	{catQuality, "Page quality"},
+	{catLinks, "Links"},
+}
+
+// computeCategories rolls the flat check list up into per-group scores
+// using the same weighted pass/warn/fail formula as computeScore, then
+// returns them in categoryMeta order (skipping any group with no checks).
+func computeCategories(checks []insightCheck) []categoryScore {
+	type acc struct {
+		got, total float64
+		pass, n    int
+	}
+	m := map[string]*acc{}
+	for _, c := range checks {
+		a := m[c.Category]
+		if a == nil {
+			a = &acc{}
+			m[c.Category] = a
+		}
+		a.total += float64(c.Weight)
+		a.n++
+		switch c.Status {
+		case "pass":
+			a.got += float64(c.Weight)
+			a.pass++
+		case "warn":
+			a.got += float64(c.Weight) * 0.5
+		}
+	}
+	out := make([]categoryScore, 0, len(categoryMeta))
+	for _, cm := range categoryMeta {
+		a := m[cm.id]
+		if a == nil || a.n == 0 {
+			continue
+		}
+		score := 0
+		if a.total > 0 {
+			score = int((a.got / a.total) * 100)
+		}
+		out = append(out, categoryScore{
+			ID: cm.id, Label: cm.label, Score: score, Pass: a.pass, Total: a.n,
+		})
+	}
+	return out
 }
 
 // computeScore sums weight × (1.0 for pass, 0.5 for warn, 0.0 for fail)
@@ -429,4 +526,151 @@ var tagRE = regexp.MustCompile(`<[^>]+>`)
 func stripTags(s string) string {
 	out := tagRE.ReplaceAllString(s, "")
 	return strings.TrimSpace(out)
+}
+
+// scriptStyleRE strips <script>/<style> blocks so they don't pollute the
+// visible word-count estimate.
+var scriptStyleRE = regexp.MustCompile(`(?is)<(script|style)\b[^>]*>.*?</(script|style)>`)
+
+// --- Additional checks ----------------------------------------------------
+
+func checkResponseTime(ms int64) insightCheck {
+	c := insightCheck{ID: "response_time", Category: catServer, Label: "Response time", Weight: 2,
+		Value: fmt.Sprintf("%d ms", ms)}
+	switch {
+	case ms <= 0:
+		c.Status = "warn"
+		c.Hint = "could not measure response time"
+	case ms > 1500:
+		c.Status = "warn"
+		c.Hint = "slow first byte (>1.5s) — page speed is a Google ranking signal"
+	default:
+		c.Status = "pass"
+	}
+	return c
+}
+
+var charsetMetaRE = regexp.MustCompile(`(?is)<meta[^>]+charset\s*=\s*["']?\s*([\w-]+)`)
+
+func checkCharset(html, contentType string) insightCheck {
+	c := insightCheck{ID: "charset", Category: catMeta, Label: "Charset", Weight: 1}
+	if m := charsetMetaRE.FindStringSubmatch(html); m != nil {
+		c.Status = "pass"
+		c.Value = m[1]
+	} else if strings.Contains(strings.ToLower(contentType), "charset=") {
+		c.Status = "pass"
+		c.Value = contentType
+	} else {
+		c.Status = "warn"
+		c.Hint = `declare <meta charset="utf-8"> so browsers decode text correctly`
+	}
+	return c
+}
+
+var (
+	h2RE = regexp.MustCompile(`(?is)<h2\b[^>]*>`)
+	h3RE = regexp.MustCompile(`(?is)<h3\b[^>]*>`)
+)
+
+func checkHeadings(html string) insightCheck {
+	c := insightCheck{ID: "headings", Category: catStructure, Label: "Subheading structure", Weight: 2}
+	n2 := len(h2RE.FindAllString(html, -1))
+	n3 := len(h3RE.FindAllString(html, -1))
+	if n2 == 0 && n3 == 0 {
+		c.Status = "warn"
+		c.Hint = "no <h2>/<h3> — subheadings help readers + crawlers parse the page"
+	} else {
+		c.Status = "pass"
+		c.Value = fmt.Sprintf("%d × h2, %d × h3", n2, n3)
+	}
+	return c
+}
+
+func checkWordCount(html string) insightCheck {
+	c := insightCheck{ID: "word_count", Category: catStructure, Label: "Text content", Weight: 2}
+	text := stripTags(scriptStyleRE.ReplaceAllString(html, " "))
+	words := len(strings.Fields(text))
+	c.Value = fmt.Sprintf("%d words", words)
+	switch {
+	case words < 50:
+		c.Status = "fail"
+		c.Hint = "very little text — search engines favour substantive content"
+	case words < 250:
+		c.Status = "warn"
+		c.Hint = "thin content (<250 words) — add more descriptive copy"
+	default:
+		c.Status = "pass"
+	}
+	return c
+}
+
+var (
+	imgTagRE = regexp.MustCompile(`(?is)<img\b[^>]*>`)
+	imgAltRE = regexp.MustCompile(`(?is)\balt\s*=\s*["'][^"']*["']`)
+)
+
+func checkImagesAlt(html string) insightCheck {
+	c := insightCheck{ID: "img_alt", Category: catQuality, Label: "Image alt text", Weight: 2}
+	imgs := imgTagRE.FindAllString(html, -1)
+	if len(imgs) == 0 {
+		c.Status = "pass"
+		c.Value = "no images"
+		return c
+	}
+	withAlt := 0
+	for _, tag := range imgs {
+		if imgAltRE.MatchString(tag) {
+			withAlt++
+		}
+	}
+	c.Value = fmt.Sprintf("%d/%d have alt", withAlt, len(imgs))
+	switch {
+	case withAlt == len(imgs):
+		c.Status = "pass"
+	case withAlt == 0:
+		c.Status = "fail"
+		c.Hint = "no <img> has alt text — hurts accessibility + image search"
+	default:
+		c.Status = "warn"
+		c.Hint = "some images are missing alt text"
+	}
+	return c
+}
+
+var anchorHrefRE = regexp.MustCompile(`(?is)<a\b[^>]*\bhref\s*=\s*["']([^"']+)["']`)
+
+func checkLinks(html, target string) insightCheck {
+	c := insightCheck{ID: "links", Category: catLinks, Label: "Links", Weight: 2}
+	host := ""
+	if u, err := url.Parse(target); err == nil {
+		host = u.Host
+	}
+	var internal, external int
+	for _, m := range anchorHrefRE.FindAllStringSubmatch(html, -1) {
+		href := strings.TrimSpace(m[1])
+		switch {
+		case href == "",
+			strings.HasPrefix(href, "#"),
+			strings.HasPrefix(href, "mailto:"),
+			strings.HasPrefix(href, "tel:"),
+			strings.HasPrefix(href, "javascript:"):
+			continue
+		case strings.HasPrefix(href, "http://"), strings.HasPrefix(href, "https://"):
+			if u, err := url.Parse(href); err == nil && u.Host == host {
+				internal++
+			} else {
+				external++
+			}
+		default:
+			internal++ // relative path → same site
+		}
+	}
+	c.Value = fmt.Sprintf("%d internal, %d external", internal, external)
+	if internal+external == 0 {
+		c.Status = "warn"
+		c.Hint = "no links found — internal links help crawlers discover your pages"
+	} else {
+		c.Status = "pass"
+	}
+	return c
 }
