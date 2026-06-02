@@ -1,0 +1,87 @@
+---
+# paas-db off-box backups to TrueNAS (10.20.0.45)
+# =====================================================================
+# This file pairs with the `spec.backup.barmanObjectStore` block added to
+# manifests/05-paas-db.yaml. Together they give the control-plane database
+# point-in-time recovery (PITR): continuous WAL archiving + a nightly base
+# backup, both shipped to an S3 bucket on the TrueNAS box.
+#
+# ---------------------------------------------------------------------
+# PREREQUISITE — the S3 credentials Secret (created imperatively, NEVER
+# committed to git, same convention as registry-s3 / registry-dockercfg):
+#
+#   kubectl -n paas-system create secret generic paas-db-backup-s3 \
+#     --from-literal=ACCESS_KEY_ID='<minio access key from TrueNAS>' \
+#     --from-literal=ACCESS_SECRET_KEY='<minio secret key from TrueNAS>'
+#
+# (Cascade can run this for you once you paste the keys — it's not stored
+#  in the repo.)
+#
+# ---------------------------------------------------------------------
+# APPLY ORDER:
+#   1. Create the bucket `paas-db-backups` + access keys on TrueNAS MinIO.
+#   2. Create the paas-db-backup-s3 Secret (above).
+#   3. kubectl apply -f manifests/05-paas-db.yaml   (adds barmanObjectStore)
+#   4. kubectl apply -f manifests/08-paas-db-backup.yaml  (this file)
+#   5. Trigger a first base backup (the on-demand Backup at the bottom, or
+#      `kubectl cnpg backup paas-db -n paas-system`).
+#
+# ---------------------------------------------------------------------
+# RESTORE / DISASTER RECOVERY (point-in-time):
+# CNPG restores by BOOTSTRAPPING A NEW cluster from the object store —
+# you never restore in-place. To recover, apply a Cluster like below
+# (e.g. as paas-db-restore), let it come up, verify, then repoint the
+# control-plane DSN / rename. For PITR add recoveryTarget.targetTime.
+#
+#   apiVersion: postgresql.cnpg.io/v1
+#   kind: Cluster
+#   metadata: { name: paas-db-restore, namespace: paas-system }
+#   spec:
+#     instances: 1
+#     storage: { size: 5Gi, storageClass: local-path }
+#     bootstrap:
+#       recovery:
+#         source: paas-db-backup
+#         # recoveryTarget: { targetTime: "2026-06-02 21:30:00+00" }  # PITR
+#     externalClusters:
+#       - name: paas-db-backup
+#         barmanObjectStore:
+#           destinationPath: "s3://paas-db-backups/"
+#           endpointURL: "http://10.20.0.45:9900"
+#           serverName: paas-db          # matches the folder under the bucket
+#           s3Credentials:
+#             accessKeyId:     { name: paas-db-backup-s3, key: ACCESS_KEY_ID }
+#             secretAccessKey: { name: paas-db-backup-s3, key: ACCESS_SECRET_KEY }
+#
+# Schedule a real restore DRILL periodically — confidence comes from
+# having actually recovered, not from green dashboards.
+# =====================================================================
+
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: paas-db-nightly
+  namespace: paas-system
+spec:
+  # CNPG cron is a SIX-field expression (leading seconds field).
+  # "0 0 2 * * *" => 02:00:00 every day.
+  schedule: "0 0 2 * * *"
+  # Keep the backup objects even if this ScheduledBackup is later deleted.
+  backupOwnerReference: self
+  cluster:
+    name: paas-db
+  # immediate: take one as soon as this is applied so we don't wait until
+  # 2am to learn the S3 wiring is wrong.
+  immediate: true
+---
+# One-off base backup you can re-apply by hand whenever you want a fresh
+# full snapshot (e.g. right before a risky migration). Re-applying deletes
+# and recreates it because the name is fixed.
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  name: paas-db-manual-001
+  namespace: paas-system
+spec:
+  cluster:
+    name: paas-db

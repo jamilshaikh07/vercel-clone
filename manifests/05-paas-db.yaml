@@ -45,3 +45,34 @@ spec:
 
   monitoring:
     enablePodMonitor: false
+
+  # --- Off-box backups to TrueNAS (10.20.0.45) -------------------------
+  # Continuous WAL archiving + scheduled base backups give us point-in-time
+  # recovery. The target is an S3 bucket served by the MinIO app on the
+  # TrueNAS host — a SEPARATE machine from this cluster, so a node/disk loss
+  # here doesn't take the backups with it.
+  #
+  # Credentials live in the Secret 'paas-db-backup-s3' (NOT committed — see
+  # manifests/08-paas-db-backup.yaml header for how to create it).
+  #
+  # Once this is applied, CNPG sets archive_command automatically and starts
+  # streaming WAL; the ScheduledBackup in manifest 08 takes the base backups.
+  backup:
+    retentionPolicy: "30d"
+    barmanObjectStore:
+      destinationPath: "s3://paas-db-backups/"
+      # MinIO custom app on the TrueNAS host (10.20.0.45). S3 API is mapped
+      # to host port 9900 (console on 9901). Plain HTTP is fine over the LAN.
+      endpointURL: "http://10.20.0.45:9900"
+      s3Credentials:
+        accessKeyId:
+          name: paas-db-backup-s3
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: paas-db-backup-s3
+          key: ACCESS_SECRET_KEY
+      wal:
+        compression: gzip
+        maxParallel: 2
+      data:
+        compression: gzip
