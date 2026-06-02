@@ -42,10 +42,22 @@ type manifest struct {
 	URL            string            `json:"url"`
 	HookAttributes map[string]any    `json:"hook_attributes"`
 	RedirectURL    string            `json:"redirect_url"`
-	Description    string            `json:"description,omitempty"`
-	Public         bool              `json:"public"`
-	DefaultEvents  []string          `json:"default_events"`
-	DefaultPerms   map[string]string `json:"default_permissions"`
+	// CallbackURLs is the OAuth User-authorization-callback list. Without
+	// this set at manifest time, the App is created with NO OAuth callback
+	// configured, and the first 'Sign in with GitHub' from the dashboard
+	// fails with: 'The redirect_uri is not associated with this application.'
+	// Setting it here means the App is fully wired the moment GitHub finishes
+	// the manifest exchange — no post-creation form to fill in.
+	CallbackURLs []string `json:"callback_urls,omitempty"`
+	// RequestOAuthOnInstall triggers the OAuth consent flow right after a
+	// repo owner installs the App, so the very first session is established
+	// without an extra trip back to /login.
+	RequestOAuthOnInstall bool              `json:"request_oauth_on_install,omitempty"`
+	SetupURL              string            `json:"setup_url,omitempty"`
+	Description           string            `json:"description,omitempty"`
+	Public                bool              `json:"public"`
+	DefaultEvents         []string          `json:"default_events"`
+	DefaultPerms          map[string]string `json:"default_permissions"`
 }
 
 type conversion struct {
@@ -65,6 +77,7 @@ func main() {
 		appName       = flag.String("name", "spinup", "GitHub App name (must be globally unique)")
 		homepageURL   = flag.String("homepage", "https://spinup.in", "App homepage URL")
 		webhookURL    = flag.String("webhook-url", "https://spinup.in/webhooks/github", "Webhook receiver URL")
+		callbackURL   = flag.String("callback-url", "https://spinup.in/auth/callback", "OAuth user-authorization callback URL on the dashboard (matches s.auth.baseURL+\"/auth/callback\" in control-plane/auth.go)")
 		webhookSecret = flag.String("webhook-secret", "", "Webhook HMAC secret (will be passed to GitHub so it matches the cluster Secret). If empty, attempts to read from kubectl.")
 		outDir        = flag.String("out", "./out", "Directory to write credentials to")
 		listenAddr    = flag.String("listen", "127.0.0.1:0", "Local listen address (random port if :0)")
@@ -96,22 +109,25 @@ func main() {
 	redirect := localBase + "/callback"
 
 	m := manifest{
-		Name:           *appName,
-		URL:            *homepageURL,
-		HookAttributes: map[string]any{"url": *webhookURL, "active": true},
-		RedirectURL:    redirect,
-		Description:    "Self-hosted PaaS — builds and deploys your apps to a Talos K8s cluster on every push.",
-		Public:         false,
+		Name:                  *appName,
+		URL:                   *homepageURL,
+		HookAttributes:        map[string]any{"url": *webhookURL, "active": true},
+		RedirectURL:           redirect,
+		CallbackURLs:          []string{*callbackURL},
+		RequestOAuthOnInstall: true,
+		SetupURL:              *homepageURL,
+		Description:           "Spinup — push to deploy. Builds your repo on every push to its default branch and serves it at a per-commit preview URL plus a production alias, with an own Postgres database per project.",
+		Public:                false,
 		// installation + installation_repositories are auto-delivered to all
 		// Apps; they cannot appear in default_events.
 		DefaultEvents: []string{"push", "pull_request"},
 		DefaultPerms: map[string]string{
-			"contents":         "read",
-			"metadata":         "read",
-			"pull_requests":    "read",
-			"statuses":         "write",
-			"checks":           "write",
-			"deployments":      "write",
+			"contents":      "read",
+			"metadata":      "read",
+			"pull_requests": "read",
+			"statuses":      "write",
+			"checks":        "write",
+			"deployments":   "write",
 		},
 	}
 	manifestJSON, err := json.Marshal(m)
