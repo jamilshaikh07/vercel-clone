@@ -2269,12 +2269,29 @@ function renderOverviewHeader(proj) {
 }
 
 // ----- Inline build-log streamer on the Overview page -------------------
-// Separate from the Logs page's currentES so the two can coexist and so
-// navigation between them is clean. Idempotent: if the latest deployment
-// hasn't changed since the last paint, we keep the existing stream rather
-// than wiping the user's on-screen tail on the 10s refresh tick.
+// Two render paths share this panel:
+//
+//   * In-flight builds (queued / building / deploying) open an SSE stream
+//     so the user sees Kaniko output live, exactly like the dedicated
+//     Logs page.
+//   * Terminal builds (ready / failed) paint a static summary card. We
+//     deliberately DON'T stream those because the Kaniko Job is reaped
+//     ~1h after completion — opening an SSE on a gone pod returns an
+//     immediate 'end' event, which used to trigger refresh() → re-render
+//     → re-subscribe → immediate 'end' → ... ('the shaking'). The
+//     summary card is also a much more honest UI: 'this build succeeded
+//     2 days ago' is what the user actually wants to know.
+//
+// overviewES is separate from the Logs page's currentES so the two
+// views coexist and navigation between them is clean.
 let overviewES = null;
 let overviewStreamKey = null;
+// overviewStreamDone remembers deployment ids whose stream has reached
+// 'end' in this session. Without it, the moment a build finishes we'd
+// fall back into the loop above on the very next refresh tick (the
+// status field hasn't propagated yet but the stream is already done).
+const overviewStreamDone = new Set();
+
 function startOverviewBuildLog(proj, latest) {
   const panel = $('overview-latest-build');
   if (!panel) return;
@@ -2284,6 +2301,7 @@ function startOverviewBuildLog(proj, latest) {
     return;
   }
   panel.style.display = '';
+
   const liveDep = liveDeploymentForProject(proj);
   const isLive = !!(liveDep && liveDep.id === latest.id && latest.status === 'ready');
   const statusEl = $('ov-build-status');
@@ -2301,6 +2319,16 @@ function startOverviewBuildLog(proj, latest) {
                        : latest.status === 'ready' ? '✓ Ready'
                        : latest.status;
 
+  const inFlight = (latest.status === 'queued' || latest.status === 'building' || latest.status === 'deploying');
+  if (!inFlight || overviewStreamDone.has(latest.id)) {
+    // Terminal state — paint summary, don't stream. This is the
+    // Render-style 'if its working then cool, if not then failed'
+    // path the user asked for.
+    closeOverviewStream();
+    paintOverviewBuildSummary(proj, latest, isLive);
+    return;
+  }
+
   // Idempotency guard: skip re-subscribing when we're already tailing
   // this deployment. Prevents the on-screen log from flashing every
   // refresh tick.
@@ -2315,14 +2343,57 @@ function startOverviewBuildLog(proj, latest) {
     const d = JSON.parse(ev.data);
     appendOverviewLine(d.c, stripAnsi(d.m));
   });
-  es.addEventListener('end', (ev) => {
-    const d = JSON.parse(ev.data);
-    appendOverviewLine('system', '[build] ' + (d.status || d.reason || 'ended'));
+  es.addEventListener('end', () => {
+    // Mark this deployment's stream as consumed so the next refresh
+    // tick falls into the summary-card branch instead of re-opening
+    // the SSE (which would immediately end again — 'shaking').
+    overviewStreamDone.add(latest.id);
     closeOverviewStream();
-    refresh(); // build finished → re-fetch project list so badges update
+    refresh(); // re-fetch so status badges everywhere update
   });
-  es.onerror = () => { closeOverviewStream(); };
+  es.onerror = () => {
+    // Treat connection errors as terminal for this deployment so we
+    // don't reconnect on the next tick. The summary card will appear
+    // once the parent refresh repaints.
+    overviewStreamDone.add(latest.id);
+    closeOverviewStream();
+  };
 }
+
+// paintOverviewBuildSummary renders a static 'build succeeded / failed'
+// card in the Latest-build panel. Used for any terminal-state deploy so
+// the panel stops trying to tail a pod that was reaped hours or days
+// ago. Keeps the panel visually stable across refresh ticks.
+function paintOverviewBuildSummary(proj, d, isLive) {
+  const body = $('ov-build-body');
+  if (!body) return;
+  const failed = d.status === 'failed';
+  const icon = failed ? '✗' : '✓';
+  const head = failed ? 'Build failed'
+              : isLive ? 'Build succeeded · serving production'
+              : 'Build succeeded';
+  const iconColor = failed ? 'var(--err)' : 'var(--ok)';
+  body.innerHTML = `
+    <div style="display:flex;align-items:center;gap:14px;padding:18px 10px;">
+      <div style="font-size:24px;font-weight:700;color:${iconColor};line-height:1;width:28px;text-align:center;">${icon}</div>
+      <div style="flex:1;">
+        <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHTML(head)}</div>
+        <div style="font-size:11px;color:var(--text-dim);margin-top:3px;font-family:ui-monospace,monospace;">
+          ${escapeHTML(d.commit_sha.slice(0, 8))} · ${escapeHTML(d.ref.replace('refs/heads/', ''))} · ${timeAgo(d.created_at)}
+        </div>
+      </div>
+      <a href="#/p/${proj.id}/logs" data-deployment-id="${d.id}"
+         style="font-size:11px;color:var(--accent);text-decoration:none;font-weight:500;">
+        View full logs →
+      </a>
+    </div>`;
+  // Wire the deep-link so it opens THIS deployment's logs (not the
+  // current production tail) — matches the row-click semantics on
+  // the deployments list below.
+  const link = body.querySelector('a[data-deployment-id]');
+  if (link) link.addEventListener('click', () => { selectedDeploymentID = d.id; });
+}
+
 function appendOverviewLine(container, msg) {
   const body = $('ov-build-body');
   if (!body) return;
