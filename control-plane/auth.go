@@ -65,7 +65,7 @@ func loadAuthConfig() (*authConfig, error) {
 	ss := strings.TrimSpace(os.Getenv("SESSION_SECRET"))
 	base := strings.TrimSpace(os.Getenv("DASHBOARD_BASE_URL"))
 	if base == "" {
-		base = "https://paas.jamilshaikh.in"
+		base = "https://spinup.in"
 	}
 	if cid == "" || cs == "" || ss == "" {
 		return nil, errors.New(

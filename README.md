@@ -11,7 +11,7 @@ Talos Linux Kubernetes cluster running in a home-lab.
 > See [`architecture.md`](./architecture.md) for the full design, C4
 > diagrams, and security model.
 
-> **Live dashboard:** https://paas.jamilshaikh.in
+> **Live dashboard:** https://spinup.in
 
 ---
 
@@ -39,7 +39,7 @@ flowchart LR
   k8s --> pod[tenant pod]
   pod -.->|DATABASE_URL secret| db
   extdns[external-dns] -->|wildcard CNAME| cflare[Cloudflare DNS]
-  cflare -->|*.jamilshaikh.in| cf
+  cflare -->|*.spinup.in| cf
   traefik --> pod
   user[End user] -->|HTTPS| cflare
 ```
@@ -93,12 +93,12 @@ flowchart LR
 
 | URL | What |
 |---|---|
-| `https://paas.jamilshaikh.in/` | Dashboard (OAuth-gated) |
-| `https://paas.jamilshaikh.in/healthz` | Liveness probe |
-| `https://paas.jamilshaikh.in/readyz` | Readiness (CP + DB) |
-| `https://paas.jamilshaikh.in/webhooks/github` | HMAC-verified webhook intake |
-| `https://<slug>.jamilshaikh.in/` | Production alias for an app |
-| `https://<slug>-<sha7>.jamilshaikh.in/` | Per-commit preview URL |
+| `https://spinup.in/` | Dashboard (OAuth-gated) |
+| `https://spinup.in/healthz` | Liveness probe |
+| `https://spinup.in/readyz` | Readiness (CP + DB) |
+| `https://spinup.in/webhooks/github` | HMAC-verified webhook intake |
+| `https://<slug>.spinup.in/` | Production alias for an app |
+| `https://<slug>-<sha7>.spinup.in/` | Per-commit preview URL |
 
 ---
 

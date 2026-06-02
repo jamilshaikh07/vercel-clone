@@ -4,7 +4,7 @@ package main
 //
 // We deliberately do NOT ship a separate SPA. The dashboard is a single
 // embedded HTML file served from the control plane itself at
-// paas.jamilshaikh.in/, talking to a small REST surface on the same origin:
+// spinup.in/, talking to a small REST surface on the same origin:
 //
 //   GET /v1/projects           — projects with their 10 most recent deployments
 //   GET /v1/deployments        — flat list, 50 most recent (debugging)

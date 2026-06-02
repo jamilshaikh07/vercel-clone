@@ -64,7 +64,7 @@ func TestGithubLatestSHA(t *testing.T) {
 // otherwise the rebuilder builds to one tag and the deployment pulls from
 // another, silently never picking up the new image.
 func TestRebuilderConstants(t *testing.T) {
-	if !strings.Contains(rebuilderImageRef, "jamilshaikh-paas-control-plane") {
+	if !strings.Contains(rebuilderImageRef, "spinup-control-plane") {
 		t.Errorf("rebuilderImageRef out of sync with deployment manifest: %q", rebuilderImageRef)
 	}
 	if rebuilderJobName != "build-control-plane" {

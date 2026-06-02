@@ -59,7 +59,7 @@ if [ "$ROLL" = "1" ]; then
   kubectl -n paas-system rollout restart deploy/control-plane
   kubectl -n paas-system rollout status deploy/control-plane --timeout=120s
   echo ""
-  echo "Done. New revision is live at https://paas.jamilshaikh.in"
+  echo "Done. New revision is live at https://spinup.in"
 else
   echo "[4/4] Skipped pod restart (--no-roll). New image is at ttl.sh/...:24h"
   echo "      Run:  kubectl -n paas-system rollout restart deploy/control-plane"

@@ -39,9 +39,14 @@ var hostnameRE = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([
 // to the platform itself. Routing them to a tenant would silently break
 // the dashboard or apex domain.
 var reservedHostnames = map[string]bool{
-	"jamilshaikh.in":     true,
-	"paas.jamilshaikh.in": true,
-	"www.jamilshaikh.in": true,
+	"spinup.in":     true,
+	"www.spinup.in": true,
+	// 'app.spinup.in' and 'paas.spinup.in' are reserved too in case we
+	// ever split the marketing site from the dashboard; better to fail
+	// a tenant's custom-domain attempt now than let them squat on a
+	// hostname we'll want back.
+	"app.spinup.in":  true,
+	"paas.spinup.in": true,
 }
 
 type domainResponse struct {

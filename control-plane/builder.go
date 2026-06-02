@@ -36,7 +36,7 @@ const (
 	// Tenant Deployment/Service/IngressRoute now live in
 	// paas-tenant-<login> — see tenant.go. Build Jobs stay in paas-system
 	// so build-time Secrets are never visible from tenant pods.
-	tenantHostZone = "jamilshaikh.in"
+	tenantHostZone = "spinup.in"
 	kanikoImage     = "gcr.io/kaniko-project/executor:v1.23.2"
 	// TODO: detect from the built image's Config.ExposedPorts. For MVP we
 	// assume the modern non-root convention (most rootless images use 8080+).
@@ -52,14 +52,14 @@ const (
 	// The registry stores by repo+tag — hostnames are just transport endpoints,
 	// so a push via one hostname is pullable via the other.
 	registryPushHost = "registry.paas-system.svc.cluster.local:5000"
-	registryPullHost = "registry.jamilshaikh.in"
+	registryPullHost = "registry.spinup.in"
 	dockerCfgSecret  = "registry-dockercfg"
 	tunnelTarget     = "3a067db9-77b1-49c9-a3d4-30f86d16c80d.cfargotunnel.com"
 	// GitHub commit status check
 	statusContext = "paas/deploy"
 	// dashboardBaseURL is used as target_url for pending/failed status checks.
 	// Successful deployments point at the live preview URL instead.
-	dashboardBaseURL = "https://paas.jamilshaikh.in"
+	dashboardBaseURL = "https://spinup.in"
 )
 
 type worker struct {

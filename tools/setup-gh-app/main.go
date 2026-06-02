@@ -62,9 +62,9 @@ type conversion struct {
 
 func main() {
 	var (
-		appName       = flag.String("name", "jamilshaikh-paas", "GitHub App name (must be globally unique)")
-		homepageURL   = flag.String("homepage", "https://paas.jamilshaikh.in", "App homepage URL")
-		webhookURL    = flag.String("webhook-url", "https://paas.jamilshaikh.in/webhooks/github", "Webhook receiver URL")
+		appName       = flag.String("name", "spinup", "GitHub App name (must be globally unique)")
+		homepageURL   = flag.String("homepage", "https://spinup.in", "App homepage URL")
+		webhookURL    = flag.String("webhook-url", "https://spinup.in/webhooks/github", "Webhook receiver URL")
 		webhookSecret = flag.String("webhook-secret", "", "Webhook HMAC secret (will be passed to GitHub so it matches the cluster Secret). If empty, attempts to read from kubectl.")
 		outDir        = flag.String("out", "./out", "Directory to write credentials to")
 		listenAddr    = flag.String("listen", "127.0.0.1:0", "Local listen address (random port if :0)")

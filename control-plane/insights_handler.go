@@ -107,7 +107,7 @@ func runInsightChecks(parent context.Context, target string) *insightReport {
 	}
 	// A user-agent makes us look like a polite bot rather than a generic
 	// Go http client — some apps gate on this for analytics correctness.
-	req.Header.Set("User-Agent", "paas-insights/1.0 (+https://paas.jamilshaikh.in)")
+	req.Header.Set("User-Agent", "spinup-insights/1.0 (+https://spinup.in)")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml")
 
 	start := time.Now()

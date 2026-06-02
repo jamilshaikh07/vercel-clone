@@ -80,7 +80,7 @@ is one-shot CLIs that augment the control plane.
 ## Cluster conventions
 
 - **Image tagging:** while we're on `ttl.sh`, generate a fresh
-  `ttl.sh/jamilshaikh-paas-<component>-<random-8>:24h` for each new
+  `ttl.sh/spinup-<component>-<random-8>:24h` for each new
   image and bump the tag in `manifests/`. The control plane Job's
   destination flag and the Deployment's `image` must match.
 - **Secrets are NEVER in git.** Even in a `.template.yaml` file with
@@ -153,7 +153,7 @@ When automating with `tools/setup-gh-app`:
 Public `IngressRoute`s without the
 `external-dns.alpha.kubernetes.io/target` annotation will be created in
 the cluster, route correctly internally, and never get a public DNS
-record. Symptom: `dig +short host.jamilshaikh.in` returns nothing.
+record. Symptom: `dig +short host.spinup.in` returns nothing.
 
 ### 6. Kaniko 1.23.x mishandles URL-embedded HTTPS credentials
 
@@ -208,14 +208,14 @@ Kaniko build context).
   Deployment + Service + IngressRoute and marks `ready` with the live URL.
 - Idempotent build path: `ensureBuildJob` attaches to existing Jobs across
   worker restarts; `RequeueStale` periodically rescues stranded rows.
-- Three live deployments at `<slug>-<short-sha>.jamilshaikh.in` proving E2E.
+- Three live deployments at `<slug>-<short-sha>.spinup.in` proving E2E.
 
 ### NOT done — don't claim these exist
 - Real container registry. We use `ttl.sh` with 24h TTL — images expire daily.
 - TLS issuance via cert-manager. We rely on Cloudflare Universal SSL
   at the tunnel edge.
 - Auth on `/admin/*`. The endpoint is open to anyone who can hit
-  `paas.jamilshaikh.in`. Add IP allow-list / basic-auth / OIDC before
+  `spinup.in`. Add IP allow-list / basic-auth / OIDC before
   this goes anywhere near production.
 - Build log streaming, framework auto-detect, dashboard UI, multi-region.
 
@@ -235,7 +235,7 @@ kubectl -n paas-system exec paas-db-1 -c postgres -- psql -U postgres -d paas -c
   "SELECT delivery_id, event, action, repo_full_name, received_at FROM webhook_deliveries ORDER BY received_at DESC LIMIT 20"
 
 # Recent deployments
-curl -s https://paas.jamilshaikh.in/admin/deployments | jq
+curl -s https://spinup.in/admin/deployments | jq
 
 # Force a control-plane re-roll
 kubectl -n paas-system rollout restart deploy/control-plane

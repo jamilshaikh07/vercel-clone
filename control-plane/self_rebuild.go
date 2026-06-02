@@ -59,7 +59,7 @@ const (
 	rebuilderBuildTimeout  = 8 * time.Minute
 	// Kaniko destination — must match the deployment's image: field so the
 	// rolled pod pulls the just-built layer.
-	rebuilderImageRef = "ttl.sh/jamilshaikh-paas-control-plane-05836ffc:24h"
+	rebuilderImageRef = "ttl.sh/spinup-control-plane-05836ffc:24h"
 )
 
 // startSelfRebuilder spawns the poller goroutine. Returns immediately; the

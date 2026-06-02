@@ -117,7 +117,7 @@ func hitApp(ctx context.Context, client *http.Client, target string, log *slog.L
 		// Identify ourselves so it's traceable from tenant access logs
 		// that this traffic is the monitor and not a real user. Also
 		// keeps tenant analytics dashboards clean (most filter on UA).
-		req.Header.Set("User-Agent", "paas-synthetic-monitor/1.0 (+https://paas.jamilshaikh.in)")
+		req.Header.Set("User-Agent", "spinup-synthetic-monitor/1.0 (+https://spinup.in)")
 		req.Header.Set("Accept", "text/html,application/xhtml+xml,*/*")
 		resp, err := client.Do(req)
 		if err != nil {

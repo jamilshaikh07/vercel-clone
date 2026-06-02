@@ -3,7 +3,7 @@
 #
 # Exposure model matches the rest of the cluster: in-cluster HTTP,
 # public HTTPS terminated at Cloudflare. Both Kaniko (push) and the
-# kubelet (pull) reach the registry via registry.jamilshaikh.in. The
+# kubelet (pull) reach the registry via registry.spinup.in. The
 # round trip out-and-back through the tunnel adds ~100ms — acceptable
 # for MVP and avoids the Talos containerd-trust-store yak shave.
 #
@@ -158,7 +158,7 @@ spec:
     - web
   routes:
     - kind: Rule
-      match: Host(`registry.jamilshaikh.in`)
+      match: Host(`registry.spinup.in`)
       services:
         - name: registry
           port: 5000

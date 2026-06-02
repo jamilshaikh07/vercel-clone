@@ -36,7 +36,7 @@ spec:
         fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: control-plane
-          image: ttl.sh/jamilshaikh-paas-control-plane-05836ffc:24h
+          image: ttl.sh/spinup-control-plane-05836ffc:24h
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
@@ -81,7 +81,7 @@ spec:
                   name: github-app-oauth
                   key: session-secret
             - name: DASHBOARD_BASE_URL
-              value: https://paas.jamilshaikh.in
+              value: https://spinup.in
             # Superuser connection for the tenant-DB provisioner. Only
             # used by db_provisioner.go — never by the app data path.
             - name: PG_SUPERUSER_URI
@@ -157,7 +157,7 @@ spec:
   entryPoints:
     - web
   routes:
-    - match: Host(`paas.jamilshaikh.in`)
+    - match: Host(`spinup.in`)
       kind: Rule
       services:
         - name: control-plane
