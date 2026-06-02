@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 )
@@ -142,7 +143,29 @@ func (s *server) handleDeploymentRuntimeLogs(w http.ResponseWriter, r *http.Requ
 	// For building/deploying/ready: try to locate a tenant pod. Wait
 	// up to 60s for it to come into existence — the rollout can lag
 	// behind the deployment row by a few seconds.
-	pod, err := s.waitForTenantPod(ctx, tenantNS, id, 60*time.Second, heartbeat)
+	//
+	// Emit progressive system messages so the user sees activity
+	// instead of staring at a silent 'streaming…' while we poll.
+	// After a Stop → Start cycle the new pod can take 5–10s to come
+	// up; if there's a labelling drift between projects.
+	// production_deployment_id and the K8s Deployment that actually
+	// has a pod, this is the only signal that something is off.
+	sel := fmt.Sprintf("paas.deployment=%s,app.kubernetes.io/component=tenant", id)
+	send("log", map[string]string{
+		"c": "system",
+		"m": fmt.Sprintf("Searching for pod in %s with selector %s", tenantNS, sel),
+	})
+	progress := func(attempt int) {
+		// Every 3rd poll (~6s) past the first so we don't spam the
+		// stream when the rollout lands quickly.
+		if attempt > 0 && attempt%3 == 0 {
+			send("log", map[string]string{
+				"c": "system",
+				"m": fmt.Sprintf("Still waiting for a tenant pod… (%ds elapsed)", attempt*2),
+			})
+		}
+	}
+	pod, err := s.waitForTenantPod(ctx, tenantNS, id, 60*time.Second, heartbeat, progress)
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
 			s.log.Warn("wait for tenant pod failed", "id", id, "err", err)
@@ -151,7 +174,21 @@ func (s *server) handleDeploymentRuntimeLogs(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if pod == "" {
-		send("log", map[string]string{"c": "system", "m": "No running tenant pod found for this deployment yet. (If the deployment was rolled over by a newer one, its pod is gone.)"})
+		// 60s timeout with no pod. Most common causes: image pull
+		// failure, the K8s Deployment is scaled to 0, or the
+		// deployment_id we're searching for isn't the one whose pod
+		// is actually behind the production alias (drift between
+		// projects.production_deployment_id and reality). Tell the
+		// user the exact selector + namespace so they can verify
+		// from a shell with one command.
+		send("log", map[string]string{
+			"c": "system",
+			"m": fmt.Sprintf("No running tenant pod found for this deployment after 60s. Verify with: kubectl get pods -n %s -l %q", tenantNS, sel),
+		})
+		send("log", map[string]string{
+			"c": "system",
+			"m": "This usually means: (a) the pod is in ImagePullBackOff / CrashLoopBackOff, (b) the K8s Deployment for this commit was scaled to 0, or (c) a different commit's pod is the one actually serving traffic (try clicking another deployment in Overview).",
+		})
 		send("end", map[string]string{"reason": "no tenant pod"})
 		return
 	}
@@ -190,10 +227,12 @@ func (s *server) handleDeploymentRuntimeLogs(w http.ResponseWriter, r *http.Requ
 
 // waitForTenantPod polls findTenantPod every 2s up to maxWait, calling
 // heartbeat() on each iteration so the SSE connection stays warm even
-// when the rollout is slow. Returns (name, nil) once a pod exists,
-// ("", nil) on deadline.
-func (s *server) waitForTenantPod(ctx context.Context, namespace, deploymentID string, maxWait time.Duration, heartbeat func() bool) (string, error) {
+// when the rollout is slow, and progress(attempt) so the caller can
+// emit user-visible status while we wait. Returns (name, nil) once a
+// pod exists, ("", nil) on deadline.
+func (s *server) waitForTenantPod(ctx context.Context, namespace, deploymentID string, maxWait time.Duration, heartbeat func() bool, progress func(int)) (string, error) {
 	deadline := time.Now().Add(maxWait)
+	attempt := 0
 	for {
 		lookupCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		pod, err := s.k8s.findTenantPod(lookupCtx, namespace, deploymentID)
@@ -210,6 +249,10 @@ func (s *server) waitForTenantPod(ctx context.Context, namespace, deploymentID s
 		if heartbeat != nil {
 			heartbeat()
 		}
+		if progress != nil {
+			progress(attempt)
+		}
+		attempt++
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()
