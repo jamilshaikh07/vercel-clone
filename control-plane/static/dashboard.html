@@ -1074,28 +1074,75 @@
     .proj-header .copy:hover { color: var(--accent); }
     .proj-header .copy.ok { color: var(--ok); }
 
-    /* Inline 'Latest build' panel on Overview — streams the build log
-       of the most-recent deployment so the first thing the user sees
-       after a push is the build, not a stale 'Ready' badge. Capped
-       height so the deployments list below stays visible. */
-    .latest-build .panel-head .build-status {
-      font-size: 11px; font-family: ui-monospace, monospace;
+    /* Events timeline on Overview. One row per deployment, expandable
+       into a synthesized deployment-log block (==> Cloning, ==>
+       Building, ==> Service live …). Derived entirely from the
+       deployment record's metadata so it works for builds whose
+       Kaniko pods were reaped long ago. */
+    .event {
+      border-top: 1px solid var(--border);
+      padding: 12px 16px;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .event:hover { background: var(--bg-2); }
+    .event:first-child { border-top: 0; }
+    .event-head {
+      display: flex; align-items: center; gap: 12px;
+    }
+    .event-icon {
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 700;
+      flex-shrink: 0;
+    }
+    .event-icon.live    { background: rgba(67, 181, 129, 0.18); color: var(--ok); }
+    .event-icon.ready   { background: var(--bg-2); color: var(--text-dim); border: 1px solid var(--border); }
+    .event-icon.failed  { background: rgba(237, 66, 69, 0.18); color: var(--err); }
+    .event-icon.progress{ background: rgba(250, 166, 26, 0.18); color: var(--building); }
+    .event-title {
+      flex: 1; min-width: 0;
+      font-size: 13px; color: var(--text);
+    }
+    .event-title .verb { font-weight: 600; }
+    .event-title .sha {
+      font-family: ui-monospace, monospace;
+      color: var(--accent);
+    }
+    .event-title .sub {
+      font-size: 11px; color: var(--text-dim);
+      margin-top: 2px;
+    }
+    .event-time {
+      font-size: 11px; color: var(--text-faint);
+      font-family: ui-monospace, monospace;
+      flex-shrink: 0;
+    }
+    .event-chevron {
       color: var(--text-faint);
+      font-size: 10px;
+      transition: transform 0.15s ease;
+      flex-shrink: 0;
     }
-    .latest-build .panel-head .build-status.live { color: var(--ok); font-weight: 600; }
-    .latest-build .panel-head .build-status.failed { color: var(--err); font-weight: 600; }
-    .latest-build .panel-head .build-status.building { color: var(--building); font-weight: 600; }
-    .latest-build .build-log {
-      max-height: 220px;
-      overflow-y: auto;
+    .event.expanded .event-chevron { transform: rotate(90deg); }
+    .event-body {
+      display: none;
+      margin: 10px 0 4px 34px;
       padding: 10px 14px;
-      font-family: ui-monospace, monospace; font-size: 11px; line-height: 1.55;
       background: var(--bg-2);
-      border-radius: 0 0 8px 8px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      font-family: ui-monospace, monospace;
+      font-size: 11px; line-height: 1.7;
     }
-    .latest-build .build-log .log-placeholder {
-      color: var(--text-dim); font-style: italic;
-    }
+    .event.expanded .event-body { display: block; }
+    .event-body .log-line { display: block; }
+    .event-body .log-line.clone  { color: #b48ead; }
+    .event-body .log-line.kaniko { color: var(--building); }
+    .event-body .log-line.system { color: var(--text); }
+    .event-body .log-line.live   { color: var(--ok); }
+    .event-body .log-line.fail   { color: var(--err); }
     .log-line { display: grid; grid-template-columns: 64px 1fr; gap: 8px; }
     .log-line .c { color: var(--text-dim); font-weight: 600; user-select: none; }
     .log-line.kaniko .c { color: var(--building); }
@@ -1327,16 +1374,21 @@
           <div class="page-inner">
             <div class="proj-header" id="overview-header"></div>
             <div class="summary" id="overview-summary"></div>
-            <div class="panel latest-build" id="overview-latest-build" style="margin-bottom:16px;display:none;">
+            <!-- Events timeline. One row per deployment, newest first.
+                 Each row is collapsible and expands to a synthesized
+                 deployment-log block (==> Cloning, ==> Building, ==>
+                 Service live, etc.) derived from the deployment
+                 record's metadata. We DON'T tail Kaniko pods here —
+                 those are reaped after ~1h, and the user wants
+                 'masked' lifecycle logs that persist forever, not
+                 raw build output. Pod logs stay on the Logs page. -->
+            <div class="panel" id="overview-events" style="margin-bottom:16px;">
               <div class="panel-head">
-                <h3>Latest build</h3>
-                <span class="commit" id="ov-build-commit" style="color:var(--text-dim);font-size:12px;font-family:ui-monospace,monospace;"></span>
+                <h3>Events</h3>
                 <span class="spacer"></span>
-                <span class="build-status" id="ov-build-status">—</span>
+                <span style="color:var(--text-faint);font-size:11px;">deployment timeline · click to expand</span>
               </div>
-              <div class="build-log" id="ov-build-body">
-                <div class="log-placeholder">waiting for build…</div>
-              </div>
+              <div id="overview-events-body"></div>
             </div>
             <div class="panel">
               <div class="panel-head">
@@ -1829,7 +1881,6 @@ function applyRoute() {
   // Any page swap stops every per-page background activity. The
   // matching render*() functions re-start them when needed.
   closeStream();
-  closeOverviewStream();
   stopTelemetryPoll();
   stopTrafficPoll();
   ROUTE = parseHash();
@@ -2133,8 +2184,7 @@ function renderOverview() {
     $('overview-summary').innerHTML = '<div class="empty">Project not found.</div>';
     $('overview-deployments').innerHTML = '';
     $('overview-header').innerHTML = '';
-    $('overview-latest-build').style.display = 'none';
-    closeOverviewStream();
+    $('overview-events-body').innerHTML = '';
     return;
   }
   const deps = proj.deployments || [];
@@ -2147,11 +2197,13 @@ function renderOverview() {
   // facts are above the fold.
   renderOverviewHeader(proj);
 
-  // Inline 'Latest build' panel: stream the most recent deployment's
-  // build log right on the overview. The user asked for this after
-  // seeing Render's events page — first thing post-push you want
-  // to see the build, not a stale 'Ready' badge.
-  startOverviewBuildLog(proj, latest);
+  // Events timeline: one expandable row per deployment showing
+  // synthesized lifecycle logs (==> Cloning / Building / Service
+  // live …). Derived from the deployment record's metadata so it
+  // works for builds whose Kaniko pods were reaped hours/days ago.
+  // The user explicitly asked for 'masked' build logs here —
+  // pod-level kaniko output stays on the dedicated Logs page.
+  renderOverviewEvents(proj);
 
   // The Status tile is filled in by loadAndRenderProjectStatus once the
   // /v1/projects/{id}/status request returns. Until then we show a
@@ -2268,147 +2320,162 @@ function renderOverviewHeader(proj) {
   });
 }
 
-// ----- Inline build-log streamer on the Overview page -------------------
-// Two render paths share this panel:
+// ----- Overview events timeline -----------------------------------------
 //
-//   * In-flight builds (queued / building / deploying) open an SSE stream
-//     so the user sees Kaniko output live, exactly like the dedicated
-//     Logs page.
-//   * Terminal builds (ready / failed) paint a static summary card. We
-//     deliberately DON'T stream those because the Kaniko Job is reaped
-//     ~1h after completion — opening an SSE on a gone pod returns an
-//     immediate 'end' event, which used to trigger refresh() → re-render
-//     → re-subscribe → immediate 'end' → ... ('the shaking'). The
-//     summary card is also a much more honest UI: 'this build succeeded
-//     2 days ago' is what the user actually wants to know.
+// Renders one expandable row per deployment, mirroring Render's Events
+// page. Each row, when opened, shows a synthesized "==> Cloning / ==>
+// Building / ==> Service live" log block derived from the deployment
+// record's metadata — NOT the raw Kaniko pod log. The user explicitly
+// wanted these "masked" lifecycle logs (always available, persist
+// forever) rather than the raw build output (only retained ~1h, gone
+// for old deployments). Raw pod logs stay on the dedicated Logs page.
 //
-// overviewES is separate from the Logs page's currentES so the two
-// views coexist and navigation between them is clean.
-let overviewES = null;
-let overviewStreamKey = null;
-// overviewStreamDone remembers deployment ids whose stream has reached
-// 'end' in this session. Without it, the moment a build finishes we'd
-// fall back into the loop above on the very next refresh tick (the
-// status field hasn't propagated yet but the stream is already done).
-const overviewStreamDone = new Set();
+// expandedEventIDs is the set of deployment ids whose body is open.
+// Persisted across re-renders so the 10 s refresh tick doesn't collapse
+// rows the user has just expanded.
+const expandedEventIDs = new Set();
 
-function startOverviewBuildLog(proj, latest) {
-  const panel = $('overview-latest-build');
-  if (!panel) return;
-  if (!latest) {
-    panel.style.display = 'none';
-    closeOverviewStream();
+function renderOverviewEvents(proj) {
+  const body = $('overview-events-body');
+  if (!body) return;
+  const deps = proj.deployments || [];
+  if (deps.length === 0) {
+    body.innerHTML = `<div class="empty" style="padding:24px;color:var(--text-dim);font-style:italic;">No deployments yet. Push a commit to ${escapeHTML(proj.production_branch)} to trigger the first one.</div>`;
     return;
   }
-  panel.style.display = '';
+  // Auto-expand the most recent event the first time we render this
+  // project's overview so the page lands showing the latest build's
+  // lifecycle without an extra click. We check membership against
+  // THIS project's deployments — not the global size — so navigating
+  // between projects re-fires the auto-expand for each.
+  const anyExpanded = deps.some(d => expandedEventIDs.has(d.id));
+  if (!anyExpanded && deps[0]) expandedEventIDs.add(deps[0].id);
 
   const liveDep = liveDeploymentForProject(proj);
-  const isLive = !!(liveDep && liveDep.id === latest.id && latest.status === 'ready');
-  const statusEl = $('ov-build-status');
-  const commitEl = $('ov-build-commit');
-  commitEl.textContent = latest.commit_sha.slice(0, 8) + ' · ' + latest.ref.replace('refs/heads/', '');
-  // Build-status pill colour-codes the current state. 'Live' is the
-  // happy path (latest commit is the one serving traffic right now).
-  const stateClass = isLive ? 'live'
-                  : latest.status === 'failed' ? 'failed'
-                  : (latest.status === 'building' || latest.status === 'queued' || latest.status === 'deploying') ? 'building'
-                  : '';
-  statusEl.className = 'build-status ' + stateClass;
-  statusEl.textContent = isLive ? '● Live'
-                       : latest.status === 'failed' ? '✗ Failed'
-                       : latest.status === 'ready' ? '✓ Ready'
-                       : latest.status;
+  const liveURL = liveURLForProject(proj);
+  // deps[deps.length - 1] is the very first deployment ever — we
+  // label that row 'First deploy' to match Render's wording.
+  const firstID = deps[deps.length - 1].id;
 
-  const inFlight = (latest.status === 'queued' || latest.status === 'building' || latest.status === 'deploying');
-  if (!inFlight || overviewStreamDone.has(latest.id)) {
-    // Terminal state — paint summary, don't stream. This is the
-    // Render-style 'if its working then cool, if not then failed'
-    // path the user asked for.
-    closeOverviewStream();
-    paintOverviewBuildSummary(proj, latest, isLive);
-    return;
-  }
+  body.innerHTML = deps.map(d => {
+    const isLive = !!(liveDep && liveDep.id === d.id && d.status === 'ready');
+    const isFirst = d.id === firstID;
+    const expanded = expandedEventIDs.has(d.id);
 
-  // Idempotency guard: skip re-subscribing when we're already tailing
-  // this deployment. Prevents the on-screen log from flashing every
-  // refresh tick.
-  if (overviewStreamKey === latest.id && overviewES) return;
-  overviewStreamKey = latest.id;
-  closeOverviewStream();
-  const body = $('ov-build-body');
-  body.innerHTML = '';
-  const es = new EventSource('/v1/deployments/' + latest.id + '/logs');
-  overviewES = es;
-  es.addEventListener('log', (ev) => {
-    const d = JSON.parse(ev.data);
-    appendOverviewLine(d.c, stripAnsi(d.m));
-  });
-  es.addEventListener('end', () => {
-    // Mark this deployment's stream as consumed so the next refresh
-    // tick falls into the summary-card branch instead of re-opening
-    // the SSE (which would immediately end again — 'shaking').
-    overviewStreamDone.add(latest.id);
-    closeOverviewStream();
-    refresh(); // re-fetch so status badges everywhere update
-  });
-  es.onerror = () => {
-    // Treat connection errors as terminal for this deployment so we
-    // don't reconnect on the next tick. The summary card will appear
-    // once the parent refresh repaints.
-    overviewStreamDone.add(latest.id);
-    closeOverviewStream();
-  };
-}
-
-// paintOverviewBuildSummary renders a static 'build succeeded / failed'
-// card in the Latest-build panel. Used for any terminal-state deploy so
-// the panel stops trying to tail a pod that was reaped hours or days
-// ago. Keeps the panel visually stable across refresh ticks.
-function paintOverviewBuildSummary(proj, d, isLive) {
-  const body = $('ov-build-body');
-  if (!body) return;
-  const failed = d.status === 'failed';
-  const icon = failed ? '✗' : '✓';
-  const head = failed ? 'Build failed'
-              : isLive ? 'Build succeeded · serving production'
-              : 'Build succeeded';
-  const iconColor = failed ? 'var(--err)' : 'var(--ok)';
-  body.innerHTML = `
-    <div style="display:flex;align-items:center;gap:14px;padding:18px 10px;">
-      <div style="font-size:24px;font-weight:700;color:${iconColor};line-height:1;width:28px;text-align:center;">${icon}</div>
-      <div style="flex:1;">
-        <div style="font-size:13px;font-weight:600;color:var(--text);">${escapeHTML(head)}</div>
-        <div style="font-size:11px;color:var(--text-dim);margin-top:3px;font-family:ui-monospace,monospace;">
-          ${escapeHTML(d.commit_sha.slice(0, 8))} · ${escapeHTML(d.ref.replace('refs/heads/', ''))} · ${timeAgo(d.created_at)}
+    let iconCls, iconChar, verb;
+    if (d.status === 'failed') {
+      iconCls = 'failed'; iconChar = '✗'; verb = 'Deploy failed';
+    } else if (d.status === 'ready' && isLive) {
+      iconCls = 'live'; iconChar = '✓'; verb = 'Deploy live';
+    } else if (d.status === 'ready') {
+      iconCls = 'ready'; iconChar = '✓'; verb = 'Deploy succeeded';
+    } else {
+      // queued / building / deploying — in-flight states
+      iconCls = 'progress'; iconChar = '◐'; verb = 'Deploy in progress';
+    }
+    if (isFirst) verb = 'First deploy' + (d.status === 'ready' ? ' succeeded'
+                                       : d.status === 'failed' ? ' failed'
+                                       : ' started');
+    const branch = d.ref.replace('refs/heads/', '');
+    const lines = synthesizeBuildLog(proj, d, isLive, liveURL);
+    return `
+      <div class="event ${expanded ? 'expanded' : ''}" data-id="${d.id}">
+        <div class="event-head">
+          <span class="event-icon ${iconCls}">${iconChar}</span>
+          <div class="event-title">
+            <div><span class="verb">${escapeHTML(verb)}</span> for <span class="sha">${escapeHTML(d.commit_sha.slice(0, 8))}</span> · ${escapeHTML(branch)}</div>
+            <div class="sub">${escapeHTML(prettyTimestamp(d.created_at))}</div>
+          </div>
+          <span class="event-time" title="${escapeHTML(d.created_at)}">${escapeHTML(timeAgo(d.created_at))}</span>
+          <span class="event-chevron">▶</span>
         </div>
-      </div>
-      <a href="#/p/${proj.id}/logs" data-deployment-id="${d.id}"
-         style="font-size:11px;color:var(--accent);text-decoration:none;font-weight:500;">
-        View full logs →
-      </a>
-    </div>`;
-  // Wire the deep-link so it opens THIS deployment's logs (not the
-  // current production tail) — matches the row-click semantics on
-  // the deployments list below.
-  const link = body.querySelector('a[data-deployment-id]');
-  if (link) link.addEventListener('click', () => { selectedDeploymentID = d.id; });
+        <div class="event-body">
+          ${lines.map(l => `<div class="log-line ${l.c}">${escapeHTML(l.m)}</div>`).join('')}
+        </div>
+      </div>`;
+  }).join('');
+
+  // Click anywhere on the head row to toggle expansion. Stop at links /
+  // buttons so they keep their native behaviour (currently none, but
+  // future surface area like inline 'open URL' won't accidentally
+  // collapse the row).
+  body.querySelectorAll('.event').forEach(row => {
+    row.addEventListener('click', (ev) => {
+      if (ev.target.closest('a,button')) return;
+      const id = row.dataset.id;
+      if (expandedEventIDs.has(id)) expandedEventIDs.delete(id);
+      else expandedEventIDs.add(id);
+      row.classList.toggle('expanded');
+    });
+  });
 }
 
-function appendOverviewLine(container, msg) {
-  const body = $('ov-build-body');
-  if (!body) return;
-  const div = document.createElement('div');
-  div.className = 'log-line ' + container;
-  const c = document.createElement('span'); c.className = 'c'; c.textContent = container;
-  const m = document.createElement('span'); m.textContent = msg;
-  div.appendChild(c); div.appendChild(m);
-  const nearBottom = body.scrollTop + body.clientHeight >= body.scrollHeight - 40;
-  body.appendChild(div);
-  if (nearBottom) body.scrollTop = body.scrollHeight;
+// prettyTimestamp formats an ISO timestamp the way Render's events list
+// does: "June 2, 2026 at 3:13 PM". Localised via toLocaleString so the
+// student's timezone shows through; that matches the row-level relative
+// "2d ago" we already show on the right.
+function prettyTimestamp(iso) {
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      month: 'long', day: 'numeric', year: 'numeric',
+      hour: 'numeric', minute: '2-digit',
+    });
+  } catch (_) { return iso || ''; }
 }
-function closeOverviewStream() {
-  if (overviewES) { overviewES.close(); overviewES = null; }
-  overviewStreamKey = null;
+
+// synthesizeBuildLog turns a deployment record into a Render-style
+// lifecycle log:
+//
+//   ==> Cloning from https://github.com/<owner>/<repo>
+//   ==> Checking out commit <sha> in branch <branch>
+//   ==> Building image with Kaniko
+//   ==> Image pushed to in-cluster registry
+//   ==> Rolling out Deployment to tenant namespace
+//   ==> Service is live at https://… 🎉
+//
+// Lines are picked from the deployment's status field, so older
+// deployments (whose Kaniko pods are long gone) still get a faithful
+// summary. NOT the raw kaniko output — that stays on the Logs page.
+function synthesizeBuildLog(proj, d, isLive, liveURL) {
+  const branch = (d.ref || 'refs/heads/main').replace('refs/heads/', '');
+  const repoURL = proj.full_name ? 'https://github.com/' + proj.full_name : '';
+  const lines = [];
+  if (repoURL) lines.push({ c: 'clone',  m: '==> Cloning from ' + repoURL });
+  lines.push({ c: 'clone',  m: '==> Checking out commit ' + d.commit_sha + ' in branch ' + branch });
+
+  switch (d.status) {
+    case 'queued':
+      lines.push({ c: 'system', m: '==> Queued — waiting for a build slot' });
+      break;
+    case 'building':
+      lines.push({ c: 'kaniko', m: '==> Building image with Kaniko' });
+      break;
+    case 'deploying':
+      lines.push({ c: 'kaniko', m: '==> Building image with Kaniko' });
+      lines.push({ c: 'kaniko', m: '==> Image pushed to in-cluster registry' });
+      lines.push({ c: 'system', m: '==> Rolling out Deployment to tenant namespace' });
+      break;
+    case 'ready': {
+      lines.push({ c: 'kaniko', m: '==> Building image with Kaniko' });
+      lines.push({ c: 'kaniko', m: '==> Image pushed to in-cluster registry' });
+      lines.push({ c: 'system', m: '==> Rolling out Deployment to tenant namespace' });
+      const url = d.url || (isLive ? liveURL : '') || '';
+      if (isLive) {
+        lines.push({ c: 'live',   m: '==> ' + (url ? 'Service is live at ' + url : 'Service is live') + ' 🎉' });
+      } else {
+        lines.push({ c: 'system', m: '==> Build artefacts ready' + (url ? ' at ' + url : '') });
+        lines.push({ c: 'system', m: '==> Not the current production target — available for instant rollback' });
+      }
+      break;
+    }
+    case 'failed':
+      lines.push({ c: 'kaniko', m: '==> Building image with Kaniko' });
+      lines.push({ c: 'fail',   m: '==> Build failed — check the Logs page for the raw Kaniko output' });
+      break;
+    default:
+      lines.push({ c: 'system', m: '==> ' + d.status });
+  }
+  return lines;
 }
 
 function renderDeploymentRow(d, projectID) {
