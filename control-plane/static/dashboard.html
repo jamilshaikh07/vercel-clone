@@ -900,6 +900,17 @@
          next to the slug. */
       .proj-header .top h2 { font-size: 16px; }
 
+      /* Stack the header's identity + actions columns vertically on
+         phones and left-align the run-state so it doesn't hug the edge
+         awkwardly under a full-width layout. */
+      .proj-header { flex-direction: column; gap: 12px; }
+      .proj-header .ph-aside {
+        align-items: flex-start; width: 100%;
+        flex-direction: row; justify-content: space-between;
+      }
+      .proj-header .header-status { text-align: left; }
+      .header-status .hs-row { justify-content: flex-start; }
+
       /* Stat tiles: shrink the giant number a notch. */
       .summary .stat .value { font-size: 18px; }
 
@@ -1462,11 +1473,36 @@
       border-radius: 10px;
       padding: 16px 18px;
       margin-bottom: 16px;
+      /* Two-column banner: identity block on the left, actions (Visit +
+         run-state) pinned to the right so the previously-empty space
+         next to the title earns its keep. */
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 16px;
+    }
+    .proj-header .ph-main { min-width: 0; flex: 1; }
+    .proj-header .ph-aside {
+      display: flex; flex-direction: column; align-items: flex-end;
+      gap: 12px; flex-shrink: 0;
     }
     .proj-header .top {
       display: flex; align-items: center; gap: 12px;
       margin-bottom: 8px;
     }
+    /* Header run-state pill (moved here from the KPI tile row). */
+    .proj-header .header-status { text-align: right; }
+    .header-status .hs-label {
+      font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--text-faint); font-weight: 600; margin-bottom: 5px;
+    }
+    .header-status .hs-row {
+      display: flex; align-items: center; gap: 8px; justify-content: flex-end;
+    }
+    .header-status .hs-dot {
+      width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+    }
+    .header-status .hs-state { font-size: 14px; font-weight: 600; }
+    .header-status .hs-sub { font-size: 12px; color: var(--text-dim); }
+    .header-status .btn-action { margin-left: 4px; }
     .proj-header .type-badge {
       display: inline-flex; align-items: center; gap: 6px;
       padding: 3px 8px;
@@ -3175,11 +3211,6 @@ function renderOverview() {
       <div class="value" style="font-size:14px;font-family:ui-monospace,monospace;">${latest ? latest.status : '—'}</div>
       <div class="sub">${latest ? timeAgo(latest.created_at) : 'no deployments yet'}</div>
     </div>
-    <div class="stat" id="status-tile">
-      <div class="label">Status</div>
-      <div class="value" style="font-size:14px;color:var(--text-dim);">…</div>
-      <div class="sub">checking</div>
-    </div>
     <a class="stat stat-link" id="cpu-tile" href="#/p/${proj.id}/telemetry" title="Open Telemetry">
       <div class="label">CPU</div>
       <div class="value" style="font-size:18px;color:var(--text-dim);">…</div>
@@ -3270,30 +3301,40 @@ function renderOverviewHeader(proj) {
     ? `<a href="https://github.com/${escapeHTML(proj.full_name)}" target="_blank" rel="noopener" title="Open on GitHub">${escapeHTML(proj.full_name)}</a>`
     : '<span>—</span>';
   host.innerHTML = `
-    <div class="top">
-      <span class="type-badge" title="Container web service">Web Service</span>
-      <h2>${escapeHTML(proj.slug)}</h2>
-      <span class="spacer"></span>
-      ${liveURL ? `<a class="visit-btn" href="${liveURL}" target="_blank" rel="noopener">Visit ↗</a>` : ''}
-    </div>
-    <div class="meta-row">
-      <span class="meta" title="Internal service identifier">
-        <span style="color:var(--text-faint);">Service ID</span>
-        <span>${escapeHTML(proj.id)}</span>
-        <button class="copy" type="button" data-copy="${escapeHTML(proj.id)}" title="Copy service ID">⧉</button>
-      </span>
-      <span class="meta">
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.5c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.81.06 1.23.83 1.23.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.96 0-.87.31-1.59.83-2.15-.08-.2-.36-1.02.08-2.13 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.03 2.2-.82 2.2-.82.44 1.11.16 1.93.08 2.13.52.56.83 1.28.83 2.15 0 3.08-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.19c0 .21.15.46.55.38A8 8 0 0 0 8 0z"/></svg>
-        ${repoHTML}
-        <span style="color:var(--text-faint);">·</span>
-        <span title="Production branch">⎇ ${escapeHTML(proj.production_branch)}</span>
-      </span>
-      ${liveURL ? `
+    <div class="ph-main">
+      <div class="top">
+        <span class="type-badge" title="Container web service">Web Service</span>
+        <h2>${escapeHTML(proj.slug)}</h2>
+      </div>
+      <div class="meta-row">
+        <span class="meta" title="Internal service identifier">
+          <span style="color:var(--text-faint);">Service ID</span>
+          <span>${escapeHTML(proj.id)}</span>
+          <button class="copy" type="button" data-copy="${escapeHTML(proj.id)}" title="Copy service ID">⧉</button>
+        </span>
         <span class="meta">
-          <span style="color:var(--text-faint);">↗</span>
-          <a class="live-url-anchor" href="${liveURL}" target="_blank" rel="noopener">${escapeHTML(liveHost)}</a>
-          <button class="copy" type="button" data-copy="${escapeHTML(liveURL)}" title="Copy URL">⧉</button>
-        </span>` : ''}
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.5c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.05-.49.05-.49.81.06 1.23.83 1.23.83.72 1.23 1.88.87 2.34.67.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.96 0-.87.31-1.59.83-2.15-.08-.2-.36-1.02.08-2.13 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.03 2.2-.82 2.2-.82.44 1.11.16 1.93.08 2.13.52.56.83 1.28.83 2.15 0 3.08-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.19c0 .21.15.46.55.38A8 8 0 0 0 8 0z"/></svg>
+          ${repoHTML}
+          <span style="color:var(--text-faint);">·</span>
+          <span title="Production branch">⎇ ${escapeHTML(proj.production_branch)}</span>
+        </span>
+        ${liveURL ? `
+          <span class="meta">
+            <span style="color:var(--text-faint);">↗</span>
+            <a class="live-url-anchor" href="${liveURL}" target="_blank" rel="noopener">${escapeHTML(liveHost)}</a>
+            <button class="copy" type="button" data-copy="${escapeHTML(liveURL)}" title="Copy URL">⧉</button>
+          </span>` : ''}
+      </div>
+    </div>
+    <div class="ph-aside">
+      ${liveURL ? `<a class="visit-btn" href="${liveURL}" target="_blank" rel="noopener">Visit ↗</a>` : ''}
+      <!-- Run-state lives in the header now (was a KPI tile). Filled in
+           by paintStatusTile once /v1/projects/{id}/status returns; the
+           placeholder keeps the header from reflowing on first paint. -->
+      <div id="status-tile" class="header-status">
+        <div class="hs-label">Status</div>
+        <div class="hs-row"><span class="hs-sub">checking…</span></div>
+      </div>
     </div>`;
   // Wire copy-to-clipboard on every .copy button. Falls back silently
   // when navigator.clipboard is unavailable (older browsers / non-HTTPS).
@@ -3314,8 +3355,8 @@ function renderOverviewHeader(proj) {
   // "• DNS propagating…" label; the URL anchor uses the tooltip-only
   // variant so the text doesn't blow past the ellipsis budget.
   if (liveURL) {
-    applyDNSGate(host.querySelector('.top .visit-btn'),       liveURL);
-    applyDNSGate(host.querySelector('.live-url-anchor'),      liveURL, { tooltipOnly: true });
+    applyDNSGate(host.querySelector('.ph-aside .visit-btn'), liveURL);
+    applyDNSGate(host.querySelector('.live-url-anchor'),     liveURL, { tooltipOnly: true });
   }
 }
 
@@ -3697,6 +3738,12 @@ function paintLiveDeploymentRow(projectID) {
   });
 }
 
+// paintStatusTile renders the run-state into the header banner's aside
+// (it used to be a KPI tile; moved to the header to use the empty space
+// next to the Visit button). The element id is unchanged (#status-tile)
+// so every caller — loadAndRenderProjectStatus + the button's own
+// recursive repaint — keeps working. Markup is the .header-status pill:
+// a coloured dot + state word + "x of y ready" + a Start/Stop button.
 function paintStatusTile(projectID, state) {
   const tile = $('status-tile');
   if (!tile) return;
@@ -3705,9 +3752,12 @@ function paintStatusTile(projectID, state) {
   //              Stopped → "Start" button.
   if ((state.deployments || 0) === 0) {
     tile.innerHTML = `
-      <div class="label">Status</div>
-      <div class="value" style="font-size:14px;color:var(--text-faint);">no deploys</div>
-      <div class="sub">push to start</div>`;
+      <div class="hs-label">Status</div>
+      <div class="hs-row">
+        <span class="hs-dot" style="background:var(--text-faint);"></span>
+        <span class="hs-state" style="color:var(--text-faint);">no deploys</span>
+        <span class="hs-sub">push to start</span>
+      </div>`;
     return;
   }
   // Four states from (desired, ready). The middle one — desired > 0
@@ -3730,10 +3780,11 @@ function paintStatusTile(projectID, state) {
     label = 'running';        valueColor = 'var(--ok)';   action = 'stop';  actionLabel = 'Stop';
   }
   tile.innerHTML = `
-    <div class="label">Status</div>
-    <div class="value" style="font-size:14px; color:${valueColor};">${label}</div>
-    <div class="sub" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
-      <span>${ready} of ${desired} ready</span>
+    <div class="hs-label">Status</div>
+    <div class="hs-row">
+      <span class="hs-dot" style="background:${valueColor};"></span>
+      <span class="hs-state" style="color:${valueColor};">${label}</span>
+      <span class="hs-sub">${ready} of ${desired} ready</span>
       ${showButton ? `<button class="btn-action ${action}" data-action="${action}">${actionLabel}</button>` : ''}
     </div>`;
   if (!showButton) return;
