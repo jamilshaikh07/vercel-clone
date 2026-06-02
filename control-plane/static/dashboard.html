@@ -4,6 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>paas — dashboard</title>
+  <!-- Favicon mirrors the sidebar brand mark (.brand .logo svg below).
+       Inlined as a data URI to avoid an extra request and so there's no
+       separate file to keep in sync with the in-page logo. The notch is
+       carved out via fill-rule="evenodd" rather than filled with a
+       background color, so the icon reads correctly in both light and
+       dark browser-tab themes. '#' in the gradient ref must be %23 in
+       a data URI. -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%237aa2f7'/><stop offset='1' stop-color='%2322c55e'/></linearGradient></defs><path fill-rule='evenodd' fill='url(%23g)' d='M16 3L29 28L3 28Z M16 14L24 28L8 28Z'/><circle cx='16' cy='22' r='2' fill='url(%23g)'/></svg>">
   <script>
     // Theme bootstrap — runs synchronously before <style> is parsed so the
     // body never paints in the wrong palette. Default is 'dark'; the user's
