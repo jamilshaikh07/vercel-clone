@@ -921,6 +921,36 @@
       text-decoration: none;
     }
     .log-head a:hover, .log-head button:hover { color: var(--text); border-color: var(--accent); text-decoration: none; }
+
+    /* Build / Runtime mode toggle. Segmented control — the two buttons
+       share a single rounded outline so they read as one widget. The
+       active half is filled with the accent-dim so it pops against
+       the panel without screaming. */
+    .log-mode-toggle {
+      display: inline-flex;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      background: var(--bg-2);
+    }
+    .log-mode-toggle button {
+      border: none !important;
+      border-radius: 0 !important;
+      padding: 3px 12px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-dim);
+      cursor: pointer;
+      background: transparent;
+    }
+    .log-mode-toggle button + button { border-left: 1px solid var(--border) !important; }
+    .log-mode-toggle button:hover { color: var(--text); background: var(--panel-2); }
+    .log-mode-toggle button.active {
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
     .log-line { display: grid; grid-template-columns: 64px 1fr; gap: 8px; }
     .log-line .c { color: var(--text-dim); font-weight: 600; user-select: none; }
     .log-line.kaniko .c { color: var(--building); }
@@ -1170,10 +1200,25 @@
         <div class="page" id="page-logs">
           <div class="logs-pane">
             <div class="log-head">
-              <span class="title" id="log-title">Live</span>
+              <!-- Segmented toggle flips between the two streams for the
+                   SAME deployment the user is looking at:
+                     • Build  — /v1/deployments/{id}/logs (Kaniko Job output;
+                       retained only while the build pod exists, ~1h post-
+                       completion).
+                     • Runtime — /v1/deployments/{id}/runtime-logs (kubectl
+                       logs -f on the tenant pod; available as long as the
+                       pod is up). -->
+              <div class="log-mode-toggle" id="log-mode-toggle" role="tablist" aria-label="Log source">
+                <button type="button" data-log-mode="build" role="tab" title="Kaniko build output for this commit">Build</button>
+                <button type="button" data-log-mode="runtime" role="tab" title="Live stdout/stderr from this deployment's pod">Runtime</button>
+              </div>
               <span class="commit" id="log-commit">—</span>
-              <a id="log-back-to-live" href="#" style="display:none" title="Tail the running pod instead">← Live logs</a>
+              <a id="log-back-to-live" href="#" style="display:none" title="Stop tailing this deployment, jump back to the production pod">← latest</a>
               <span class="spacer"></span>
+              <!-- log-title is kept (hidden) because streamLogsFor() still
+                   writes to it; the visible source-of-truth is now the
+                   segmented toggle above. -->
+              <span class="title" id="log-title" style="display:none">Live</span>
               <a id="log-url" target="_blank" rel="noopener" style="display:none">open ↗</a>
             </div>
             <div class="log-body" id="log-body">
@@ -1334,7 +1379,19 @@ let DATA  = { projects: [] };     // last /v1/projects payload
 let ROUTE = { scope: 'home' };    // current navigation
 let currentES = null;             // active SSE EventSource
 let selectedDeploymentID = null;  // currently-tailed deployment on the logs page
-let logMode = 'build';            // build | runtime — persisted across deployment swaps
+let logMode = 'runtime';          // build | runtime — persisted across deployment swaps + refresh ticks
+// Track the last (id, mode) we actually started streaming, so the
+// 10s refresh tick can call renderLogsPage() without tearing down
+// and rebuilding the SSE stream every time. Also lets the Build /
+// Runtime toggle short-circuit when the user clicks the already-
+// active half.
+let lastStreamKey = '';
+// Remember which deployment was pinned on the previous render. We use
+// this to decide whether to *reset* logMode to a sensible default for
+// the new target (build for a pinned historical row, runtime for live)
+// versus *preserve* the user's explicit toggle choice across the
+// background refresh ticks.
+let lastRenderedPinID = null;
 // Per-project SQL console state preserved across refresh() re-renders so the
 // 10s background poll doesn't wipe the user's textarea or result table.
 const sqlState = {};
@@ -2453,39 +2510,79 @@ function renderLogsPage() {
     logCommit.textContent = '—';
     logUrl.style.display = 'none';
     logBackToLive.style.display = 'none';
+    document.getElementById('log-mode-toggle').style.visibility = 'hidden';
     logBody.innerHTML = '<div class="log-placeholder">No deployments yet. Push a commit to ' +
       escapeHTML(proj.production_branch) + ' to see logs here.</div>';
     return;
   }
+  document.getElementById('log-mode-toggle').style.visibility = '';
 
   // Did someone deep-link to a specific build (Overview row click,
-  // #d=<uuid>, redeploy flow)? If so, tail its build logs.
+  // #d=<uuid>, redeploy flow)? If so, that deployment is the target;
+  // otherwise we tail the live one. Either way, the Build/Runtime
+  // toggle lets the user flip the source for the SAME deployment.
   const pinned = selectedDeploymentID && deps.find(d => d.id === selectedDeploymentID);
-  if (pinned) {
-    logMode = 'build';
-    logBackToLive.style.display = '';
-    logUrl.style.display = pinned.url ? '' : 'none';
-    if (pinned.url) logUrl.href = pinned.url;
-    streamLogsFor(pinned.id, pinned.commit_sha, 'build');
-    return;
-  }
+  const live   = liveDeploymentForProject(proj);
+  const target = pinned || live;
 
-  // Default: the live pod's runtime logs.
-  logMode = 'runtime';
-  logBackToLive.style.display = 'none';
-  const live = liveDeploymentForProject(proj);
-  if (!live) {
+  if (!target) {
     closeStream();
+    lastStreamKey = '';
     logTitle.textContent = 'Live';
     logCommit.textContent = 'no ready deployment';
     logUrl.style.display = 'none';
+    logBackToLive.style.display = 'none';
     logBody.innerHTML = '<div class="log-placeholder">Waiting for a successful deployment…</div>';
     return;
   }
-  logUrl.style.display = live.url ? '' : 'none';
-  if (live.url) logUrl.href = live.url;
-  streamLogsFor(live.id, live.commit_sha, 'runtime');
+
+  // Mode policy: when the pinned deployment *changes* (user clicked a
+  // new row), reset to a sensible default for that target — build
+  // logs for a historical row, runtime for the live one. While the
+  // pin stays the same, we preserve whatever the user has toggled to
+  // so a 10s refresh tick can't yank them off the Runtime tab.
+  const pinChanged = (selectedDeploymentID || null) !== lastRenderedPinID;
+  if (pinChanged) {
+    logMode = pinned ? 'build' : 'runtime';
+    lastRenderedPinID = selectedDeploymentID || null;
+  }
+
+  // "← latest" only makes sense when we've drilled into a deployment
+  // that isn't the current production target. For the live row
+  // (pinned === live, or unpinned) we hide it — there's no 'latest'
+  // to go back to.
+  const showBackToLive = !!(pinned && (!live || pinned.id !== live.id));
+  logBackToLive.style.display = showBackToLive ? '' : 'none';
+
+  logUrl.style.display = target.url ? '' : 'none';
+  if (target.url) logUrl.href = target.url;
+
+  paintLogModeToggle();
+  streamLogsFor(target.id, target.commit_sha, logMode);
 }
+
+// paintLogModeToggle flips the .active class so the segmented toggle
+// always reflects logMode, including across refresh-driven re-renders
+// that didn't touch the DOM markup itself.
+function paintLogModeToggle() {
+  document.querySelectorAll('#log-mode-toggle button').forEach(b => {
+    b.classList.toggle('active', b.dataset.logMode === logMode);
+  });
+}
+
+// Wire the segmented toggle once at load. Clicking the other half
+// flips logMode and re-renders — streamLogsFor's idempotency check
+// keeps the click from churning the SSE stream when the user
+// double-clicks the same button.
+document.querySelectorAll('#log-mode-toggle button').forEach(b => {
+  b.addEventListener('click', () => {
+    const next = b.dataset.logMode;
+    if (next !== 'build' && next !== 'runtime') return;
+    if (logMode === next) return;
+    logMode = next;
+    renderLogsPage();
+  });
+});
 
 // liveDeploymentForProject picks the deployment whose pod is currently
 // behind the production-alias IngressRoute.
@@ -2516,17 +2613,26 @@ function liveDeploymentForProject(proj) {
          null;
 }
 
-// "← Live logs" pill flips the page back to runtime mode without a
-// navigation: clear the pinned-deployment intent and re-render.
+// "← latest" jumps from a historical deployment back to the current
+// production pod's runtime logs: clear the pin AND reset logMode so
+// the user lands on Runtime by default (most useful default for the
+// live pod). Re-render to repaint the toggle + status line.
 logBackToLive.addEventListener('click', (ev) => {
   ev.preventDefault();
   selectedDeploymentID = null;
+  logMode = 'runtime';
   renderLogsPage();
 });
 
-// streamLogsFor opens an SSE stream. Safe to call repeatedly — always
-// closes the previous EventSource first.
+// streamLogsFor opens an SSE stream for (deployment, mode). Idempotent:
+// when the requested (id, mode) matches the active stream we no-op so
+// the 10s background refresh tick can't tear down the user's tail or
+// wipe the on-screen buffer. The toggle handler relies on this too —
+// double-clicks on the active half become a no-op.
 function streamLogsFor(id, commit, mode) {
+  const key = id + ':' + mode;
+  if (key === lastStreamKey && currentES) return;
+  lastStreamKey = key;
   closeStream();
   logBody.innerHTML = '';
   logTitle.textContent = mode === 'runtime' ? 'Live' : 'Build';
