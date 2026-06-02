@@ -2119,6 +2119,12 @@ const logBackToLive = $('log-back-to-live');
 let DATA  = { projects: [] };     // last /v1/projects payload
 let ROUTE = { scope: 'home' };    // current navigation
 let currentES = null;             // active SSE EventSource
+// False until the first /v1/projects load lands. The bootstrap renders
+// the route once against an empty DATA (applyRoute) before data arrives,
+// so the first refresh must render like a navigation to give a deep-
+// linked self-managed page (insights/telemetry/traffic) a data-backed
+// render. After that, background polls leave those pages alone.
+let initialDataLoaded = false;
 let selectedDeploymentID = null;  // currently-tailed deployment on the logs page
 // Track the last (id, mode) we actually started streaming, so the 10s
 // refresh tick can call renderLogsPage() without tearing down and
@@ -2334,7 +2340,15 @@ async function refresh() {
     DATA = await fetchJSON('/v1/projects');
     const n = (DATA.projects || []).length;
     meta.textContent = (n === 1 ? '1 project' : n + ' projects') + ' · updated ' + new Date().toLocaleTimeString();
-    renderUI();
+    // Data poll, not a navigation — renderUI(false) refreshes the
+    // sidebar + data-driven pages but leaves self-managed live pages
+    // (insights / telemetry / traffic) untouched so we don't re-run
+    // their fetches or reset their scroll every 10s. The one exception
+    // is the very first load: applyRoute() rendered the route against an
+    // empty DATA, so we render once like a navigation to let a deep-
+    // linked self-managed page find its project.
+    renderUI(!initialDataLoaded);
+    initialDataLoaded = true;
     // Kick off the run-state fan-out without awaiting it — the
     // sidebar will repaint each icon as its /status response lands,
     // so a slow status check on one project doesn't hold up the
@@ -2537,7 +2551,7 @@ function applyRoute() {
     pendingDeploymentID = ROUTE.pendingDeploymentID;
     delete ROUTE.pendingDeploymentID;
   }
-  renderUI();
+  renderUI(true);
 }
 
 window.addEventListener('hashchange', applyRoute);
@@ -2574,10 +2588,13 @@ window.addEventListener('resize', () => {
 // ----- Top-level render --------------------------------------------------
 // Called by both applyRoute (route change) and refresh (data change).
 
-function renderUI() {
+// isNavigation=true means this render was triggered by an explicit
+// route change; false means it's the background data poll. Self-managed
+// live pages only (re)render on navigation — see showPage().
+function renderUI(isNavigation) {
   renderSidebar();
   renderCrumbs();
-  showPage();
+  showPage(isNavigation);
 
   // If a deep-link is pending and the deployment has now arrived in DATA,
   // route to its logs.
@@ -2822,7 +2839,7 @@ function liveURLForProject(proj) {
 
 // Show the page matching ROUTE; hide all others. Then call the page's
 // render function so its content reflects current DATA + route.
-function showPage() {
+function showPage(isNavigation) {
   const pageKey =
     ROUTE.scope === 'home' ? 'home' :
     ROUTE.scope === 'global' ? ROUTE.view :
@@ -2831,6 +2848,18 @@ function showPage() {
   Object.entries(pageEls).forEach(([k, el]) => {
     el.classList.toggle('active', k === pageKey);
   });
+
+  // Self-managed live pages own their own update lifecycle:
+  //   - insights: on-demand only (the user clicks "Run analysis")
+  //   - telemetry / traffic: drive their own 5s metric poll
+  // Re-rendering them from the 10s background data poll would re-fetch
+  // (insights re-runs the whole live-URL analysis), tear down + restart
+  // their polls, and yank the scroll back to the top. So on a data poll
+  // we leave them as-is and only (re)render on an explicit navigation.
+  // The poll still refreshes the sidebar run-states + the data-driven
+  // pages (home / overview / logs / …) below.
+  const selfManaged = pageKey === 'insights' || pageKey === 'telemetry' || pageKey === 'traffic';
+  if (selfManaged && !isNavigation) return;
 
   switch (pageKey) {
     case 'home':      return renderHome();
