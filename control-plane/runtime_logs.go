@@ -119,6 +119,11 @@ func (s *server) handleDeploymentRuntimeLogs(w http.ResponseWriter, r *http.Requ
 		flush()
 		return true
 	}
+	// 2KB padding preamble — see comment on sseBufferBust in logs.go.
+	// Defeats response-coalescing in intermediate proxies that would
+	// otherwise hold small log lines in a buffer until the 2s ticker
+	// hits, making the dashboard feel laggy.
+	w.Write(sseBufferBust)
 	heartbeat()
 
 	ctx := r.Context()
@@ -201,7 +206,9 @@ func (s *server) handleDeploymentRuntimeLogs(w http.ResponseWriter, r *http.Requ
 	hbCtx, hbCancel := context.WithCancel(ctx)
 	defer hbCancel()
 	go func() {
-		t := time.NewTicker(15 * time.Second)
+		// 2s tick keeps the stream warm and bounds the worst-case
+		// buffer-flush latency at any upstream proxy.
+		t := time.NewTicker(2 * time.Second)
 		defer t.Stop()
 		for {
 			select {

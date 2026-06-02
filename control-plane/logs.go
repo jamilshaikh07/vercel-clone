@@ -31,6 +31,26 @@ var uuidRE = regexp.MustCompile(`^[0-9a-fA-F-]{36}$`)
 // client wants to see streamed. Matches buildJobManifest.
 var buildContainers = []string{"clone", "kaniko"}
 
+// sseBufferBust is a 2KB SSE comment written immediately after the response
+// headers on every log stream. Many reverse proxies (Cloudflare Tunnel,
+// some Traefik configurations, nginx-ingress without proxy_buffering off)
+// will hold small responses in a buffer until either (a) the buffer fills
+// or (b) some inactivity timeout fires — even when the application has
+// already called Flush. Pre-loading the response with 2KB of padding
+// pushes the buffer past those thresholds on the first write, so the
+// per-line Flush()es that follow actually make it to the client in real
+// time. The leading ':' marks the whole block as an SSE comment, which
+// the browser's EventSource API silently discards.
+var sseBufferBust = func() []byte {
+	buf := make([]byte, 0, 2050)
+	buf = append(buf, ':')
+	for i := 0; i < 2048; i++ {
+		buf = append(buf, ' ')
+	}
+	buf = append(buf, '\n', '\n')
+	return buf
+}()
+
 func (s *server) handleDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !uuidRE.MatchString(id) {
@@ -107,19 +127,29 @@ func (s *server) handleDeploymentLogs(w http.ResponseWriter, r *http.Request) {
 		flush()
 		return true
 	}
+	// 2KB padding preamble — forces intermediate proxies (Cloudflare
+	// Tunnel, Traefik) to commit to streaming this response instead
+	// of buffering small writes until some threshold. Without this,
+	// individual log lines (~100B each) get coalesced upstream and
+	// arrive in 15s bursts coincident with the heartbeat tick rather
+	// than in real time. The space-padded SSE comment is ignored by
+	// the browser's EventSource and adds <1ms latency to first byte.
+	w.Write(sseBufferBust)
 	heartbeat()
 
 	// Initial status snapshot — UI can render "queued"/"building"/etc.
 	// immediately, even if the pod doesn't exist yet.
 	send("status", statusPayload(dep))
 
-	// Background ticker keeps the stream warm during long idle gaps
-	// inside kaniko / clone / waitForBuildPod. Cancelled when the
-	// handler returns.
+	// Background ticker keeps the stream warm during idle gaps inside
+	// kaniko / clone / waitForBuildPod and — critically — forces a flush
+	// every 2s so the worst-case visible gap between a log line being
+	// written on the pod and it appearing in the dashboard is bounded
+	// to ~2s even when an intermediary is still coalescing.
 	hbCtx, hbCancel := context.WithCancel(r.Context())
 	defer hbCancel()
 	go func() {
-		t := time.NewTicker(15 * time.Second)
+		t := time.NewTicker(2 * time.Second)
 		defer t.Stop()
 		for {
 			select {
