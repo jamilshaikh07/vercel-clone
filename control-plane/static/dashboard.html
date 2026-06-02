@@ -1189,6 +1189,50 @@
     }
     .insight-hint { margin-top: 4px; font-size: 11px; color: var(--text-faint); }
 
+    /* === Insights → "Open improvement PR" result strip ====================
+       Sits below the checks list inside the same panel. Three visual
+       states keyed off the .ok / .warn / (default = pending) classes
+       the JS swaps in. Wrapped in its own card-within-card so the
+       border colour communicates outcome at a glance. */
+    .insights-pr-result {
+      margin: 0 16px 16px;
+      padding: 14px 16px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel-2);
+      font-size: 13px;
+    }
+    .insights-pr-result.ok   { border-color: var(--ok);  background: rgba(46, 204, 113, 0.06); }
+    .insights-pr-result.warn { border-color: #f1c40f;     background: rgba(241, 196, 15, 0.06); }
+    .insights-pr-pending     { color: var(--text-dim); font-style: italic; }
+    .insights-pr-headline {
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      justify-content: space-between;
+    }
+    .insights-pr-headline code {
+      background: var(--panel-3); padding: 1px 6px; border-radius: 4px;
+      font-size: 12px; color: var(--text);
+    }
+    .insights-pr-headline .btn-primary {
+      text-decoration: none; padding: 6px 12px; font-size: 12px;
+    }
+    .insights-pr-section { margin-top: 14px; }
+    .insights-pr-section-title {
+      font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+      color: var(--text-faint); font-weight: 600; margin-bottom: 6px;
+    }
+    .insights-pr-result ul { margin: 0; padding-left: 20px; }
+    .insights-pr-result li { margin: 4px 0; line-height: 1.5; }
+    .insights-pr-result li code {
+      background: var(--panel-3); padding: 1px 6px; border-radius: 4px;
+      font-size: 11px;
+    }
+    .insights-pr-foot {
+      margin-top: 12px; padding-top: 10px;
+      border-top: 1px dashed var(--border);
+      color: var(--text-faint); font-size: 11px;
+    }
+
     /* === Database page =================================================== */
     .db-card {
       display: grid; grid-template-columns: 140px 1fr; gap: 10px 16px;
@@ -3706,6 +3750,12 @@ function renderInsights() {
       <div class="panel-head">
         <h3>SEO &amp; production-readiness</h3>
         <span class="spacer"></span>
+        <!-- Heuristic auto-fix: opens a draft PR on the project's repo
+             adding the obvious missing meta tags (title, description,
+             viewport, canonical, OG…). Disabled until the first
+             analysis returns so we don't try to PR a blank report. -->
+        <button class="btn-primary" id="insights-suggest-pr" disabled
+                title="Run an analysis first">Open improvement PR</button>
         <button class="btn-primary" id="insights-refresh">Run analysis</button>
       </div>
       <div class="panel-body" id="insights-body" style="padding: 14px 16px;">
@@ -3713,9 +3763,67 @@ function renderInsights() {
           Running first analysis — this fetches your live URL and parses the response.
         </div>
       </div>
+      <!-- Inline result strip for the suggest-PR action. Hidden until
+           the button is clicked. Populated by openInsightsPR(). -->
+      <div id="insights-pr-result" class="insights-pr-result" style="display:none;"></div>
     </div>`;
   $('insights-refresh').addEventListener('click', () => loadInsights(proj.id));
+  $('insights-suggest-pr').addEventListener('click', () => openInsightsPR(proj.id));
   loadInsights(proj.id);
+}
+
+// Kick off the backend's heuristic SEO patcher and surface the result
+// inline. Single-shot — the backend creates a branch + commit + draft
+// PR in one synchronous call (no job queue) so a successful response
+// already contains the PR URL.
+async function openInsightsPR(projectID) {
+  const btn = $('insights-suggest-pr');
+  const out = $('insights-pr-result');
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = 'Opening PR…';
+  out.style.display = '';
+  out.innerHTML = `<div class="insights-pr-pending">Talking to GitHub — creating a branch, committing the fixes, and opening a draft PR…</div>`;
+  try {
+    const res = await fetch('/v1/projects/' + projectID + '/insights/suggest-pr', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      // Backend distinguishes "nothing to do" / "no entry file" / etc.
+      // by returning {ok: false, message: ...} with 200; auth & GH
+      // failures use real HTTP error codes. Either way we just show
+      // the message verbatim — it's already user-facing.
+      out.className = 'insights-pr-result warn';
+      out.innerHTML = `<div><strong>Couldn't open a PR.</strong> ${escapeHTML(data.message || ('HTTP ' + res.status))}</div>`;
+      return;
+    }
+    const appliedRows = (data.applied || []).map(p =>
+      `<li><strong>${escapeHTML(p.label)}</strong> — <code>${escapeHTML((p.snippet || '').trim())}</code></li>`
+    ).join('');
+    const skippedRows = (data.skipped || []).map(p =>
+      `<li><strong>${escapeHTML(p.label)}</strong> — <span style="color:var(--text-dim);">${escapeHTML(p.reason || '')}</span></li>`
+    ).join('');
+    out.className = 'insights-pr-result ok';
+    out.innerHTML = `
+      <div class="insights-pr-headline">
+        <div>
+          <strong>✓ Draft PR #${data.pr_number} opened</strong> on <code>${escapeHTML(data.file_path || '')}</code>
+          via branch <code>${escapeHTML(data.branch || '')}</code>.
+        </div>
+        <a class="btn-primary" href="${escapeHTML(data.pr_url)}" target="_blank" rel="noopener">Review on GitHub ↗</a>
+      </div>
+      ${appliedRows ? `<div class="insights-pr-section"><div class="insights-pr-section-title">Added (${data.applied.length})</div><ul>${appliedRows}</ul></div>` : ''}
+      ${skippedRows ? `<div class="insights-pr-section"><div class="insights-pr-section-title">Skipped — need your input</div><ul>${skippedRows}</ul></div>` : ''}
+      <div class="insights-pr-foot">Review and merge when ready. Existing tags were left untouched — only missing ones were added.</div>`;
+  } catch (e) {
+    out.className = 'insights-pr-result warn';
+    out.innerHTML = `<div><strong>Request failed:</strong> ${escapeHTML(e.message || String(e))}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
 }
 
 async function loadInsights(projectID) {
@@ -3776,6 +3884,17 @@ function paintInsights(data) {
     <div class="insight-list">
       ${(data.checks || []).map(renderInsightCheck).join('')}
     </div>`;
+  // Enable the "Open improvement PR" button only once we have a real
+  // report to act on. A perfect score (100) still lets the user click —
+  // the backend will return "nothing to do" gracefully and we surface
+  // that as an informational message.
+  const prBtn = $('insights-suggest-pr');
+  if (prBtn) {
+    prBtn.disabled = false;
+    prBtn.title = data.score >= 100
+      ? 'Everything we can auto-fix is already in place — try anyway?'
+      : 'Open a draft PR with heuristic SEO fixes';
+  }
 }
 
 function renderInsightCheck(c) {

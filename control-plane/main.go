@@ -212,6 +212,7 @@ func main() {
 		"GET /v1/projects/{id}/status":            s.handleProjectStatus,
 		"POST /v1/projects/{id}/scale":            s.handleProjectScale,
 		"GET /v1/projects/{id}/insights":          s.handleProjectInsights,
+		"POST /v1/projects/{id}/insights/suggest-pr": s.handleSuggestInsightsPR,
 		"GET /v1/projects/{id}/domains":                       s.handleListProjectDomains,
 		"POST /v1/projects/{id}/domains":                      s.handleAddProjectDomain,
 		"POST /v1/projects/{id}/domains/{hostname}/verify":    s.handleVerifyProjectDomain,
