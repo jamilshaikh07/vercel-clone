@@ -5640,6 +5640,11 @@ async function tickProjectTelemetry() {
     $('pt-pods').innerHTML = `<tr><td colspan="5" style="color:var(--err);">${escapeHTML(e.message || String(e))}</td></tr>`;
     return;
   }
+  // Capture the page scroll offset before we rebuild the panels so the
+  // poll updates in place (Grafana-style) instead of yanking the
+  // viewport to the top. Restored at the end of the tick.
+  const scroller = activePageScroller();
+  const savedScroll = scroller ? scroller.scrollTop : 0;
   $('pt-asof').textContent = 'updated ' + new Date(snap.as_of).toLocaleTimeString();
   const pts = metrics.points || [];
   const totalReqs = pts.reduce((s, p) => s + (p.req_2xx + p.req_3xx + p.req_4xx + p.req_5xx), 0);
@@ -5650,8 +5655,6 @@ async function tickProjectTelemetry() {
   const winSub = 'last ' + rangeMeta.label;
 
   $('pt-summary').innerHTML = [
-    kpiTile('Pods running', (snap.pods || []).length, snap.pods?.length ? 'replicas live' : 'stopped',
-            snap.pods?.length ? 'ok' : 'dim'),
     kpiTile('CPU', fmtCPU(snap.total_cpu_m), 'current'),
     kpiTile('Memory', fmtMem(snap.total_memory_mi), 'current'),
     kpiTile('Avg RPS', avgRps.toFixed(2), winSub),
@@ -5703,6 +5706,9 @@ async function tickProjectTelemetry() {
             <td><div class="cell-bar"><div class="cell-bar-fill" style="width:${memPct.toFixed(0)}%; background:#9b59b6;"></div></div></td>
           </tr>`;
       }).join('');
+
+  // Restore scroll now that every panel has its full height back.
+  if (scroller) scroller.scrollTop = savedScroll;
 }
 
 // =========================================================================
@@ -5776,8 +5782,20 @@ async function tickProjectTraffic() {
   }
   const asof = $('pa-asof');
   if (asof && tel.as_of) asof.textContent = 'updated ' + new Date(tel.as_of).toLocaleTimeString();
+  // Preserve scroll across the in-place panel rebuild (see
+  // activePageScroller) so the poll doesn't jump the viewport to top.
+  const scroller = activePageScroller();
+  const savedScroll = scroller ? scroller.scrollTop : 0;
   const pts = metrics.points || [];
-  const errPct = tel.requests > 0 ? ((tel.errors / tel.requests) * 100) : 0;
+  // KPI tiles reflect the SELECTED range, not lifetime — clicking 5m vs
+  // 1w now actually changes the Requests + Error-rate numbers. The old
+  // tiles used the lifetime counters (tel.requests / tel.errors) which
+  // only crept up by a couple between ranges, so the selector read as
+  // "does nothing".
+  const winLabel = 'last ' + RANGE_META[trafficRange].label;
+  const winReqs = pts.reduce((s, p) => s + p.req_2xx + p.req_3xx + p.req_4xx + p.req_5xx, 0);
+  const winErrs = pts.reduce((s, p) => s + p.req_4xx + p.req_5xx, 0);
+  const errPct = winReqs > 0 ? (winErrs / winReqs) * 100 : 0;
 
   // Pick the most recent NON-ZERO percentile window — the very latest
   // tick might be a quiet 30 s with no traffic, in which case all
@@ -5790,9 +5808,9 @@ async function tickProjectTraffic() {
   paintIncidents(detectIncidents(pts, metrics.interval_s || 30));
 
   $('pa-summary').innerHTML = [
-    kpiTile('Requests', fmtCount(tel.requests), 'lifetime'),
-    kpiTile('Error rate', errPct.toFixed(1) + '%',
-            tel.errors > 0 ? `${fmtCount(tel.errors)} errors` : 'no errors',
+    kpiTile('Requests', fmtCount(winReqs), winLabel),
+    kpiTile('Error rate', errPct.toFixed(errPct < 1 ? 2 : 1) + '%',
+            winErrs > 0 ? `${fmtCount(winErrs)} errors · ${winLabel}` : 'no errors in window',
             errPct > 5 ? 'err' : errPct > 1 ? 'warn' : 'ok'),
     kpiTile('Avg latency', fmtMs(tel.avg_latency_ms), 'lifetime'),
     kpiTile('p95', fmtMs(lastWithLat.latency_p95_ms || 0), 'last active window'),
@@ -5846,6 +5864,30 @@ async function tickProjectTraffic() {
   }
 
   fastSlowBar($('pa-perfbar'), pts);
+
+  // Restore scroll now that every panel has its full height back.
+  if (scroller) scroller.scrollTop = savedScroll;
+}
+
+// activePageScroller returns the scroll container for the current page.
+// The .page element owns overflow-y:auto, so a live poll that rebuilds
+// inner panels must save/restore its scrollTop — otherwise the brief
+// height collapse while a chart container is momentarily empty lets the
+// browser clamp the scroll back toward the top (the "jumps to top every
+// few seconds" bug). Grafana-style in-place updates keep the viewport
+// fixed while the data underneath refreshes.
+function activePageScroller() {
+  return document.querySelector('.page.active');
+}
+
+// runPreservingScroll captures the active page's scroll offset, runs the
+// synchronous DOM-rebuild callback, then restores the offset in the same
+// frame so the user never sees the viewport move.
+function runPreservingScroll(fn) {
+  const el = activePageScroller();
+  const top = el ? el.scrollTop : 0;
+  fn();
+  if (el) el.scrollTop = top;
 }
 
 // ----- Shared poll lifecycle ---------------------------------------------
