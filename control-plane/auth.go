@@ -180,24 +180,47 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
-	if code == "" || state == "" {
-		http.Error(w, "missing code or state", http.StatusBadRequest)
+	// GitHub hits this endpoint in two distinct scenarios:
+	//
+	//  1. OAuth sign-in flow we initiated via /login. GitHub round-trips
+	//     ?code=...&state=...  — `state` MUST be validated against the
+	//     short-lived cookie we set, or anyone could phish a login.
+	//
+	//  2. Post-install callback that GitHub initiates after the user
+	//     installs the App with "Request user authorization (OAuth)
+	//     during installation" enabled. It carries
+	//     ?code=...&installation_id=...&setup_action=install  — but no
+	//     `state`, because GitHub generated the OAuth code on its own
+	//     and never saw our cookie.
+	//
+	// In case (2) we skip state validation but still exchange the code
+	// for a token so we can refresh the user's session (or sign them in
+	// if they weren't yet) and immediately claim the new installation.
+	isInstallCallback := r.URL.Query().Get("setup_action") == "install"
+	if code == "" {
+		http.Error(w, "missing code", http.StatusBadRequest)
 		return
 	}
-	cookie, err := r.Cookie(stateCookie)
-	if err != nil || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(state)) != 1 {
-		http.Error(w, "state mismatch", http.StatusBadRequest)
-		return
+	if !isInstallCallback {
+		if state == "" {
+			http.Error(w, "missing state", http.StatusBadRequest)
+			return
+		}
+		cookie, err := r.Cookie(stateCookie)
+		if err != nil || subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(state)) != 1 {
+			http.Error(w, "state mismatch", http.StatusBadRequest)
+			return
+		}
+		if err := verifyState(s.auth.sessionSecret, state); err != nil {
+			http.Error(w, "state invalid: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		// State cookie is single-use — clear it.
+		http.SetCookie(w, &http.Cookie{
+			Name: stateCookie, Value: "", Path: "/", MaxAge: -1,
+			HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
+		})
 	}
-	if err := verifyState(s.auth.sessionSecret, state); err != nil {
-		http.Error(w, "state invalid: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	// State cookie is single-use — clear it.
-	http.SetCookie(w, &http.Cookie{
-		Name: stateCookie, Value: "", Path: "/", MaxAge: -1,
-		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
-	})
 
 	tok, err := s.exchangeOAuthCode(r.Context(), code)
 	if err != nil {
