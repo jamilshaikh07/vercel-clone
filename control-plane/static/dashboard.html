@@ -2265,8 +2265,18 @@ async function fetchJSON(url, init) {
     // returned 403: ...") reaches the user instead of bare "HTTP 500".
     // .text() is best-effort: a body read failure or empty body still
     // produces a useful "HTTP <status>" message.
+    //
+    // BUT gateway error pages (Cloudflare / Traefik 5xx while the
+    // control-plane is mid-rollout) return a full HTML document. Never
+    // surface that raw HTML — detect an HTML or oversized body and fall
+    // back to a concise "HTTP <status>" so we don't dump a wall of
+    // markup into the breadcrumb / an alert.
     let detail = '';
     try { detail = (await r.text()).trim(); } catch (_) { /* ignore */ }
+    const ct = (r.headers.get('Content-Type') || '').toLowerCase();
+    if (ct.includes('text/html') || detail.startsWith('<') || detail.length > 300) {
+      detail = '';
+    }
     throw new Error(detail ? `HTTP ${r.status}: ${detail}` : `HTTP ${r.status}`);
   }
   // 204 No Content is a legitimate response for some POST/DELETE
@@ -2429,7 +2439,10 @@ async function refresh() {
     pollAllProjectStatuses();
   } catch (e) {
     if (e.message === 'unauthenticated') return;
-    crumbsEl.textContent = 'Failed to load: ' + e.message;
+    // This is the 10s background poll — transient gateway blips (the
+    // control-plane mid-rollout, a Cloudflare 5xx) self-heal on the next
+    // tick, so keep the breadcrumb calm and concise rather than alarming.
+    crumbsEl.textContent = 'Reconnecting… (' + e.message + ')';
   }
 }
 
