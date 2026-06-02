@@ -17,9 +17,23 @@
     // body never paints in the wrong palette. Default is 'dark'; the user's
     // last choice (if any) is persisted in localStorage under 'theme'.
     (function () {
+      // Resolve the user's saved preference into the actual data-theme
+      // attribute the stylesheet keys off. We support three values:
+      //   'system' (default) — follow the OS via prefers-color-scheme.
+      //   'light'            — force light palette.
+      //   'dark'             — force dark palette.
+      // Done inline so we beat first paint and never flash the wrong
+      // theme on reload.
       try {
-        var saved = localStorage.getItem('theme');
-        document.documentElement.setAttribute('data-theme', saved === 'light' ? 'light' : 'dark');
+        var saved = localStorage.getItem('theme') || 'system';
+        var resolved = saved;
+        if (saved === 'system') {
+          var mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)');
+          resolved = (mq && mq.matches) ? 'light' : 'dark';
+        } else if (saved !== 'light' && saved !== 'dark') {
+          resolved = 'dark';
+        }
+        document.documentElement.setAttribute('data-theme', resolved);
       } catch (e) {
         document.documentElement.setAttribute('data-theme', 'dark');
       }
@@ -301,21 +315,114 @@
     .sidebar-footer {
       border-top: 1px solid var(--border);
       padding: 10px 14px;
-      display: flex; align-items: center; gap: 8px;
       background: var(--panel);
     }
-    .sidebar-footer .me { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text); min-width: 0; flex: 1; }
-    .sidebar-footer .me img { width: 22px; height: 22px; border-radius: 50%; }
-    .sidebar-footer .me span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .sidebar-footer .signout,
-    .sidebar-footer .theme-toggle {
-      background: transparent; border: 1px solid var(--border); color: var(--text-dim);
-      font-size: 11px; padding: 4px 8px; border-radius: 6px; cursor: pointer;
-      display: inline-flex; align-items: center; justify-content: center;
+    .sidebar-footer .support-link {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-size: 12px; color: var(--text-dim);
+      text-decoration: none;
     }
-    .sidebar-footer .signout:hover,
-    .sidebar-footer .theme-toggle:hover { color: var(--text); border-color: var(--accent); }
-    .sidebar-footer .theme-toggle svg { width: 13px; height: 13px; display: block; }
+    .sidebar-footer .support-link:hover { color: var(--accent); text-decoration: none; }
+
+    /* User menu in the topbar. Avatar circle on the right opens a small
+       popover with the signed-in identity, a System/Light/Dark theme
+       picker, and Sign out. Mirrors the pattern Render uses, but with
+       fewer items because we don't have account-settings / changelog
+       surfaces of our own. */
+    .user-menu { position: relative; }
+    .user-menu .avatar {
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: linear-gradient(135deg, #7aa2f7 0%, #22c55e 100%);
+      color: #0b0d11;
+      font-size: 12px; font-weight: 700;
+      flex-shrink: 0;
+      overflow: hidden;
+      line-height: 1;
+    }
+    .user-menu .avatar img { width: 100%; height: 100%; display: block; object-fit: cover; }
+    .user-menu .avatar.lg { width: 36px; height: 36px; font-size: 14px; }
+    .user-menu-btn {
+      background: transparent; border: 1px solid var(--border);
+      padding: 2px; border-radius: 50%;
+      cursor: pointer;
+      display: inline-flex;
+      transition: border-color 120ms;
+    }
+    .user-menu-btn:hover { border-color: var(--accent); }
+    .user-menu-pop {
+      position: absolute;
+      top: calc(100% + 8px);
+      right: 0;
+      min-width: 260px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+      z-index: 50;
+      overflow: hidden;
+    }
+    .user-menu-pop[hidden] { display: none; }
+    .user-menu-id {
+      display: flex; align-items: center; gap: 12px;
+      padding: 14px 16px;
+    }
+    .user-menu-id-text { min-width: 0; flex: 1; }
+    .user-menu-id-text .name {
+      font-size: 13px; font-weight: 600; color: var(--text);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .user-menu-id-text .email {
+      font-size: 11px; color: var(--text-dim);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      margin-top: 2px;
+    }
+    .user-menu-section {
+      border-top: 1px solid var(--border);
+      padding: 10px 12px;
+    }
+    .user-menu-section-label {
+      font-size: 10px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--text-faint);
+      margin-bottom: 8px;
+    }
+    .theme-picker {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 0;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      background: var(--bg-2);
+    }
+    .theme-picker button {
+      border: none;
+      background: transparent;
+      color: var(--text-dim);
+      padding: 6px 4px;
+      font-size: 11px; font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .theme-picker button + button { border-left: 1px solid var(--border); }
+    .theme-picker button:hover { color: var(--text); background: var(--panel-2); }
+    .theme-picker button[aria-checked="true"] {
+      background: var(--accent-dim);
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .user-menu-item {
+      display: block; width: 100%;
+      background: transparent; border: none;
+      color: var(--text);
+      text-align: left;
+      padding: 6px 4px;
+      font-size: 13px; cursor: pointer;
+      font-family: inherit;
+      border-radius: 4px;
+    }
+    .user-menu-item:hover { background: var(--bg-2); color: var(--err); }
 
     /* === Content area ==================================================== */
     .content {
@@ -1264,10 +1371,15 @@
           <ul class="nav-list" id="main-sidebar-apps"></ul>
         </div>
       </div>
+      <!-- Sidebar footer: minimal. Per-user controls (avatar, theme,
+           sign out) moved into the topbar user menu so the rail stays
+           focused on app navigation. The only thing that needs to live
+           down here is a way to reach a human when something breaks. -->
       <div class="sidebar-footer">
-        <span class="me" id="me"></span>
-        <button class="theme-toggle" id="theme-toggle" title="Toggle theme" aria-label="Toggle theme"></button>
-        <button class="signout" id="signout" title="Sign out">⏻</button>
+        <a class="support-link" href="mailto:hi@jamilshaikh.in?subject=paas%20support" title="Email support">
+          <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M2 3h12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm0 2v.4l6 3.6 6-3.6V5H2zm0 2.1V12h12V7.1l-5.5 3.3a1 1 0 0 1-1 0L2 7.1z"/></svg>
+          <span>Contact support</span>
+        </a>
       </div>
     </nav>
 
@@ -1311,6 +1423,34 @@
         <span class="spacer"></span>
         <a id="visit-app" class="visit-btn" target="_blank" rel="noopener" title="Open this app in a new tab">Visit ↗</a>
         <span class="meta" id="meta">loading…</span>
+        <!-- User menu. Avatar opens a dropdown with the signed-in
+             user, a System/Light/Dark theme picker, and Sign out.
+             populateUserMenu() fills in the avatar/email from /v1/me. -->
+        <div class="user-menu" id="user-menu">
+          <button class="user-menu-btn" id="user-menu-btn" type="button" aria-haspopup="true" aria-expanded="false" title="Account">
+            <span class="avatar" id="user-menu-avatar">?</span>
+          </button>
+          <div class="user-menu-pop" id="user-menu-pop" role="menu" hidden>
+            <div class="user-menu-id">
+              <span class="avatar lg" id="user-menu-avatar-lg">?</span>
+              <div class="user-menu-id-text">
+                <div class="name" id="user-menu-name">—</div>
+                <div class="email" id="user-menu-email">—</div>
+              </div>
+            </div>
+            <div class="user-menu-section">
+              <div class="user-menu-section-label">Theme</div>
+              <div class="theme-picker" role="radiogroup" aria-label="Theme">
+                <button type="button" data-theme-choice="system" role="radio" aria-checked="false">System</button>
+                <button type="button" data-theme-choice="light"  role="radio" aria-checked="false">Light</button>
+                <button type="button" data-theme-choice="dark"   role="radio" aria-checked="false">Dark</button>
+              </div>
+            </div>
+            <div class="user-menu-section">
+              <button class="user-menu-item" id="user-menu-signout" type="button">Sign out</button>
+            </div>
+          </div>
+        </div>
       </header>
       <div class="pages">
 
@@ -1626,11 +1766,26 @@ async function fetchJSON(url, init) {
   return r.json();
 }
 
+// loadMe fetches the signed-in identity and paints it into the topbar
+// user menu (avatar + name + email). Runs once at boot. Failures are
+// silently swallowed because fetchJSON already handles 401 by bouncing
+// the user to /login.
 async function loadMe() {
   try {
     const me = await fetchJSON('/v1/me');
-    const el = document.getElementById('me');
-    el.innerHTML = `${me.avatar_url ? `<img src="${me.avatar_url}" alt="">` : ''}<span>${escapeHTML(me.login)}</span>`;
+    const initial = (me.login || me.email || '?').trim().charAt(0).toUpperCase();
+    const avatarHTML = me.avatar_url
+      ? `<img src="${escapeHTML(me.avatar_url)}" alt="${escapeHTML(me.login || '')}">`
+      : escapeHTML(initial);
+    // Two avatar slots: small one on the button (always visible) and
+    // a larger one in the popover identity card. Both share the same
+    // source so an avatar update reflects in both places at once.
+    document.getElementById('user-menu-avatar').innerHTML = avatarHTML;
+    document.getElementById('user-menu-avatar-lg').innerHTML = avatarHTML;
+    document.getElementById('user-menu-name').textContent = me.login || me.email || 'Signed in';
+    document.getElementById('user-menu-email').textContent = me.email || '—';
+    const btn = document.getElementById('user-menu-btn');
+    if (btn) btn.title = me.login ? ('Account — ' + me.login) : 'Account';
   } catch (e) { /* loadMe runs after fetchJSON already redirects on 401 */ }
 }
 
@@ -1651,46 +1806,96 @@ async function loadVersion() {
   } catch (_) { /* keep the default 'v1' placeholder on failure */ }
 }
 
-// --- Theme toggle ---
-// The pre-paint script in <head> already applied data-theme before the
-// stylesheet ran. This wires the footer button to flip + persist the
-// choice, and to swap the icon between sun/moon.
-const THEME_ICONS = {
-  // Outlined sun + moon glyphs, currentColor so they tint to text-dim by default.
-  // 'next' is what the button switches TO when clicked (i.e. opposite of current).
-  light: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M13.5 9.5A5.5 5.5 0 0 1 6.5 2.5a6 6 0 1 0 7 7Z"/>
-          </svg>`,
-  dark:  `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="8" cy="8" r="3"/>
-            <path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M2.8 2.8l1.1 1.1M12.1 12.1l1.1 1.1M2.8 13.2l1.1-1.1M12.1 3.9l1.1-1.1"/>
-          </svg>`,
-};
-function applyTheme(theme) {
-  document.documentElement.setAttribute('data-theme', theme);
-  try { localStorage.setItem('theme', theme); } catch (_) {}
-  const btn = document.getElementById('theme-toggle');
-  if (btn) {
-    // Show the icon for the theme we'd switch TO on next click.
-    btn.innerHTML = theme === 'dark' ? THEME_ICONS.light : THEME_ICONS.dark;
-    btn.title = theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
-  }
+// --- Theme + user menu ---------------------------------------------------
+//
+// The pre-paint script in <head> already resolved the saved preference
+// ('system' | 'light' | 'dark') into the data-theme attribute before
+// first paint. Here we wire the persistent picker UI inside the topbar
+// user menu, and listen to prefers-color-scheme so 'system' mode tracks
+// the OS when it flips (e.g. macOS day/night auto-switch).
+//
+// localStorage keys 'system' to mean 'follow the OS'. data-theme on
+// <html> is always concrete ('light' or 'dark') because the stylesheet
+// only knows those two palettes.
+const prefersLightMQ = window.matchMedia ? window.matchMedia('(prefers-color-scheme: light)') : null;
+
+function resolveThemePref(pref) {
+  if (pref === 'light' || pref === 'dark') return pref;
+  return (prefersLightMQ && prefersLightMQ.matches) ? 'light' : 'dark';
 }
-function initThemeToggle() {
-  const current = document.documentElement.getAttribute('data-theme') || 'dark';
-  applyTheme(current);
-  const btn = document.getElementById('theme-toggle');
-  if (!btn) return;
-  btn.addEventListener('click', () => {
-    const now = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
-    applyTheme(now);
+
+function currentThemePref() {
+  try { return localStorage.getItem('theme') || 'system'; }
+  catch (_) { return 'system'; }
+}
+
+function applyThemePref(pref) {
+  try { localStorage.setItem('theme', pref); } catch (_) {}
+  document.documentElement.setAttribute('data-theme', resolveThemePref(pref));
+  paintThemePicker();
+}
+
+// paintThemePicker flips the aria-checked state on the segmented
+// control so the currently-chosen option lights up. Idempotent —
+// safe to call whenever menus open or themes change.
+function paintThemePicker() {
+  const pref = currentThemePref();
+  document.querySelectorAll('.theme-picker button[data-theme-choice]').forEach(b => {
+    b.setAttribute('aria-checked', String(b.dataset.themeChoice === pref));
   });
 }
 
-document.getElementById('signout').addEventListener('click', async () => {
-  try { await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch (_) {}
-  window.location.href = '/login';
-});
+function initUserMenu() {
+  paintThemePicker();
+
+  // When the OS preference flips and the user is on 'system', re-apply
+  // so the page follows along. No-op when the user has a concrete
+  // light/dark preference saved.
+  if (prefersLightMQ && prefersLightMQ.addEventListener) {
+    prefersLightMQ.addEventListener('change', () => {
+      if (currentThemePref() === 'system') applyThemePref('system');
+    });
+  }
+
+  // Theme picker buttons: each writes the new preference and re-renders.
+  // We keep the menu open after a click so the user can preview each
+  // option without re-opening the popover.
+  document.querySelectorAll('.theme-picker button[data-theme-choice]').forEach(b => {
+    b.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      applyThemePref(b.dataset.themeChoice);
+    });
+  });
+
+  // Dropdown open/close, with outside-click + Escape to dismiss.
+  const btn = document.getElementById('user-menu-btn');
+  const pop = document.getElementById('user-menu-pop');
+  if (!btn || !pop) return;
+  const close = () => { pop.hidden = true; btn.setAttribute('aria-expanded', 'false'); };
+  const open  = () => { pop.hidden = false; btn.setAttribute('aria-expanded', 'true'); paintThemePicker(); };
+  btn.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    pop.hidden ? open() : close();
+  });
+  document.addEventListener('click', (ev) => {
+    if (pop.hidden) return;
+    if (!pop.contains(ev.target) && !btn.contains(ev.target)) close();
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && !pop.hidden) close();
+  });
+
+  // Sign out: drop the server-side session, then bounce to /login. The
+  // server clears the cookie too, but the redirect is what the user
+  // sees, so we don't depend on the network round-trip succeeding.
+  const signoutBtn = document.getElementById('user-menu-signout');
+  if (signoutBtn) {
+    signoutBtn.addEventListener('click', async () => {
+      try { await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch (_) {}
+      window.location.href = '/login';
+    });
+  }
+}
 
 // ----- Data load + refresh -----------------------------------------------
 
@@ -4558,18 +4763,18 @@ function stopTrafficPoll() {
   if (trafficTimer) { clearInterval(trafficTimer); trafficTimer = null; }
 }
 
-// ----- Signout + bootstrap -----------------------------------------------
-
-document.getElementById('signout').addEventListener('click', async () => {
-  try { await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch (_) {}
-  window.location.href = '/login';
-});
+// ----- Bootstrap ---------------------------------------------------------
+//
+// (Sign-out is now wired in initUserMenu() so the dropdown that hosts
+// the button owns its own behaviour. The old standalone handler that
+// lived here — plus a duplicate up near the theme block — referenced
+// a #signout id that no longer exists in the sidebar footer.)
 
 // Make navigate() globally accessible for inline onclick handlers in
 // renderHome (which is a small list of project cards).
 window.navigate = navigate;
 
-initThemeToggle();
+initUserMenu();
 loadMe();
 loadVersion();
 applyRoute();
