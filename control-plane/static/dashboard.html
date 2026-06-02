@@ -959,6 +959,50 @@
       background: var(--accent-dim);
       color: var(--accent);
     }
+
+    /* Time-range selector on the Telemetry + Traffic pages. Same
+       segmented-control aesthetic as .log-mode-toggle so the two
+       selectors read as one component vocabulary. The bar sits in
+       its own panel-head row at the top of the page; one selector
+       drives every chart + KPI on that page. */
+    .range-bar {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 12px;
+    }
+    .range-bar .label {
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-dim);
+    }
+    .range-toggle {
+      display: inline-flex;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+      background: var(--bg-2);
+    }
+    .range-toggle button {
+      border: none;
+      border-radius: 0;
+      padding: 4px 12px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      color: var(--text-dim);
+      cursor: pointer;
+      background: transparent;
+      font-family: ui-monospace, monospace;
+    }
+    .range-toggle button + button { border-left: 1px solid var(--border); }
+    .range-toggle button:hover { color: var(--text); background: var(--panel-2); }
+    .range-toggle button.active {
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
+    .range-bar .asof {
+      margin-left: auto;
+      font-size: 11px; color: var(--text-faint);
+      font-family: ui-monospace, monospace;
+    }
     .log-line { display: grid; grid-template-columns: 64px 1fr; gap: 8px; }
     .log-line .c { color: var(--text-dim); font-weight: 600; user-select: none; }
     .log-line.kaniko .c { color: var(--building); }
@@ -3155,6 +3199,60 @@ async function promoteFromButton(btn) {
 // flips between Telemetry and Traffic within a 5s window.
 let telemetryCache = null;
 
+// Time-range selection for the per-project Telemetry + Traffic pages.
+// Each page owns its own choice so flipping between Telemetry and
+// Traffic doesn't surprise the user by resetting their selection.
+//
+// The keys here must stay in lock-step with rangeSpecs in
+// project_series_handler.go on the backend — the value is passed
+// verbatim as ?range=<key> on the /metrics fetch.
+//
+// pollMs is how often the page re-fetches /metrics for that range.
+// Short ranges keep the dashboard's classic 5s feel; long ranges
+// (1d / 1w) only update every 10 min on the backend anyway, so we
+// throttle the poll to 30s to avoid burning the metrics-server +
+// Traefik /metrics endpoints for no signal gain.
+const RANGE_META = {
+  '5m':  { label: '5 min',  bucket: '30 s buckets',  pollMs: 5000  },
+  '15m': { label: '15 min', bucket: '30 s buckets',  pollMs: 5000  },
+  '1h':  { label: '60 min', bucket: '30 s buckets',  pollMs: 5000  },
+  '1d':  { label: '24 h',   bucket: '10 min buckets', pollMs: 30000 },
+  '1w':  { label: '7 d',    bucket: '10 min buckets', pollMs: 30000 },
+};
+const RANGE_KEYS = ['5m', '15m', '1h', '1d', '1w'];
+let telemetryRange = '1h';
+let trafficRange   = '1h';
+
+// rangeBarHTML renders the segmented selector for the active page.
+// `asofID` is the DOM id for the right-aligned 'updated HH:MM:SS'
+// slot so each page can keep its existing as-of element working
+// without a second header row.
+function rangeBarHTML(toggleID, activeKey, asofID) {
+  return `
+    <div class="range-bar">
+      <span class="label">Range</span>
+      <div class="range-toggle" id="${toggleID}" role="tablist" aria-label="Time range">
+        ${RANGE_KEYS.map(k => `
+          <button type="button" data-range="${k}" role="tab"${k === activeKey ? ' class="active"' : ''}>${k}</button>
+        `).join('')}
+      </div>
+      <span class="asof" id="${asofID}">—</span>
+    </div>`;
+}
+
+// wireRangeBar binds click handlers on a freshly-rendered range
+// toggle. onChange is invoked with the new key when the user picks
+// a different option (no-op when they re-click the active one).
+function wireRangeBar(toggleID, onChange) {
+  document.querySelectorAll('#' + toggleID + ' button').forEach(b => {
+    b.addEventListener('click', () => {
+      const next = b.dataset.range;
+      if (!RANGE_META[next]) return;
+      onChange(next);
+    });
+  });
+}
+
 async function fetchTelemetry() {
   try {
     const data = await fetchJSON('/v1/telemetry');
@@ -3785,14 +3883,22 @@ function paintIncidents(incidents) {
 // bars relative to the project's max-observed values.
 function renderProjectTelemetry() {
   const root = $('telemetry-content');
+  const meta = RANGE_META[telemetryRange];
+  // Dynamic per-panel labels driven by the active range so the user
+  // sees, e.g., 'millicores · 24 h' when they pick 1d. Keeps the
+  // chart context honest at every resolution.
+  const winLbl    = `millicores · ${meta.label}`;
+  const memLbl    = `MiB · ${meta.label}`;
+  const bucketLbl = `per ${meta.bucket.replace(' buckets', '')} window`;
   root.innerHTML = `
+    ${rangeBarHTML('pt-range', telemetryRange, 'pt-asof')}
     <div class="summary" id="pt-summary"></div>
     <div class="chart-grid">
       <div class="panel">
         <div class="panel-head">
           <h3>CPU usage</h3>
           <span class="spacer"></span>
-          <span style="color:var(--text-faint);font-size:11px;">millicores · 60 min</span>
+          <span style="color:var(--text-faint);font-size:11px;">${winLbl}</span>
         </div>
         <div class="panel-body" style="padding: 12px 14px;"><div id="pt-cpu"></div></div>
       </div>
@@ -3800,7 +3906,7 @@ function renderProjectTelemetry() {
         <div class="panel-head">
           <h3>Memory</h3>
           <span class="spacer"></span>
-          <span style="color:var(--text-faint);font-size:11px;">MiB · 60 min</span>
+          <span style="color:var(--text-faint);font-size:11px;">${memLbl}</span>
         </div>
         <div class="panel-body" style="padding: 12px 14px;"><div id="pt-mem"></div></div>
       </div>
@@ -3808,7 +3914,7 @@ function renderProjectTelemetry() {
         <div class="panel-head">
           <h3>Requests by status</h3>
           <span class="spacer"></span>
-          <span style="color:var(--text-faint);font-size:11px;">per 30 s window</span>
+          <span style="color:var(--text-faint);font-size:11px;">${bucketLbl}</span>
         </div>
         <div class="panel-body" style="padding: 12px 14px;"><div id="pt-rps"></div></div>
       </div>
@@ -3825,7 +3931,6 @@ function renderProjectTelemetry() {
       <div class="panel-head">
         <h3>Live pods</h3>
         <span class="spacer"></span>
-        <span id="pt-asof" style="color:var(--text-faint);font-size:11px;">—</span>
       </div>
       <table class="recent-table">
         <thead><tr>
@@ -3834,16 +3939,24 @@ function renderProjectTelemetry() {
         <tbody id="pt-pods"><tr><td colspan="5" style="color:var(--text-dim);font-style:italic;">loading…</td></tr></tbody>
       </table>
     </div>`;
-  startTelemetryPoll(tickProjectTelemetry);
+  // Picking a different range re-renders the whole page so panel
+  // labels + poll cadence + active-button class all update together.
+  wireRangeBar('pt-range', (k) => {
+    if (telemetryRange === k) return;
+    telemetryRange = k;
+    renderProjectTelemetry();
+  });
+  startTelemetryPoll(tickProjectTelemetry, meta.pollMs);
 }
 
 async function tickProjectTelemetry() {
   if (!ROUTE.projectID) return;
+  const rangeMeta = RANGE_META[telemetryRange];
   let snap, metrics;
   try {
     [snap, metrics] = await Promise.all([
       fetchJSON('/v1/projects/' + ROUTE.projectID + '/telemetry'),
-      fetchJSON('/v1/projects/' + ROUTE.projectID + '/metrics'),
+      fetchJSON('/v1/projects/' + ROUTE.projectID + '/metrics?range=' + telemetryRange),
     ]);
   } catch (e) {
     $('pt-pods').innerHTML = `<tr><td colspan="5" style="color:var(--err);">${escapeHTML(e.message || String(e))}</td></tr>`;
@@ -3851,17 +3964,20 @@ async function tickProjectTelemetry() {
   }
   $('pt-asof').textContent = 'updated ' + new Date(snap.as_of).toLocaleTimeString();
   const pts = metrics.points || [];
-  const last = pts[pts.length - 1] || {};
   const totalReqs = pts.reduce((s, p) => s + (p.req_2xx + p.req_3xx + p.req_4xx + p.req_5xx), 0);
+  // metrics.interval_s reflects the cadence of the backing buffer
+  // (30s for short ranges, 600s for long), so the RPS divisor is
+  // honest regardless of which range the user picked.
   const avgRps = pts.length > 0 ? (totalReqs / (pts.length * (metrics.interval_s || 30))) : 0;
+  const winSub = 'last ' + rangeMeta.label;
 
   $('pt-summary').innerHTML = [
     kpiTile('Pods running', (snap.pods || []).length, snap.pods?.length ? 'replicas live' : 'stopped',
             snap.pods?.length ? 'ok' : 'dim'),
     kpiTile('CPU', fmtCPU(snap.total_cpu_m), 'current'),
     kpiTile('Memory', fmtMem(snap.total_memory_mi), 'current'),
-    kpiTile('Avg RPS', avgRps.toFixed(2), 'last 60 min'),
-    kpiTile('Requests', fmtCount(totalReqs), 'last 60 min'),
+    kpiTile('Avg RPS', avgRps.toFixed(2), winSub),
+    kpiTile('Requests', fmtCount(totalReqs), winSub),
   ].join('');
 
   // Charts
@@ -3918,14 +4034,17 @@ async function tickProjectTelemetry() {
 // stacked-area chart full width + side-by-side donut & latency line.
 function renderProjectTraffic() {
   const root = $('traffic-content');
+  const meta = RANGE_META[trafficRange];
+  const winLbl = `last ${meta.label} · ${meta.bucket}`;
   root.innerHTML = `
+    ${rangeBarHTML('pa-range', trafficRange, 'pa-asof')}
     <div id="pa-incidents" style="display:none;"></div>
     <div class="summary" id="pa-summary"></div>
     <div class="panel">
       <div class="panel-head">
         <h3>Requests by status</h3>
         <span class="spacer"></span>
-        <span style="color:var(--text-faint);font-size:11px;">last 60 min · 30 s buckets</span>
+        <span style="color:var(--text-faint);font-size:11px;">${winLbl}</span>
       </div>
       <div class="panel-body" style="padding: 14px 16px;">
         <div id="pa-chart"><div class="empty" style="padding:30px;color:var(--text-dim);font-style:italic;">loading…</div></div>
@@ -3957,7 +4076,12 @@ function renderProjectTraffic() {
       </div>
       <div class="panel-body" style="padding: 16px;"><div id="pa-perfbar"></div></div>
     </div>`;
-  startTrafficPoll(tickProjectTraffic);
+  wireRangeBar('pa-range', (k) => {
+    if (trafficRange === k) return;
+    trafficRange = k;
+    renderProjectTraffic();
+  });
+  startTrafficPoll(tickProjectTraffic, meta.pollMs);
 }
 
 async function tickProjectTraffic() {
@@ -3966,12 +4090,14 @@ async function tickProjectTraffic() {
   try {
     [tel, metrics] = await Promise.all([
       fetchJSON('/v1/projects/' + ROUTE.projectID + '/telemetry'),
-      fetchJSON('/v1/projects/' + ROUTE.projectID + '/metrics'),
+      fetchJSON('/v1/projects/' + ROUTE.projectID + '/metrics?range=' + trafficRange),
     ]);
   } catch (e) {
     $('pa-chart').innerHTML = `<div class="empty" style="color:var(--err);">${escapeHTML(e.message || String(e))}</div>`;
     return;
   }
+  const asof = $('pa-asof');
+  if (asof && tel.as_of) asof.textContent = 'updated ' + new Date(tel.as_of).toLocaleTimeString();
   const pts = metrics.points || [];
   const errPct = tel.requests > 0 ? ((tel.errors / tel.requests) * 100) : 0;
 
@@ -4051,18 +4177,18 @@ async function tickProjectTraffic() {
 
 let telemetryTimer = null;
 let trafficTimer = null;
-function startTelemetryPoll(tickFn) {
+function startTelemetryPoll(tickFn, intervalMs) {
   stopTelemetryPoll();
   tickFn();
-  telemetryTimer = setInterval(tickFn, 5000);
+  telemetryTimer = setInterval(tickFn, intervalMs || 5000);
 }
 function stopTelemetryPoll() {
   if (telemetryTimer) { clearInterval(telemetryTimer); telemetryTimer = null; }
 }
-function startTrafficPoll(tickFn) {
+function startTrafficPoll(tickFn, intervalMs) {
   stopTrafficPoll();
   tickFn();
-  trafficTimer = setInterval(tickFn, 5000);
+  trafficTimer = setInterval(tickFn, intervalMs || 5000);
 }
 function stopTrafficPoll() {
   if (trafficTimer) { clearInterval(trafficTimer); trafficTimer = null; }
