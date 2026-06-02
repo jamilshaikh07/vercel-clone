@@ -666,6 +666,18 @@
     }
     .btn-redeploy:hover, .btn-build-logs:hover { color: var(--text); border-color: var(--accent); }
     .btn-redeploy[disabled], .btn-build-logs[disabled] { opacity: 0.4; cursor: not-allowed; }
+    /* Primary CTA used in empty-state placeholders (deploy-now). Higher
+       visual weight than btn-redeploy because it's the *only* thing the
+       user can do on a brand-new project — we want the eye to land on
+       it without ambiguity. */
+    .btn-deploy-now {
+      background: var(--accent-dim); border: 1px solid var(--accent); color: var(--accent);
+      padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 600;
+      cursor: pointer; font-family: inherit;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .btn-deploy-now:hover { background: var(--accent); color: var(--bg); }
+    .btn-deploy-now[disabled] { opacity: 0.5; cursor: not-allowed; }
 
     /* Start/Stop button on the overview status tile. Two-state colour:
        Stop is danger-red, Start is success-green. We're explicit about
@@ -2402,7 +2414,22 @@ function renderOverview() {
 
   const list = $('overview-deployments');
   if (deps.length === 0) {
-    list.innerHTML = '<div class="empty">No deployments yet. Push a commit to ' + escapeHTML(proj.production_branch) + ' to trigger one.</div>';
+    // Empty-state: show a primary 'Deploy now' button instead of asking
+    // the user to fabricate a junk commit. Also calls out the push
+    // flow because *future* deploys come from pushes, not button clicks.
+    list.innerHTML = `
+      <div class="empty" style="text-align:center;padding:24px 12px;">
+        <div style="margin-bottom:14px;color:var(--text-dim);">
+          No deployments yet. Push a commit to <code>${escapeHTML(proj.production_branch)}</code>,
+          or kick off the first build from the current <code>${escapeHTML(proj.production_branch)}</code> HEAD now:
+        </div>
+        <button class="btn-deploy-now" data-project-id="${proj.id}"
+                title="Build the latest commit on ${escapeHTML(proj.production_branch)} without waiting for a push">
+          Deploy now
+        </button>
+      </div>`;
+    list.querySelector('.btn-deploy-now')
+        .addEventListener('click', (ev) => deployNowFromButton(ev.currentTarget));
     return;
   }
   list.innerHTML = deps.map(d => renderDeploymentRow(d, proj.id)).join('');
@@ -2498,7 +2525,20 @@ function renderOverviewEvents(proj) {
   if (!body) return;
   const deps = proj.deployments || [];
   if (deps.length === 0) {
-    body.innerHTML = `<div class="empty" style="padding:24px;color:var(--text-dim);font-style:italic;">No deployments yet. Push a commit to ${escapeHTML(proj.production_branch)} to trigger the first one.</div>`;
+    // Events panel mirrors the deployments-list empty state: invite the
+    // user to start the first build right here, no junk commit needed.
+    body.innerHTML = `
+      <div class="empty" style="padding:20px 12px;color:var(--text-dim);text-align:center;">
+        <div style="margin-bottom:12px;font-style:italic;">
+          No deployments yet. Push a commit to <code>${escapeHTML(proj.production_branch)}</code> or start the first build now.
+        </div>
+        <button class="btn-deploy-now" data-project-id="${proj.id}"
+                title="Build the latest commit on ${escapeHTML(proj.production_branch)} without waiting for a push">
+          Deploy now
+        </button>
+      </div>`;
+    body.querySelector('.btn-deploy-now')
+        .addEventListener('click', (ev) => deployNowFromButton(ev.currentTarget));
     return;
   }
   // Auto-expand the most recent event the first time we render this
@@ -3653,6 +3693,43 @@ wsEnvAdd.addEventListener('click', () => {
   wsEnvRows.appendChild(row);
   row.querySelector('input').focus();
 });
+
+// ----- Deploy-now (bootstrap a project with zero deployments) -----------
+//
+// Distinct from the redeploy flow because there's no source row to clone
+// when the project has no deployments at all. Talks to the dedicated
+// /v1/projects/{id}/deploy endpoint which fetches the production-branch
+// HEAD SHA from GitHub before enqueuing. UX-wise we optimistically
+// disable the button so a double-click can't queue two builds, then
+// refresh() picks up the new row and re-renders the page normally.
+async function deployNowFromButton(btn) {
+  if (btn.disabled) return;
+  const projectID = btn.dataset.projectId;
+  if (!projectID) return;
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'starting…';
+  try {
+    const r = await fetch('/v1/projects/' + projectID + '/deploy', {
+      method: 'POST', cache: 'no-store', credentials: 'same-origin',
+    });
+    if (r.status === 401) { window.location.href = '/login'; return; }
+    if (!r.ok) {
+      const msg = (await r.text()).trim() || ('HTTP ' + r.status);
+      btn.disabled = false;
+      btn.textContent = orig;
+      alert('Couldn\'t start deploy: ' + msg);
+      return;
+    }
+    // refresh() repaints the page; the empty state will be replaced by
+    // the new deployment row + Events entry on the next tick.
+    refresh();
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = orig;
+    alert('Network error: ' + (e && e.message ? e.message : e));
+  }
+}
 
 // ----- Redeploy ----------------------------------------------------------
 

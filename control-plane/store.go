@@ -162,8 +162,17 @@ type deploymentEnqueued struct {
 func (s *store) EnqueueDeployment(
 	ctx context.Context,
 	installationID, repoID int64,
-	commitSHA, ref, deliveryID string,
+	commitSHA, ref, deliveryID, triggeredBy string,
 ) (*deploymentEnqueued, error) {
+	// Audit-log values: 'webhook' (push event), 'install' (auto-deploy
+	// fired after the GitHub App was installed on a repo), 'manual'
+	// (dashboard 'Deploy now' button), 'redeploy' (re-run of an
+	// existing deployment row; handled by EnqueueRedeploy, not here).
+	// Default to 'webhook' if a caller forgets — keeps the column
+	// non-NULL without forcing every call site to think about it.
+	if triggeredBy == "" {
+		triggeredBy = "webhook"
+	}
 	var (
 		projectID string
 		slug      string
@@ -183,12 +192,53 @@ func (s *store) EnqueueDeployment(
 	var deploymentID string
 	if err := s.pool.QueryRow(ctx, `
 		INSERT INTO deployments (project_id, commit_sha, ref, triggered_by, delivery_id)
-		VALUES ($1::uuid, $2, $3, 'webhook', NULLIF($4, ''))
+		VALUES ($1::uuid, $2, $3, $4, NULLIF($5, ''))
 		RETURNING id::text
-	`, projectID, commitSHA, ref, deliveryID).Scan(&deploymentID); err != nil {
+	`, projectID, commitSHA, ref, triggeredBy, deliveryID).Scan(&deploymentID); err != nil {
 		return nil, fmt.Errorf("insert deployment: %w", err)
 	}
 	return &deploymentEnqueued{ProjectID: projectID, DeploymentID: deploymentID, Slug: slug}, nil
+}
+
+// projectDeployTarget is the minimum identity needed to bootstrap a build
+// for a project that has no existing deployment rows to copy from: the
+// GitHub installation + repo ID (to mint a clone token and address the
+// repo on the API), the production branch (to look up HEAD), and the
+// human-friendly slug (for log messages). Used by the manual
+// "Deploy now" handler. Owner scoping is performed in-query so callers
+// can't accidentally bypass it.
+type projectDeployTarget struct {
+	ProjectID        string
+	Slug             string
+	InstallationID   int64
+	RepoID           int64
+	RepoFullName     string
+	ProductionBranch string
+}
+
+// GetProjectForDeploy returns the deploy-bootstrapping identity for a
+// project the caller owns (or any project, if ownerUserID == "" — the
+// admin sentinel used by server-internal call sites). Returns
+// (nil, nil) when no such project exists or the user doesn't own it,
+// so callers can map that to 404 without leaking which IDs exist.
+func (s *store) GetProjectForDeploy(ctx context.Context, projectID, ownerUserID string) (*projectDeployTarget, error) {
+	q := `
+		SELECT p.id::text, p.slug, p.installation_id, p.repo_id,
+		       p.full_name, p.production_branch
+		  FROM projects p
+		 WHERE p.id = $1::uuid
+		   AND ($2 = '' OR p.owner_user_id = $2::uuid)
+	`
+	var t projectDeployTarget
+	row := s.pool.QueryRow(ctx, q, projectID, ownerUserID)
+	if err := row.Scan(&t.ProjectID, &t.Slug, &t.InstallationID,
+		&t.RepoID, &t.RepoFullName, &t.ProductionBranch); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &t, nil
 }
 
 // EnqueueRedeploy inserts a new queued deployment row that mirrors the

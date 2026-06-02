@@ -219,3 +219,52 @@ func (g *githubApp) setCommitStatus(
 	}
 	return nil
 }
+
+// fetchBranchSHA returns the HEAD commit SHA of `branch` on `repoFullName`,
+// authenticated as the App installation. Used when we need to start a
+// build but don't have a `push` event to read the SHA from — i.e. the
+// auto-deploy fired after a repo gets added to the App (when the user
+// installed *after* their last push), and the dashboard's manual
+// "Deploy now" button.
+//
+// Returns the bare commit SHA (no ref/branch prefix); callers are
+// responsible for constructing "refs/heads/<branch>" if they need it.
+func (g *githubApp) fetchBranchSHA(ctx context.Context, installationID int64, repoFullName, branch string) (string, error) {
+	tok, err := g.installationToken(ctx, installationID)
+	if err != nil {
+		return "", fmt.Errorf("mint token: %w", err)
+	}
+	url := fmt.Sprintf("https://api.github.com/repos/%s/branches/%s", repoFullName, branch)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := g.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode/100 != 2 {
+		return "", fmt.Errorf("fetch branch %q: HTTP %d: %s",
+			branch, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	// Response shape (trimmed):
+	//   { "name": "main", "commit": { "sha": "abc...", ... }, ... }
+	var r struct {
+		Commit struct {
+			SHA string `json:"sha"`
+		} `json:"commit"`
+	}
+	if err := json.Unmarshal(body, &r); err != nil {
+		return "", fmt.Errorf("decode branch response: %w", err)
+	}
+	if r.Commit.SHA == "" {
+		return "", errors.New("github returned empty sha for branch")
+	}
+	return r.Commit.SHA, nil
+}

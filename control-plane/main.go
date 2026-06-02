@@ -198,6 +198,7 @@ func main() {
 		"GET /v1/deployments/{id}/runtime-logs": s.handleDeploymentRuntimeLogs,
 		"POST /v1/deployments/{id}/redeploy":    s.handleRedeploy,
 		"POST /v1/deployments/{id}/promote":     s.handlePromoteDeployment,
+		"POST /v1/projects/{id}/deploy":         s.handleDeployNow,
 		"GET /v1/projects/{id}/database":        s.handleGetProjectDatabase,
 		"POST /v1/projects/{id}/database":       s.handleCreateProjectDatabase,
 		"POST /v1/projects/{id}/database/query": s.handleRunQuery,
@@ -395,7 +396,7 @@ func (s *server) dispatch(ctx context.Context, event string, body []byte, env en
 			return nil
 		}
 		res, err := s.store.EnqueueDeployment(ctx,
-			env.Installation.ID, env.Repository.ID, env.After, env.Ref, deliveryID)
+			env.Installation.ID, env.Repository.ID, env.After, env.Ref, deliveryID, "webhook")
 		if err != nil {
 			return err
 		}
@@ -447,6 +448,12 @@ func (s *server) handleInstallation(ctx context.Context, env envelope, body []by
 			// Belt-and-braces: backfill in case the installation was linked
 			// AFTER the AddRepos statement happened in a prior call.
 			_ = s.store.SetProjectOwnerByInstallation(ctx, env.Installation.ID)
+			// Kick off an initial deploy per repo — user installed the App
+			// expecting their app to come up, not to have to make a junk
+			// commit to fire the first webhook. Best-effort; logged on fail.
+			for _, r := range p.Repositories {
+				s.tryAutoDeployRepo(ctx, env.Installation.ID, r)
+			}
 		}
 		return nil
 
@@ -457,6 +464,52 @@ func (s *server) handleInstallation(ctx context.Context, env envelope, body []by
 		return s.store.DeleteInstallation(ctx, env.Installation.ID)
 	}
 	return nil
+}
+
+// tryAutoDeployRepo enqueues an initial build for a freshly-connected repo
+// by asking GitHub for the HEAD SHA of its default branch. Used by both
+// installation-event paths (initial install with repos, and adds after
+// install). Best-effort: a transient GitHub failure or missing project
+// row is logged at WARN and swallowed, because the webhook ack must not
+// be blocked by a deploy that we can always retry later via the "Deploy
+// now" button. Runs synchronously inside the webhook request context so
+// it inherits the receiver's 10s timeout — plenty for a single GitHub
+// API call per repo.
+func (s *server) tryAutoDeployRepo(ctx context.Context, installationID int64, r githubRepo) {
+	branch := strings.TrimSpace(r.DefaultBranch)
+	if branch == "" {
+		branch = "main"
+	}
+	sha, err := s.gh.fetchBranchSHA(ctx, installationID, r.FullName, branch)
+	if err != nil {
+		s.log.Warn("auto-deploy: fetch HEAD sha failed",
+			"repo", r.FullName, "branch", branch,
+			"installation_id", installationID, "err", err)
+		return
+	}
+	res, err := s.store.EnqueueDeployment(ctx,
+		installationID, r.ID, sha, "refs/heads/"+branch, "", "install")
+	if err != nil {
+		s.log.Warn("auto-deploy: enqueue failed",
+			"repo", r.FullName, "sha", sha, "err", err)
+		return
+	}
+	if res == nil {
+		// Shouldn't happen — AddRepos just inserted the project row in
+		// the same transaction-less batch — but if it does, no build
+		// gets stranded; the user can still click "Deploy now".
+		s.log.Warn("auto-deploy: project row not found post-AddRepos",
+			"repo", r.FullName, "installation_id", installationID)
+		return
+	}
+	s.log.Info("auto-deploy queued from install",
+		"deployment_id", res.DeploymentID,
+		"project_id", res.ProjectID,
+		"slug", res.Slug,
+		"repo", r.FullName,
+		"branch", branch,
+		"sha", sha,
+	)
 }
 
 func (s *server) handleInstallationRepos(ctx context.Context, env envelope, body []byte) error {
@@ -472,6 +525,12 @@ func (s *server) handleInstallationRepos(ctx context.Context, env envelope, body
 			return err
 		}
 		_ = s.store.SetProjectOwnerByInstallation(ctx, env.Installation.ID)
+		// Mirror the "created" path: bring each newly-added repo up to
+		// production immediately so the dashboard doesn't sit at "0
+		// deployments — push to start" forever.
+		for _, r := range p.RepositoriesAdded {
+			s.tryAutoDeployRepo(ctx, env.Installation.ID, r)
+		}
 	}
 	if len(p.RepositoriesRemoved) > 0 {
 		ids := make([]int64, 0, len(p.RepositoriesRemoved))
