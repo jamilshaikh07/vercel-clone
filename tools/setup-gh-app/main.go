@@ -122,9 +122,14 @@ func main() {
 		// Apps; they cannot appear in default_events.
 		DefaultEvents: []string{"push", "pull_request"},
 		DefaultPerms: map[string]string{
-			"contents":      "read",
+			// contents + pull_requests are WRITE (not read) so the
+			// Insights "Open improvement PR" flow can create a branch,
+			// commit the SEO fixes, and open the PR. Read alone deploys
+			// fine but 403s on the PR flow — see insights_pr_handler.go.
+			// (write implies read, so the clone/build path is unaffected.)
+			"contents":      "write",
 			"metadata":      "read",
-			"pull_requests": "read",
+			"pull_requests": "write",
 			"statuses":      "write",
 			"checks":        "write",
 			"deployments":   "write",

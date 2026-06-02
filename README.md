@@ -186,6 +186,31 @@ go build .
 ./setup-gh-app
 ```
 
+### GitHub App permissions
+
+`setup-gh-app` requests these repository permissions in the App manifest
+(see `tools/setup-gh-app/main.go` → `DefaultPerms`):
+
+| Permission | Level | Why |
+|---|---|---|
+| `contents` | **Read & write** | Clone for builds (read) **and** the Insights "Open improvement PR" flow, which creates a branch + commits SEO fixes (write) |
+| `pull_requests` | **Read & write** | Open the draft improvement PR |
+| `metadata` | Read | Required baseline |
+| `statuses` | Write | Commit status checks on builds |
+| `checks` | Write | Check runs |
+| `deployments` | Write | Deployment status |
+
+Apps created **before** `contents`/`pull_requests` were bumped to *write*
+will deploy fine but **403 on the "Open improvement PR" button**. To fix
+an existing install:
+
+1. **App owner**: github.com → *Settings → Developer settings → GitHub
+   Apps → Spinup → Permissions* → set **Contents** and **Pull requests**
+   to *Read & write*, save.
+2. **Repo owner**: github.com → *Settings → Applications → Installed
+   GitHub Apps → Spinup → Configure* → approve the pending permission
+   update (GitHub also emails an approval link).
+
 ---
 
 ## License
