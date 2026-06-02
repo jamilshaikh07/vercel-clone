@@ -527,8 +527,12 @@
     }
     .page.active { display: flex; flex-direction: column; }
     .page-inner {
-      padding: 20px 24px;
-      max-width: 1200px;
+      /* Full-width content — no max-width. We used to cap at 1200px to
+         keep prose-y pages from going wide-screen and hard-to-scan,
+         but most pages here are dense tables/charts that benefit from
+         the extra real-estate on a 1440/1920/QHD display. The padding
+         alone is enough breathing room. */
+      padding: 20px 28px 32px;
       width: 100%;
     }
 
@@ -565,6 +569,22 @@
     .summary .stat .value.ok { color: var(--ok); }
     .summary .stat .value.err { color: var(--err); }
     .summary .stat .sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+    /* Clickable stat tiles (overview KPIs that drill into Telemetry /
+       Traffic). Same visual surface as a regular .stat plus a hover
+       border-and-lift that reads as "this is a link". The inner
+       text inherits inherit/no-underline so the tile doesn't look
+       like a blue web-1.0 hyperlink. */
+    .summary a.stat-link {
+      text-decoration: none; color: inherit;
+      transition: border-color 0.1s ease, transform 0.1s ease, background 0.1s ease;
+    }
+    .summary a.stat-link:hover {
+      background: var(--panel-2);
+      border-color: var(--accent);
+      transform: translateY(-1px);
+    }
+    .summary .stat .value.err  { color: var(--err); }
+    .summary .stat .value.warn { color: var(--warn, #d18b1f); }
 
     .panel {
       background: var(--panel); border: 1px solid var(--border);
@@ -779,15 +799,28 @@
          live in their original DOM order but are absolutely
          positioned over the content; only one is "active" at a
          time (the sub-sidebar wins when an app is in scope, exactly
-         like on desktop where it slides in to the right of main). */
+         like on desktop where it slides in to the right of main).
+         Heavier shadow + a brighter surface than the desktop rail
+         so the drawer reads as foreground over the dimmed content
+         instead of fading into it ("jaded" feedback). */
       .sidebar, .sub-sidebar {
         position: fixed; top: 0; bottom: 0; left: 0;
-        width: var(--sidebar-w); max-width: 88vw;
+        width: var(--sidebar-w); max-width: 86vw;
         z-index: 100;
+        background: var(--panel-2);
+        border-right: 1px solid var(--border);
         transform: translateX(-100%);
-        transition: transform 180ms ease;
-        box-shadow: 4px 0 18px rgba(0,0,0,0.4);
+        transition: transform 200ms cubic-bezier(0.2, 0, 0, 1);
+        box-shadow: 6px 0 32px rgba(0, 0, 0, 0.55);
       }
+      /* Slightly nicer hit targets + spacing inside the drawer. Tap
+         targets below 44px feel cramped on phones. */
+      .sidebar .nav-item, .sub-sidebar .nav-item {
+        padding-top: 11px; padding-bottom: 11px;
+        font-size: 14px;
+      }
+      .sub-sidebar-head { padding: 14px 16px; }
+      .brand { padding: 18px 18px 16px; }
       /* Subnav (when present) takes precedence in the drawer slot —
          it's the contextually-relevant nav for whatever the user is
          currently looking at. */
@@ -828,16 +861,20 @@
       .apps-name-slug { font-size: 13px; }
       .apps-name-repo { font-size: 10px; }
 
-      /* Recent deployments table simplifies: drop the branch and
-         commit columns; row shows just app + when. The full detail
-         is one tap away. */
+      /* Recent deployments rail simplifies on mobile: drop the
+         commit-message and branch columns; keep status badge + app
+         slug + time-ago. Three visible children → three explicit
+         columns (auto badge / flex slug / fixed when) so the row
+         lines up cleanly instead of overflowing onto an implicit
+         second grid row. */
       .recent-row {
-        grid-template-columns: minmax(0, 1fr) 70px;
-        gap: 8px; padding: 10px 12px;
+        grid-template-columns: auto minmax(0, 1fr) 70px;
+        gap: 10px; padding: 10px 12px;
       }
-      .recent-row .recent-app-icon,
       .recent-row .recent-commit,
       .recent-row .recent-branch  { display: none; }
+      .recent-row .recent-app { font-size: 13px; }
+      .recent-row .recent-when { font-size: 11px; }
 
       /* Overview header: shrink the title row so the Visit pill fits
          next to the slug. */
@@ -2375,6 +2412,12 @@ function applyRoute() {
   closeStream();
   stopTelemetryPoll();
   stopTrafficPoll();
+  // Mobile drawer dismiss-on-navigate. Sidebar/sub-sidebar links are
+  // plain <a href="#/..."> anchors which trigger hashchange (this
+  // very function) but bypass our navigate() helper — so the drawer
+  // would otherwise stay open after picking a destination. Closing
+  // here covers every navigation entry-point in one place.
+  closeMobileNav();
   ROUTE = parseHash();
   if (ROUTE.pendingDeploymentID) {
     pendingDeploymentID = ROUTE.pendingDeploymentID;
@@ -2391,6 +2434,16 @@ window.addEventListener('hashchange', applyRoute);
 // on desktop.
 document.getElementById('mobile-nav-toggle')?.addEventListener('click', toggleMobileNav);
 document.getElementById('mobile-nav-backdrop')?.addEventListener('click', closeMobileNav);
+// Belt-and-braces: also close the drawer the moment a sidebar nav item
+// is tapped. applyRoute() already calls closeMobileNav() on hashchange,
+// but a tap on the *currently-active* link doesn't fire hashchange, so
+// without this the drawer would stay open if the user re-taps "Home"
+// while already on Home. Delegated so we don't re-bind per render.
+document.querySelectorAll('.sidebar, .sub-sidebar').forEach(rail => {
+  rail.addEventListener('click', (ev) => {
+    if (ev.target.closest('a.nav-item, .nav-plus, .sub-sidebar-back')) closeMobileNav();
+  });
+});
 // Escape always dismisses the drawer if it's open — same affordance as
 // nearly every mobile app.
 window.addEventListener('keydown', (ev) => {
@@ -3024,9 +3077,13 @@ function renderOverview() {
   // pod-level kaniko output stays on the dedicated Logs page.
   renderOverviewEvents(proj);
 
-  // The Status tile is filled in by loadAndRenderProjectStatus once the
-  // /v1/projects/{id}/status request returns. Until then we show a
-  // skeleton placeholder so the layout doesn't reflow when data arrives.
+  // Stat tiles. The first row is build-state — counts derived from
+  // DATA.deployments[]. The second row is live runtime signals
+  // (status + CPU + memory + requests + errors) filled in by the
+  // async loaders below; the placeholders here keep the layout from
+  // reflowing once data arrives. The runtime tiles are clickable
+  // shortcuts into the Telemetry / Traffic pages so a user staring
+  // at a high error rate can drill in with one tap.
   $('overview-summary').innerHTML = `
     <div class="stat">
       <div class="label">Deployments</div>
@@ -3049,7 +3106,27 @@ function renderOverview() {
       <div class="label">Status</div>
       <div class="value" style="font-size:14px;color:var(--text-dim);">…</div>
       <div class="sub">checking</div>
-    </div>`;
+    </div>
+    <a class="stat stat-link" id="cpu-tile" href="#/p/${proj.id}/telemetry" title="Open Telemetry">
+      <div class="label">CPU</div>
+      <div class="value" style="font-size:18px;color:var(--text-dim);">…</div>
+      <div class="sub">live</div>
+    </a>
+    <a class="stat stat-link" id="mem-tile" href="#/p/${proj.id}/telemetry" title="Open Telemetry">
+      <div class="label">Memory</div>
+      <div class="value" style="font-size:18px;color:var(--text-dim);">…</div>
+      <div class="sub">live</div>
+    </a>
+    <a class="stat stat-link" id="req-tile" href="#/p/${proj.id}/traffic" title="Open Traffic">
+      <div class="label">Requests</div>
+      <div class="value" style="font-size:18px;color:var(--text-dim);">…</div>
+      <div class="sub">since Traefik start</div>
+    </a>
+    <a class="stat stat-link" id="err-tile" href="#/p/${proj.id}/traffic" title="Open Traffic">
+      <div class="label">Error rate</div>
+      <div class="value" style="font-size:18px;color:var(--text-dim);">…</div>
+      <div class="sub">5xx share</div>
+    </a>`;
 
   $('overview-branch').textContent = proj.production_branch;
   const prodLink = $('overview-prod');
@@ -3065,6 +3142,7 @@ function renderOverview() {
   }
 
   loadAndRenderProjectStatus(proj.id);
+  loadAndRenderProjectTelemetryTiles(proj.id);
 
   const list = $('overview-deployments');
   if (deps.length === 0) {
@@ -3434,6 +3512,81 @@ async function loadAndRenderProjectStatus(projectID) {
   // for the fan-out poller to come around again.
   projectStatusMap[projectID] = state;
   paintSidebarRunStates();
+}
+
+// loadAndRenderProjectTelemetryTiles paints the four live-runtime tiles
+// (CPU / Memory / Requests / Errors) on the overview page. It reuses
+// the cluster-wide /v1/telemetry snapshot — which already groups by
+// project_id — so we don't add a per-project endpoint just for the
+// overview KPIs. One round-trip per overview render; the per-project
+// Telemetry page picks up its own poll once the user clicks through.
+async function loadAndRenderProjectTelemetryTiles(projectID) {
+  const cpuTile = $('cpu-tile'), memTile = $('mem-tile'),
+        reqTile = $('req-tile'), errTile = $('err-tile');
+  if (!cpuTile || !memTile || !reqTile || !errTile) return;
+  // Use the existing cache if it's fresh enough (Telemetry/Traffic pages
+  // already refill it on a 5s tick when they're active); otherwise fetch.
+  let data = telemetryCache;
+  const stale = !data || !data.as_of ||
+                (Date.now() - Date.parse(data.as_of)) > 10000;
+  if (stale) data = await fetchTelemetry();
+  if (!data || data.error) {
+    // Soft-fail: leave the placeholders, just tag them so the user
+    // knows we tried. /v1/telemetry can legitimately return an error
+    // (metrics-server warming up, Traefik scraping not yet enabled,
+    // etc.) and we don't want a half-loaded overview to look broken.
+    const msg = data && data.error ? data.error : 'unavailable';
+    [cpuTile, memTile, reqTile, errTile].forEach(t => {
+      t.querySelector('.value').textContent = '—';
+      t.querySelector('.sub').textContent = msg;
+      t.querySelector('.sub').title = msg;
+    });
+    return;
+  }
+  const app = (data.apps || []).find(a => a.project_id === projectID);
+  if (!app) {
+    // /v1/projects reports the project but telemetry hasn't seen any
+    // pods yet — first deploy still propagating, scaled to zero, etc.
+    [cpuTile, memTile, reqTile, errTile].forEach(t => {
+      t.querySelector('.value').textContent = '—';
+    });
+    cpuTile.querySelector('.sub').textContent = 'no live pods';
+    memTile.querySelector('.sub').textContent = 'no live pods';
+    reqTile.querySelector('.sub').textContent = 'no traffic yet';
+    errTile.querySelector('.sub').textContent = 'no traffic yet';
+    return;
+  }
+  // Populate. CPU + Memory are absolute (cluster sees current pod
+  // usage); requests are cumulative since Traefik start (matches the
+  // Telemetry page's column); error rate is a derived % so it scales
+  // independently of total volume.
+  cpuTile.querySelector('.value').textContent = fmtCPU(app.cpu_m);
+  cpuTile.querySelector('.sub').textContent   = `${app.pods} pod${app.pods === 1 ? '' : 's'}`;
+
+  memTile.querySelector('.value').textContent = fmtMem(app.memory_mi);
+  memTile.querySelector('.sub').textContent   = `${app.pods} pod${app.pods === 1 ? '' : 's'}`;
+
+  reqTile.querySelector('.value').textContent = fmtCount(app.requests);
+  reqTile.querySelector('.sub').textContent   = app.avg_latency_ms
+    ? `avg ${app.avg_latency_ms} ms`
+    : 'avg latency —';
+
+  const errPct = app.requests > 0
+    ? (app.errors / app.requests) * 100
+    : 0;
+  const v = errTile.querySelector('.value');
+  v.textContent = app.requests > 0
+    ? `${errPct.toFixed(errPct < 1 ? 2 : 1)}%`
+    : '—';
+  // Tint the error tile to draw attention when things are actually
+  // broken. Thresholds match the convention used on the Telemetry
+  // page (>0 errors = warn; >=5% = err).
+  v.className = 'value';
+  if (errPct >= 5)        v.classList.add('err');
+  else if (errPct > 0)    v.classList.add('warn');
+  errTile.querySelector('.sub').textContent = app.errors > 0
+    ? `${fmtCount(app.errors)} of ${fmtCount(app.requests)}`
+    : 'no 5xx in window';
 }
 
 // paintLiveDeploymentRow flips .is-current onto the single row whose
