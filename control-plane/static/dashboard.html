@@ -555,6 +555,26 @@
       display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
       gap: 12px; margin-bottom: 24px;
     }
+    /* Overview KPI row carries 9 tiles (build counts + live runtime
+       signals) and the user wants them on a single line. Force a
+       single equal-width row via column auto-flow rather than the
+       wrapping auto-fit grid the other summary blocks use. Tiles get
+       a touch less horizontal padding + a smaller value font so nine
+       fit comfortably; min-width:0 lets them shrink below content
+       size without overflowing. Collapses back to a wrapping grid on
+       narrow viewports (see @media below). */
+    #overview-summary {
+      grid-template-columns: none;
+      grid-auto-flow: column;
+      grid-auto-columns: minmax(0, 1fr);
+      gap: 10px;
+    }
+    #overview-summary .stat { padding: 12px 12px; min-width: 0; }
+    #overview-summary .stat .value { font-size: 19px; }
+    #overview-summary .stat .label,
+    #overview-summary .stat .sub {
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
     .summary .stat {
       background: var(--panel); border: 1px solid var(--border);
       border-radius: 8px; padding: 12px 14px;
@@ -882,6 +902,15 @@
 
       /* Stat tiles: shrink the giant number a notch. */
       .summary .stat .value { font-size: 18px; }
+
+      /* The overview KPI row is forced to a single line on desktop, but
+         nine tiles in one row is unusable on a phone — revert it to the
+         same wrapping auto-fit grid as every other summary block. */
+      #overview-summary {
+        grid-auto-flow: row;
+        grid-auto-columns: auto;
+        grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      }
 
       /* Generic safety: prevent accidental horizontal scroll caused
          by a stray long URL or commit hash. */
