@@ -490,8 +490,8 @@
 
     /* DNS-gated state — applied to *any* live-URL link (.visit-btn on
        the top bar, .visit-btn on the overview header, .prod-link on
-       the overview deployments panel, .app-card-url on the home grid)
-       while we wait for Cloudflare DNS to propagate the new CNAME for
+       the overview deployments panel, .apps-url-link on the home
+       table) while we wait for Cloudflare DNS to propagate the CNAME of
        a freshly-deployed app. Clicking now would land the user on
        NXDOMAIN and stick a negative cache in their resolver for
        minutes, so we intercept the click and visibly muted-style the
@@ -510,7 +510,7 @@
       letter-spacing: 0.02em;
       margin-left: 4px;
     }
-    /* Some sites (app-card-url, overview prod-link) are pure URL text
+    /* Some sites (apps-url-link, overview prod-link) are pure URL text
        — the inline "• DNS propagating…" suffix would push them past
        the ellipsis. Allow markup to suppress the pseudo via this
        modifier class while still inheriting the dim/disabled look. */
@@ -588,66 +588,108 @@
     .panel-body { padding: 4px 0; }
     .panel-body .empty { padding: 14px 16px; color: var(--text-dim); font-style: italic; font-size: 12px; }
 
-    /* === Apps grid (Home page) =========================================== */
-    .apps-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-      gap: 14px;
-    }
-    .app-card {
-      display: flex; flex-direction: column;
-      background: var(--panel); border: 1px solid var(--border);
-      border-radius: 10px; padding: 16px 18px;
-      cursor: pointer;
-      transition: transform 0.08s ease, border-color 0.08s ease, background 0.08s ease;
-      min-width: 0;
-    }
-    .app-card:hover {
-      background: var(--panel-2);
-      border-color: var(--accent);
-      transform: translateY(-1px);
-    }
-    .app-card-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
-    .app-card-slug {
-      font-weight: 600; font-size: 14px; color: var(--text);
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      min-width: 0; flex: 1;
-    }
-    .app-card-repo {
-      font-size: 11px; color: var(--text-dim); font-family: ui-monospace, monospace;
-      margin-top: 4px;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    /* Production URL on the home-page app card. We pull it OUT of the
-       card's click-anywhere-to-navigate by stopPropagation, so the
-       affordance reads as: 'click the card to inspect, click the URL
-       to actually open the running app'. */
-    .app-card-url {
-      display: inline-block; margin-top: 8px;
-      font-family: ui-monospace, monospace; font-size: 11px;
-      color: var(--accent); text-decoration: none;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
-    }
-    .app-card-url:hover { text-decoration: underline; }
-    .app-card-url.muted { color: var(--text-faint); cursor: default; }
-    .app-card-url.muted:hover { text-decoration: none; }
-
-    .app-card-meta {
+    /* === Apps list (Home page) ===========================================
+       Render.com-style flat table — denser than the old card grid,
+       scales cleanly to dozens of services, and exposes the same
+       columns Render's dashboard does (name + status + updated) with
+       three extras we have that they don't (live URL + production
+       branch + a repo path under the name). Each row navigates on
+       click; the URL anchor stops propagation so click on the URL
+       opens the running app instead of the row's overview. */
+    .apps-toolbar {
       display: flex; align-items: center; gap: 10px;
-      margin-top: 14px;
+      padding: 10px 14px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .apps-search {
+      flex: 1; min-width: 0;
+      background: var(--bg-2); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 7px 11px; font-size: 12px; font-family: inherit;
+      outline: none;
+    }
+    .apps-search:focus { border-color: var(--accent); }
+    .apps-search::placeholder { color: var(--text-faint); }
+    .apps-count {
       font-size: 11px; color: var(--text-faint);
+      font-family: ui-monospace, monospace;
+      flex-shrink: 0;
     }
-    .app-card-meta .branch-pill {
-      font-family: ui-monospace, monospace; font-size: 10px;
+
+    .apps-table {
+      width: 100%; border-collapse: collapse;
+      table-layout: fixed;
+      font-size: 13px;
+    }
+    .apps-table thead th {
+      text-align: left; font-weight: 600;
+      font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--text-faint);
+      padding: 9px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+      user-select: none;
+      position: sticky; top: 0; z-index: 1;
+    }
+    .apps-table thead th.sortable { cursor: pointer; }
+    .apps-table thead th.sortable:hover { color: var(--text-dim); }
+    .apps-table thead th .sort-ind {
+      display: inline-block; width: 10px; margin-left: 4px;
+      color: var(--accent); font-weight: 700;
+    }
+    /* Column widths. Service name flexes; everything else is fixed so
+       wide URLs don't push the timestamp off-screen. */
+    .apps-table col.col-name    { width: auto; }
+    .apps-table col.col-status  { width: 110px; }
+    .apps-table col.col-url     { width: 38%; }
+    .apps-table col.col-branch  { width: 100px; }
+    .apps-table col.col-updated { width: 90px; }
+
+    .apps-table tbody tr {
+      cursor: pointer;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.08s ease;
+    }
+    .apps-table tbody tr:hover { background: var(--panel-2); }
+    .apps-table tbody tr:last-child { border-bottom: none; }
+    .apps-table tbody td {
+      padding: 11px 14px; vertical-align: middle;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .apps-name-cell {
+      display: flex; flex-direction: column; gap: 2px; min-width: 0;
+    }
+    .apps-name-slug {
+      font-weight: 600; color: var(--text);
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    .apps-name-repo {
+      font-size: 11px; color: var(--text-faint);
+      font-family: ui-monospace, monospace;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    .apps-url-link {
+      color: var(--accent);
+      font-family: ui-monospace, monospace;
+      font-size: 12px;
+      text-decoration: none;
+      display: inline-block; max-width: 100%;
+      overflow: hidden; text-overflow: ellipsis; vertical-align: middle;
+    }
+    .apps-url-link:hover { text-decoration: underline; }
+    .apps-url-muted { color: var(--text-faint); font-family: ui-monospace, monospace; font-size: 12px; }
+    .apps-branch-pill {
+      font-family: ui-monospace, monospace; font-size: 11px;
       background: var(--panel-3); color: var(--text-dim);
-      padding: 2px 7px; border-radius: 4px;
+      padding: 2px 8px; border-radius: 4px;
     }
-    .app-card-meta .spacer { flex: 1; }
-    .app-card-empty {
-      grid-column: 1 / -1;
+    .apps-updated {
+      color: var(--text-dim); font-variant-numeric: tabular-nums;
+      font-size: 12px;
+    }
+    .apps-empty {
       padding: 40px 20px; text-align: center;
       color: var(--text-dim); font-size: 13px;
-      border: 1px dashed var(--border); border-radius: 10px;
     }
 
     /* === Deployments list ================================================ */
@@ -2430,44 +2472,6 @@ function renderHome() {
     return l && l.status === 'ready';
   }).length;
 
-  // Card per app. Click anywhere on the card → navigate to the app's
-  // overview. The data-href + delegated handler at the bottom avoids
-  // inline onclick handlers (cleaner CSP-friendly setup).
-  const cards = projects.map(p => {
-    const latest = (p.deployments || [])[0];
-    const status = latest ? latest.status : 'none';
-    const statusLabel = latest ? latest.status : 'no deploys';
-    const when = latest ? timeAgo(latest.created_at) : 'never';
-    // Live URL: prefer the latest READY deployment's url (per-commit URL
-    // that's guaranteed to actually route). We used to point at the
-    // production-alias `<slug>.host` but that's only created when a
-    // deployment happens to be on the project's production branch; many
-    // users push to a different branch (master vs main) so the alias
-    // never materialises and the link was dead.
-    const ready = (p.deployments || []).find(d => d.status === 'ready' && d.url);
-    const fallbackHost = `${p.slug}.spinup.in`;
-    const urlHtml = ready
-      ? `<a class="app-card-url" href="${escapeHTML(ready.url)}" target="_blank" rel="noopener"
-            onclick="event.stopPropagation()" title="Open ${escapeHTML(ready.url)} in a new tab">
-           ${escapeHTML(ready.url.replace(/^https?:\/\//, ''))} <span aria-hidden="true">↗</span>
-         </a>`
-      : `<span class="app-card-url muted" title="No READY deployment yet">${fallbackHost}</span>`;
-    return `
-      <div class="app-card" data-href="#/p/${p.id}" tabindex="0" role="link" aria-label="Open ${escapeHTML(p.slug)}">
-        <div class="app-card-head">
-          <span class="app-card-slug">${escapeHTML(p.slug)}</span>
-          <span class="badge ${status}">${statusLabel}</span>
-        </div>
-        <div class="app-card-repo">${escapeHTML(p.full_name)}</div>
-        ${urlHtml}
-        <div class="app-card-meta">
-          <span class="branch-pill">${escapeHTML(p.production_branch)}</span>
-          <span class="spacer"></span>
-          <span title="${latest ? latest.created_at : ''}">${when}</span>
-        </div>
-      </div>`;
-  }).join('');
-
   summaryEl.innerHTML = `
     <div class="summary">
       <div class="stat">
@@ -2492,31 +2496,202 @@ function renderHome() {
         <a class="prod-link" href="https://github.com/apps/spinup-app/installations/new"
            target="_blank" rel="noopener">+ Connect a repo ↗</a>
       </div>
-      <div class="panel-body" style="padding: 14px 16px;">
-        <div class="apps-grid" id="apps-grid">${cards}</div>
+      <div class="apps-toolbar">
+        <input id="apps-search" class="apps-search" type="search" autocomplete="off"
+               placeholder="Search apps by name, repo, branch, or URL…"
+               value="${escapeHTML(homeListState.query)}">
+        <span id="apps-count" class="apps-count"></span>
+      </div>
+      <div class="panel-body" style="padding: 0;">
+        <table class="apps-table">
+          <colgroup>
+            <col class="col-name"/>
+            <col class="col-status"/>
+            <col class="col-url"/>
+            <col class="col-branch"/>
+            <col class="col-updated"/>
+          </colgroup>
+          <thead>
+            <tr>
+              <th class="sortable" data-sort="name">Service${sortInd('name')}</th>
+              <th class="sortable" data-sort="status">Status${sortInd('status')}</th>
+              <th>URL</th>
+              <th class="sortable" data-sort="branch">Branch${sortInd('branch')}</th>
+              <th class="sortable" data-sort="updated">Updated${sortInd('updated')}</th>
+            </tr>
+          </thead>
+          <tbody id="apps-tbody"></tbody>
+        </table>
       </div>
     </div>`;
 
-  // Card clicks → navigate. Delegated so we don't re-bind per card.
-  $('apps-grid').addEventListener('click', (ev) => {
-    const card = ev.target.closest('.app-card');
-    if (card && card.dataset.href) navigate(card.dataset.href);
+  // Render the rows (and wire up interactions) from the current
+  // sort/filter state. Split out so the search input + sort headers can
+  // re-render just the tbody without rebuilding the whole panel.
+  renderHomeTableBody(projects);
+
+  $('apps-search').addEventListener('input', (ev) => {
+    homeListState.query = ev.target.value;
+    renderHomeTableBody(projects);
   });
-  $('apps-grid').addEventListener('keydown', (ev) => {
-    if (ev.key !== 'Enter' && ev.key !== ' ') return;
-    const card = ev.target.closest('.app-card');
-    if (card && card.dataset.href) {
-      ev.preventDefault();
-      navigate(card.dataset.href);
-    }
+  document.querySelectorAll('.apps-table th.sortable').forEach(th => {
+    th.addEventListener('click', () => {
+      const key = th.dataset.sort;
+      if (homeListState.sortKey === key) {
+        homeListState.sortDir = homeListState.sortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        homeListState.sortKey = key;
+        // Default to descending for "updated" (newest first feels
+        // right) and ascending for everything else (alphabetical).
+        homeListState.sortDir = key === 'updated' ? 'desc' : 'asc';
+      }
+      // Re-render the header so the indicator moves to the new column,
+      // and rebuild the body with the new ordering.
+      renderHome();
+    });
   });
-  // Per-card live URL anchors are gated on a DNS probe so a card freshly
-  // hydrated by a just-finished deploy doesn't dump the user onto an
-  // NXDOMAIN page. Tooltip-only variant — the URL text already fills the
-  // card row and the inline "• DNS propagating…" suffix would overflow.
-  $('apps-grid').querySelectorAll('a.app-card-url[href]').forEach(a => {
+}
+
+// Module-scope state for the home apps list. Survives re-renders so the
+// user's sort choice + search text aren't reset every time the project
+// list refreshes via the polling tick.
+const homeListState = { sortKey: 'updated', sortDir: 'desc', query: '' };
+
+// Inline sort-indicator string used in the <th> markup. Empty when the
+// column isn't the active sort key so we don't reserve visual space.
+function sortInd(key) {
+  if (homeListState.sortKey !== key) return '<span class="sort-ind"></span>';
+  return `<span class="sort-ind">${homeListState.sortDir === 'asc' ? '↑' : '↓'}</span>`;
+}
+
+// renderHomeTableBody: build the <tbody> rows for the home apps table,
+// honoring the current sort + filter. Pulled out so the search-input
+// handler can refresh just the rows without rebuilding the toolbar
+// (and therefore without stealing focus from the search field).
+function renderHomeTableBody(projects) {
+  const tbody = $('apps-tbody');
+  const count = $('apps-count');
+  if (!tbody) return;
+
+  const q = homeListState.query.trim().toLowerCase();
+  const filtered = q
+    ? projects.filter(p => {
+        const latest = (p.deployments || []).find(d => d.status === 'ready' && d.url);
+        const url = latest ? latest.url : '';
+        const hay = `${p.slug} ${p.full_name} ${p.production_branch} ${url}`.toLowerCase();
+        return hay.includes(q);
+      })
+    : projects.slice();
+
+  const cmp = appsSortComparator(homeListState.sortKey, homeListState.sortDir);
+  filtered.sort(cmp);
+
+  count.textContent = q
+    ? `${filtered.length} of ${projects.length}`
+    : `${projects.length} app${projects.length === 1 ? '' : 's'}`;
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5" class="apps-empty">No apps match "${escapeHTML(homeListState.query)}".</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(p => {
+    const latest = (p.deployments || [])[0];
+    const status = latest ? latest.status : 'none';
+    const statusLabel = latest ? latest.status : 'no deploys';
+    const when = latest ? timeAgo(latest.created_at) : 'never';
+    const whenAbs = latest ? latest.created_at : '';
+    // Live URL: prefer the latest READY deployment's url (per-commit
+    // URL that's guaranteed to actually route). Same selection rule
+    // as the per-app Visit button; see liveURLForProject for the
+    // identical sister-function used elsewhere.
+    const ready = (p.deployments || []).find(d => d.status === 'ready' && d.url);
+    const urlCell = ready
+      ? `<a class="apps-url-link" href="${escapeHTML(ready.url)}" target="_blank" rel="noopener"
+            onclick="event.stopPropagation()" title="Open ${escapeHTML(ready.url)} in a new tab">${
+              escapeHTML(ready.url.replace(/^https?:\/\//, ''))} ↗</a>`
+      : `<span class="apps-url-muted" title="No READY deployment yet">—</span>`;
+    return `
+      <tr data-href="#/p/${p.id}" tabindex="0" role="link" aria-label="Open ${escapeHTML(p.slug)}">
+        <td>
+          <div class="apps-name-cell">
+            <span class="apps-name-slug">${escapeHTML(p.slug)}</span>
+            <span class="apps-name-repo">${escapeHTML(p.full_name)}</span>
+          </div>
+        </td>
+        <td><span class="badge ${status}">${statusLabel}</span></td>
+        <td>${urlCell}</td>
+        <td><span class="apps-branch-pill">${escapeHTML(p.production_branch)}</span></td>
+        <td><span class="apps-updated" title="${escapeHTML(whenAbs)}">${when}</span></td>
+      </tr>`;
+  }).join('');
+
+  // Row click / Enter / Space → navigate. Delegated so we don't
+  // re-bind per row on every filter keystroke.
+  tbody.addEventListener('click', homeRowActivate, { once: false });
+  tbody.addEventListener('keydown', homeRowKey, { once: false });
+  // Re-arm DNS gating on every newly-rendered URL anchor. Tooltip-only
+  // variant because the cell is fixed-width with ellipsis — an inline
+  // "• DNS propagating…" suffix would push the link past the edge.
+  tbody.querySelectorAll('a.apps-url-link[href]').forEach(a => {
     applyDNSGate(a, a.getAttribute('href'), { tooltipOnly: true });
   });
+}
+
+// Comparator factory for the apps table. Pulled out so we don't allocate
+// a closure per row during sort. Status order is taken from a fixed
+// hierarchy (failed first when ascending — drawing attention to broken
+// services — then building/queued/ready/none) rather than alphabetical,
+// which would put 'failed' between 'building' and 'queued' uselessly.
+function appsSortComparator(key, dir) {
+  const sign = dir === 'asc' ? 1 : -1;
+  const statusRank = { failed: 0, building: 1, queued: 2, ready: 3, none: 4 };
+  return (a, b) => {
+    let av, bv;
+    switch (key) {
+      case 'name':
+        av = a.slug; bv = b.slug; break;
+      case 'branch':
+        av = a.production_branch; bv = b.production_branch; break;
+      case 'status': {
+        const la = (a.deployments || [])[0];
+        const lb = (b.deployments || [])[0];
+        av = statusRank[la ? la.status : 'none'] ?? 99;
+        bv = statusRank[lb ? lb.status : 'none'] ?? 99;
+        return (av - bv) * sign;
+      }
+      case 'updated': {
+        const la = (a.deployments || [])[0];
+        const lb = (b.deployments || [])[0];
+        av = la ? Date.parse(la.created_at) || 0 : 0;
+        bv = lb ? Date.parse(lb.created_at) || 0 : 0;
+        return (av - bv) * sign;
+      }
+      default:
+        av = ''; bv = '';
+    }
+    return String(av).localeCompare(String(bv)) * sign;
+  };
+}
+
+// Row-activation handlers. Extracted so addEventListener gets a stable
+// function reference per re-render (the {once:false} re-attaches would
+// otherwise stack listeners). Browsers de-dupe identical-handler
+// registrations, so re-attaching on every re-render is safe.
+function homeRowActivate(ev) {
+  // Ignore clicks on the URL anchor (its own onclick stops propagation
+  // already, but defence-in-depth — middle-clicks may slip through).
+  if (ev.target.closest('a')) return;
+  const row = ev.target.closest('tr[data-href]');
+  if (row) navigate(row.dataset.href);
+}
+function homeRowKey(ev) {
+  if (ev.key !== 'Enter' && ev.key !== ' ') return;
+  const row = ev.target.closest('tr[data-href]');
+  if (row) {
+    ev.preventDefault();
+    navigate(row.dataset.href);
+  }
 }
 
 function renderOverview() {
