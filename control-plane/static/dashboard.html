@@ -1125,6 +1125,11 @@
     }
     .incident-row.critical .incident-tag { color: var(--err); }
     .incident-row.warning  .incident-tag { color: #f1c40f; }
+    /* Info severity: client-side (4xx) notices — caller's fault, not the
+       service's — so a calm accent tone, no pulse, never red/amber. */
+    .incident-row.info     { border-left-color: var(--accent); }
+    .incident-row.info .incident-icon { background: var(--accent); }
+    .incident-row.info     .incident-tag { color: var(--accent); }
 
     @keyframes incident-pulse {
       0%, 100% { box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.55); }
@@ -5489,19 +5494,23 @@ function detectIncidents(points, intervalS) {
     });
   }
 
-  // Rule 2: error rate (4xx + 5xx) > 5 % over the last 10 minutes,
-  // with at least 10 requests so we don't flap on single-digit noise.
+  // Rule 2: elevated CLIENT errors (4xx) over the last 10 minutes.
+  // 4xx are caller-side — 404s for favicon/bad links, 401/403 auth
+  // probes, bots — NOT a service fault, so this is INFO only and can
+  // never escalate to critical. Server errors (5xx) are owned by
+  // Rule 1 above. Threshold 10 % with >=10 requests so we don't flap
+  // on single-digit noise.
   const recent10 = points.slice(-ticksFor(10));
   const totalReq = recent10.reduce((s, p) => s + (p.req_2xx + p.req_3xx + p.req_4xx + p.req_5xx), 0);
-  const totalErr = recent10.reduce((s, p) => s + (p.req_4xx + p.req_5xx), 0);
-  if (totalReq >= 10) {
-    const rate = (totalErr / totalReq) * 100;
-    if (rate > 5) {
+  const total4xx = recent10.reduce((s, p) => s + (p.req_4xx || 0), 0);
+  if (totalReq >= 10 && total4xx > 0) {
+    const rate = (total4xx / totalReq) * 100;
+    if (rate > 10) {
       out.push({
-        severity: rate > 20 ? 'critical' : 'warning',
-        icon: '⚠',
-        title: `Elevated error rate · ${rate.toFixed(1)}%`,
-        detail: `${totalErr} of ${totalReq} requests in the last 10 min returned 4xx/5xx.`,
+        severity: 'info',
+        icon: 'ℹ',
+        title: `Elevated client errors (4xx) · ${rate.toFixed(1)}%`,
+        detail: `${total4xx} of ${totalReq} requests in the last 10 min returned 4xx (client-side — e.g. 404s, bad paths, bots). Not a server fault; check access logs if unexpected.`,
       });
     }
   }
@@ -5548,7 +5557,7 @@ function paintIncidents(incidents) {
             <div class="incident-title">${escapeHTML(i.title)}</div>
             <div class="incident-detail">${escapeHTML(i.detail)}</div>
           </div>
-          <div class="incident-tag">${i.severity === 'critical' ? 'CRITICAL' : 'WARNING'}</div>
+          <div class="incident-tag">${i.severity === 'critical' ? 'CRITICAL' : i.severity === 'info' ? 'INFO' : 'WARNING'}</div>
         </div>`).join('')}
     </div>`;
 }
@@ -5794,8 +5803,13 @@ async function tickProjectTraffic() {
   // "does nothing".
   const winLabel = 'last ' + RANGE_META[trafficRange].label;
   const winReqs = pts.reduce((s, p) => s + p.req_2xx + p.req_3xx + p.req_4xx + p.req_5xx, 0);
-  const winErrs = pts.reduce((s, p) => s + p.req_4xx + p.req_5xx, 0);
-  const errPct = winReqs > 0 ? (winErrs / winReqs) * 100 : 0;
+  // Error rate = SERVER errors (5xx) only — the real "is my app broken"
+  // signal. Client errors (4xx: 404s, bad paths, bots) are surfaced
+  // separately in the sub-line as informational so a wave of favicon
+  // 404s never paints the tile red or fires a critical incident.
+  const win5xx = pts.reduce((s, p) => s + (p.req_5xx || 0), 0);
+  const win4xx = pts.reduce((s, p) => s + (p.req_4xx || 0), 0);
+  const errPct = winReqs > 0 ? (win5xx / winReqs) * 100 : 0;
 
   // Pick the most recent NON-ZERO percentile window — the very latest
   // tick might be a quiet 30 s with no traffic, in which case all
@@ -5810,7 +5824,11 @@ async function tickProjectTraffic() {
   $('pa-summary').innerHTML = [
     kpiTile('Requests', fmtCount(winReqs), winLabel),
     kpiTile('Error rate', errPct.toFixed(errPct < 1 ? 2 : 1) + '%',
-            winErrs > 0 ? `${fmtCount(winErrs)} errors · ${winLabel}` : 'no errors in window',
+            win5xx > 0
+              ? `${fmtCount(win5xx)} 5xx${win4xx ? ` · ${fmtCount(win4xx)} 4xx` : ''} · ${winLabel}`
+              : win4xx > 0
+                ? `0 5xx · ${fmtCount(win4xx)} 4xx (client) · ${winLabel}`
+                : 'no errors in window',
             errPct > 5 ? 'err' : errPct > 1 ? 'warn' : 'ok'),
     kpiTile('Avg latency', fmtMs(tel.avg_latency_ms), 'lifetime'),
     kpiTile('p95', fmtMs(lastWithLat.latency_p95_ms || 0), 'last active window'),
