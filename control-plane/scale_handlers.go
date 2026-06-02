@@ -32,20 +32,39 @@ import (
 )
 
 type scaleStateResponse struct {
-	ProjectID   string `json:"project_id"`
-	Slug        string `json:"slug"`
-	Running     bool   `json:"running"`     // any deployment with replicas>0
-	Replicas    int    `json:"replicas"`    // sum across all deployments
-	Deployments int    `json:"deployments"` // total deployments seen
+	ProjectID string `json:"project_id"`
+	Slug      string `json:"slug"`
+	// Running is true iff at least one pod is actually Ready. NOT the
+	// same as 'desired > 0' — a deployment can have replicas=3 desired
+	// but readyReplicas=0 because of ResourceQuota / image pull /
+	// readiness probe failures, and the dashboard should NOT call that
+	// 'running'. See computeRunState in dashboard.html for the matching
+	// UI logic.
+	Running bool `json:"running"`
+	// Replicas is the SUM of spec.replicas across every Deployment that
+	// belongs to this project — what the user asked for.
+	Replicas int `json:"replicas"`
+	// Ready is the sum of status.readyReplicas across the same set —
+	// what is actually answering HTTP. The dashboard renders the pill
+	// as 'Ready of Replicas', so they always agree when healthy.
+	Ready       int `json:"ready"`
+	Deployments int `json:"deployments"` // total deployments seen
 }
 
 type scaleRequest struct {
 	Action string `json:"action"` // "start" | "stop"
 }
 
-// handleProjectStatus returns the current running/stopped state of an
-// app by reading spec.replicas off every Deployment owned by the
-// project. Sum-replicas > 0 → Running; otherwise Stopped.
+// handleProjectStatus returns the current run-state of an app by
+// reading both spec.replicas (desired) and status.readyReplicas
+// (actually serving) off every Deployment owned by the project.
+//   Ready > 0                  → Running (green).
+//   Desired > 0 && Ready == 0  → Stopped with caller-visible warning
+//                                in the UI (sidebar shows the red '!').
+//   Desired == 0               → Stopped (red square).
+// The split lets us tell the user "you asked for 3 pods, only 1 is up"
+// instead of the misleading older behaviour where any non-zero desired
+// count painted the pill green regardless of pod health.
 func (s *server) handleProjectStatus(w http.ResponseWriter, r *http.Request) {
 	proj := s.authoriseProject(w, r)
 	if proj == nil {
@@ -108,13 +127,17 @@ func (s *server) handleProjectScale(w http.ResponseWriter, r *http.Request) {
 		"action", req.Action, "deployments", len(names), "replicas", replicas)
 	state, err := s.readProjectScale(r.Context(), proj)
 	if err != nil {
-		// Scale succeeded but read-back failed — return a best-effort
-		// echo of the requested intent so the UI can update immediately.
+		// Optimistic echo: scale succeeded but we couldn't read it
+		// back. We know Desired (what we just sent) but NOT Ready —
+		// pods take time to come up. Report Ready=0 honestly; the UI
+		// will poll /status a moment later and pick up the real
+		// Ready count.
 		writeJSON(w, http.StatusOK, scaleStateResponse{
 			ProjectID:   proj.ID,
 			Slug:        proj.Slug,
-			Running:     replicas > 0,
+			Running:     false,
 			Replicas:    replicas * len(names),
+			Ready:       0,
 			Deployments: len(names),
 		})
 		return
@@ -138,16 +161,20 @@ func (s *server) readProjectScale(ctx context.Context, proj *projectInfo) (*scal
 	}
 	out.Deployments = len(names)
 	for _, name := range names {
-		replicas, exists, err := s.k8s.getDeploymentReplicas(ctx, ns, name)
+		scale, exists, err := s.k8s.getDeploymentScale(ctx, ns, name)
 		if err != nil {
-			return nil, fmt.Errorf("get %s/%s replicas: %w", ns, name, err)
+			return nil, fmt.Errorf("get %s/%s scale: %w", ns, name, err)
 		}
 		if !exists {
 			continue
 		}
-		out.Replicas += replicas
+		out.Replicas += scale.Desired
+		out.Ready += scale.Ready
 	}
-	out.Running = out.Replicas > 0
+	// Running ties to actual pod Readiness, not desired count. A
+	// project whose ResourceQuota / image-pull is blocking every pod
+	// will report Running=false here and the sidebar paints the red '!'.
+	out.Running = out.Ready > 0
 	return out, nil
 }
 

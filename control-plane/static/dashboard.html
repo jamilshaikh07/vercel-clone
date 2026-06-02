@@ -1965,25 +1965,36 @@ async function pollAllProjectStatuses() {
 // and the post-poll repaint so the icon can't disagree with itself
 // across a refresh tick.
 //
-//   running → green pulsing play  (scaled > 0 AND latest build is OK)
-//   failed  → red pulsing exclam. (latest deployment row is in 'failed'
-//                                   status — takes priority even when
-//                                   a previous READY revision is still
-//                                   serving traffic, because the user
-//                                   needs to know their last push broke)
-//   stopped → red stop square     (scaled = 0 AND no failed build)
-//   ''       → loading              (cache empty; CSS hides every glyph)
+// Priority (top wins):
+//   failed   → red pulsing '!'  Either the latest deployment row is
+//                                in 'failed' status (broken build),
+//                                OR pods are desired but zero are
+//                                Ready (broken runtime — quota,
+//                                image-pull, readiness probe, etc.).
+//                                Both deserve the user's attention.
+//   running  → green play       At least one pod actually Ready.
+//   stopped  → red stop square  Zero pods desired (intentional pause).
+//   ''       → loading          Cache empty; CSS hides every glyph.
 function computeRunState(proj) {
   const rs = projectStatusMap[proj.id];
   if (!rs) return { state: '', title: 'Loading run-state…' };
-  // Failed wins over running/stopped: even if an older READY revision
-  // is still serving traffic, the user just pushed something that
-  // didn't land and that's the signal worth surfacing.
+  // Build-time failure: latest deployment row is failed. Wins even if
+  // a previous READY revision is still serving — the user's most
+  // recent push didn't land and the alarm is more useful than the
+  // 'older revision still up' good news.
   const latest = (proj.deployments || [])[0];
   if (latest && latest.status === 'failed') {
     return { state: 'failed', title: 'Latest deployment failed — click to inspect' };
   }
-  if (rs.running) return { state: 'running', title: 'App is serving traffic' };
+  const desired = rs.replicas || 0;
+  const ready   = rs.ready    || 0;
+  // Runtime-time failure: pods asked for, none Ready. The build was
+  // fine but something downstream broke (ResourceQuota exhaustion,
+  // ImagePullBackOff, CrashLoopBackOff, failing readinessProbe).
+  if (desired > 0 && ready === 0) {
+    return { state: 'failed', title: 'Pods requested but none Ready — click to inspect' };
+  }
+  if (ready > 0) return { state: 'running', title: 'App is serving traffic (' + ready + '/' + desired + ' pods Ready)' };
   return { state: 'stopped', title: 'App is stopped (0 replicas)' };
 }
 
@@ -2855,18 +2866,33 @@ function paintStatusTile(projectID, state) {
       <div class="sub">push to start</div>`;
     return;
   }
-  const isRunning = !!state.running;
-  const label = isRunning ? 'running' : 'stopped';
-  const valueColor = isRunning ? 'var(--ok)' : 'var(--err)';
-  const action = isRunning ? 'stop' : 'start';
-  const actionLabel = isRunning ? 'Stop' : 'Start';
+  // Four states from (desired, ready). The middle one — desired > 0
+  // but ready == 0 — is the case that used to lie as 'running'.
+  // Now it surfaces as 'unhealthy' with no Start button, because
+  // pods are already trying and clicking Start wouldn't help.
+  const desired = state.replicas || 0;
+  const ready   = state.ready    || 0;
+  let label, valueColor, action, actionLabel, showButton = true;
+  if (desired === 0) {
+    label = 'stopped';        valueColor = 'var(--err)';  action = 'start'; actionLabel = 'Start';
+  } else if (ready === 0) {
+    // Pods desired but none Ready — quota, image-pull, readiness
+    // probe, etc. Hide the button: the deploy is the fix path, not
+    // a scale toggle.
+    label = 'unhealthy';      valueColor = 'var(--warn, #d18b1f)'; action = 'stop'; actionLabel = 'Stop'; showButton = true;
+  } else if (ready < desired) {
+    label = 'degraded';       valueColor = 'var(--warn, #d18b1f)'; action = 'stop'; actionLabel = 'Stop';
+  } else {
+    label = 'running';        valueColor = 'var(--ok)';   action = 'stop';  actionLabel = 'Stop';
+  }
   tile.innerHTML = `
     <div class="label">Status</div>
     <div class="value" style="font-size:14px; color:${valueColor};">${label}</div>
     <div class="sub" style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
-      <span>${state.replicas} of ${state.deployments} replicas</span>
-      <button class="btn-action ${action}" data-action="${action}">${actionLabel}</button>
+      <span>${ready} of ${desired} ready</span>
+      ${showButton ? `<button class="btn-action ${action}" data-action="${action}">${actionLabel}</button>` : ''}
     </div>`;
+  if (!showButton) return;
   tile.querySelector('button').addEventListener('click', async (ev) => {
     const btn = ev.currentTarget;
     btn.disabled = true;

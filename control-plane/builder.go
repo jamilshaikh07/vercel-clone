@@ -852,9 +852,17 @@ func deploymentManifest(in deployInput) map[string]any {
 										"name":          "http",
 									},
 								},
+								// Runtime pod budget. Static nginx idles at <5m CPU
+								// and bursts to ~30m on a real cold load; Node
+								// apps behave similarly for our expected workloads.
+								// 200m is comfortable burst headroom (~4x p99)
+								// and lets a tenant fit ~40 replicas inside the
+								// 8-core quota in tenant.go instead of the
+								// previous 16 at 500m. Bump if a user reports
+								// nginx CPU-throttling.
 								"resources": map[string]any{
 									"requests": map[string]any{"cpu": "20m", "memory": "32Mi"},
-									"limits":   map[string]any{"cpu": "500m", "memory": "256Mi"},
+									"limits":   map[string]any{"cpu": "200m", "memory": "256Mi"},
 								},
 								"securityContext": map[string]any{
 									"allowPrivilegeEscalation": false,

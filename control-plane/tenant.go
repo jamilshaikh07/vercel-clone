@@ -34,14 +34,23 @@ import (
 const (
 	tenantNamespacePrefix = "paas-tenant-"
 
-	// Per-tenant ceilings. Conservative defaults sized for "static landing
-	// pages + a few dynamic apps" on retired hardware. Operators can edit
-	// these by hand on a namespace if a specific tenant needs more.
-	tenantQuotaCPU       = "2"     // total requests across all pods
-	tenantQuotaCPULimit  = "4"     // total limits across all pods
-	tenantQuotaMemory    = "2Gi"   // total requests
-	tenantQuotaMemLimit  = "4Gi"   // total limits
-	tenantQuotaPods      = "20"    // hard cap on pod count
+	// Per-tenant ceilings. Operators can edit these by hand on a
+	// namespace if a specific tenant needs more.
+	//
+	// Conservative defaults sized for "static landing pages + a few
+	// dynamic apps" on retired hardware, but tuned upwards from the
+	// original 4-CPU cap because runtime pods now request only 20m /
+	// limit 200m each (see runtime resources in builder.go). At those
+	// numbers a single static SPA running at the default 1 replica
+	// consumes 1/40th of the tenant CPU-limit budget, which means an
+	// 8-CPU cap gives ~40 runtime-pod-equivalents of headroom — enough
+	// to keep "scale to 6" working without surprises while still
+	// bounded enough that one tenant can't drain a worker.
+	tenantQuotaCPU       = "4"     // total requests across all pods
+	tenantQuotaCPULimit  = "8"     // total limits across all pods
+	tenantQuotaMemory    = "4Gi"   // total requests
+	tenantQuotaMemLimit  = "8Gi"   // total limits
+	tenantQuotaPods      = "30"    // hard cap on pod count
 	tenantQuotaServices  = "10"
 	tenantQuotaPVCs      = "5"
 	tenantQuotaSecrets   = "30"    // most apps need only a handful

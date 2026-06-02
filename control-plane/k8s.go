@@ -390,31 +390,50 @@ func (k *kubeClient) patchDeploymentScale(ctx context.Context, namespace, name s
 	return nil
 }
 
-// getDeploymentReplicas reads the current spec.replicas on a Deployment.
-// Returns (0, false, nil) if the deployment doesn't exist — callers use
-// the existence bool to distinguish "stopped" from "never deployed".
-func (k *kubeClient) getDeploymentReplicas(ctx context.Context, namespace, name string) (int, bool, error) {
+// deploymentScale captures both halves of "how many pods are there":
+//   Desired = spec.replicas, what the user (or scale handler) asked for.
+//   Ready   = status.readyReplicas, what is actually answering traffic.
+// These diverge whenever something blocks scheduling (ResourceQuota,
+// node pressure, image pull errors, failing readiness probe). Surfacing
+// both is what stops the dashboard from showing a green "running" pill
+// for a deployment whose pods never made it past Pending.
+type deploymentScale struct {
+	Desired int
+	Ready   int
+}
+
+// getDeploymentScale reads spec.replicas + status.readyReplicas on a
+// Deployment. Returns (zero, false, nil) if the deployment doesn't
+// exist — callers use the existence bool to distinguish "stopped" from
+// "never deployed".
+func (k *kubeClient) getDeploymentScale(ctx context.Context, namespace, name string) (deploymentScale, bool, error) {
 	path := fmt.Sprintf("/apis/apps/v1/namespaces/%s/deployments/%s",
 		url.PathEscape(namespace), url.PathEscape(name))
 	status, body, err := k.do(ctx, "GET", path, nil)
 	if err != nil {
-		return 0, false, err
+		return deploymentScale{}, false, err
 	}
 	if status == http.StatusNotFound {
-		return 0, false, nil
+		return deploymentScale{}, false, nil
 	}
 	if status != http.StatusOK {
-		return 0, false, fmt.Errorf("get deployment: kube returned %d: %s", status, string(body))
+		return deploymentScale{}, false, fmt.Errorf("get deployment: kube returned %d: %s", status, string(body))
 	}
 	var resp struct {
 		Spec struct {
 			Replicas int `json:"replicas"`
 		} `json:"spec"`
+		Status struct {
+			// readyReplicas is omitted from the JSON when zero, so the
+			// natural Go zero value already gives us the right answer
+			// for "0 pods Ready" without a special case.
+			ReadyReplicas int `json:"readyReplicas"`
+		} `json:"status"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return 0, false, fmt.Errorf("decode deployment: %w", err)
+		return deploymentScale{}, false, fmt.Errorf("decode deployment: %w", err)
 	}
-	return resp.Spec.Replicas, true, nil
+	return deploymentScale{Desired: resp.Spec.Replicas, Ready: resp.Status.ReadyReplicas}, true, nil
 }
 
 func (k *kubeClient) applyService(ctx context.Context, namespace, name string, obj map[string]any) error {
