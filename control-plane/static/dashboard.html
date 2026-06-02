@@ -488,6 +488,34 @@
     .content-head .visit-btn:active { transform: translateY(1px); }
     .content-head .visit-btn.shown { display: inline-flex; }
 
+    /* DNS-gated state — applied to *any* live-URL link (.visit-btn on
+       the top bar, .visit-btn on the overview header, .prod-link on
+       the overview deployments panel, .app-card-url on the home grid)
+       while we wait for Cloudflare DNS to propagate the new CNAME for
+       a freshly-deployed app. Clicking now would land the user on
+       NXDOMAIN and stick a negative cache in their resolver for
+       minutes, so we intercept the click and visibly muted-style the
+       link. The class is removed when probeHostDNS confirms the host
+       resolves; see the JS gate helpers near liveURLForProject. */
+    .dns-pending {
+      opacity: 0.55;
+      cursor: progress !important;
+      position: relative;
+    }
+    .dns-pending::after {
+      content: ' • DNS propagating…';
+      font-size: 10px;
+      color: var(--text-faint);
+      font-weight: normal;
+      letter-spacing: 0.02em;
+      margin-left: 4px;
+    }
+    /* Some sites (app-card-url, overview prod-link) are pure URL text
+       — the inline "• DNS propagating…" suffix would push them past
+       the ellipsis. Allow markup to suppress the pseudo via this
+       modifier class while still inheriting the dim/disabled look. */
+    .dns-pending.dns-pending-tooltip-only::after { content: none; }
+
     .pages {
       flex: 1; min-height: 0; position: relative;
       display: flex; flex-direction: column;
@@ -2240,8 +2268,102 @@ function renderCrumbs() {
       // narrow fixed-width pill that doesn't reflow per service.
       visitBtn.title = 'Open ' + url.replace(/^https?:\/\//, '') + ' in a new tab';
       visitBtn.classList.add('shown');
+      applyDNSGate(visitBtn, url);
     }
   }
+}
+
+// --- DNS gating for newly-deployed app URLs -------------------------------
+//
+// external-dns reconciles every 15s and Cloudflare publishes the new CNAME
+// within another few seconds, but a user clicking Visit immediately after
+// their first deploy can still race the propagation — landing on NXDOMAIN
+// and (worse) priming their resolver's negative cache for minutes. We
+// gate every Live-URL anchor in the UI on a client-side DNS probe so the
+// link stays muted + non-clickable until the host actually resolves.
+//
+// Probe strategy: hit Cloudflare's authoritative DoH endpoint
+// (cloudflare-dns.com/dns-query). Cloudflare's recursive nameservers are
+// authoritative for spinup.in, so a fresh CNAME shows up there the moment
+// external-dns writes it — no propagation hop, no edge-cache delay. We
+// poll every 5s up to 12 attempts (~1 minute). Once a host has been
+// confirmed it stays confirmed for the session (DNS records don't
+// disappear under normal flow; if they do, the user hitting NXDOMAIN once
+// is acceptable — the page-reload will re-trigger the probe).
+const dnsState     = new Map();           // host -> 'ok' | 'pending'
+const dnsInflight  = new Map();           // host -> Promise<'ok'|'fail'>
+
+function probeHostDNS(host) {
+  if (dnsState.get(host) === 'ok') return Promise.resolve('ok');
+  if (dnsInflight.has(host))       return dnsInflight.get(host);
+
+  dnsState.set(host, 'pending');
+  const url = `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(host)}&type=A`;
+  const attempt = async (n) => {
+    try {
+      const r = await fetch(url, { headers: { 'Accept': 'application/dns-json' }, cache: 'no-store' });
+      if (r.ok) {
+        const data = await r.json();
+        // Status 0 = NOERROR. Answer carries the A/CNAME chain; presence
+        // of at least one record means the host now resolves.
+        if (data && data.Status === 0 && Array.isArray(data.Answer) && data.Answer.length > 0) {
+          return 'ok';
+        }
+      }
+    } catch (_e) { /* network blip — fall through to retry */ }
+    if (n <= 1) return 'fail';
+    await new Promise(res => setTimeout(res, 5000));
+    return attempt(n - 1);
+  };
+
+  const p = attempt(12).then(out => {
+    dnsInflight.delete(host);
+    if (out === 'ok') {
+      dnsState.set(host, 'ok');
+      // Unlock every link in the live DOM that was waiting on this host.
+      // Using data-live-host means we don't need to track elements
+      // ourselves — each renderer just stamps the attribute.
+      document.querySelectorAll(`[data-live-host="${CSS.escape(host)}"]`).forEach(el => {
+        el.classList.remove('dns-pending', 'dns-pending-tooltip-only');
+        el.removeAttribute('aria-disabled');
+        if (el.dataset.pendingHref) {
+          el.setAttribute('href', el.dataset.pendingHref);
+          delete el.dataset.pendingHref;
+        }
+        if (el.dataset.pendingTitle) {
+          el.setAttribute('title', el.dataset.pendingTitle);
+          delete el.dataset.pendingTitle;
+        }
+      });
+    }
+    return out;
+  });
+  dnsInflight.set(host, p);
+  return p;
+}
+
+// Apply the DNS gate to a freshly-rendered anchor. Pass tooltipOnly=true
+// for tight UI sites (URL text in app cards / prod-link) where the
+// "• DNS propagating…" inline label would push the text past the
+// ellipsis; the dimmed style + tooltip still convey the state.
+function applyDNSGate(el, url, { tooltipOnly = false } = {}) {
+  if (!el || !url) return;
+  let host;
+  try { host = new URL(url).hostname; } catch (_e) { return; }
+  if (dnsState.get(host) === 'ok') return;          // already cleared this session
+  el.classList.add('dns-pending');
+  if (tooltipOnly) el.classList.add('dns-pending-tooltip-only');
+  el.setAttribute('aria-disabled', 'true');
+  el.setAttribute('data-live-host', host);
+  // Stash href/title so we can restore them when the probe resolves; meanwhile
+  // neutralise the click so the user can't navigate to NXDOMAIN.
+  if (el.hasAttribute('href')) {
+    el.dataset.pendingHref = el.getAttribute('href');
+    el.setAttribute('href', 'javascript:void(0)');
+  }
+  if (el.hasAttribute('title')) el.dataset.pendingTitle = el.getAttribute('title');
+  el.setAttribute('title', `DNS propagating for ${host} — link will activate when Cloudflare publishes the record (usually <30s).`);
+  probeHostDNS(host);
 }
 
 // liveURLForProject returns the best URL to point a user at for an app:
@@ -2388,6 +2510,13 @@ function renderHome() {
       navigate(card.dataset.href);
     }
   });
+  // Per-card live URL anchors are gated on a DNS probe so a card freshly
+  // hydrated by a just-finished deploy doesn't dump the user onto an
+  // NXDOMAIN page. Tooltip-only variant — the URL text already fills the
+  // card row and the inline "• DNS propagating…" suffix would overflow.
+  $('apps-grid').querySelectorAll('a.app-card-url[href]').forEach(a => {
+    applyDNSGate(a, a.getAttribute('href'), { tooltipOnly: true });
+  });
 }
 
 function renderOverview() {
@@ -2452,6 +2581,7 @@ function renderOverview() {
     prodLink.href = liveURL;
     prodLink.textContent = liveURL.replace(/^https?:\/\//, '') + ' ↗';
     prodLink.style.display = '';
+    applyDNSGate(prodLink, liveURL, { tooltipOnly: true });
   } else {
     prodLink.style.display = 'none';
   }
@@ -2532,7 +2662,7 @@ function renderOverviewHeader(proj) {
       ${liveURL ? `
         <span class="meta">
           <span style="color:var(--text-faint);">↗</span>
-          <a href="${liveURL}" target="_blank" rel="noopener">${escapeHTML(liveHost)}</a>
+          <a class="live-url-anchor" href="${liveURL}" target="_blank" rel="noopener">${escapeHTML(liveHost)}</a>
           <button class="copy" type="button" data-copy="${escapeHTML(liveURL)}" title="Copy URL">⧉</button>
         </span>` : ''}
     </div>`;
@@ -2549,6 +2679,15 @@ function renderOverviewHeader(proj) {
       } catch (_) { /* clipboard blocked — silent no-op */ }
     });
   });
+  // Gate the freshly-rendered Visit button + inline URL anchor on a
+  // live DNS resolution. Both anchors point at the same host so a
+  // single probe unlocks them together. Pill button shows the inline
+  // "• DNS propagating…" label; the URL anchor uses the tooltip-only
+  // variant so the text doesn't blow past the ellipsis budget.
+  if (liveURL) {
+    applyDNSGate(host.querySelector('.top .visit-btn'),       liveURL);
+    applyDNSGate(host.querySelector('.live-url-anchor'),      liveURL, { tooltipOnly: true });
+  }
 }
 
 // ----- Overview events timeline -----------------------------------------
