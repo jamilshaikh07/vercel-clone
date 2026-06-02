@@ -692,6 +692,172 @@
       color: var(--text-dim); font-size: 13px;
     }
 
+    /* Recent-deployments rail beneath the apps table. Same panel chrome
+       as the deployments list on the overview page (intentional visual
+       echo so users learn one row pattern). Cross-app, so each row
+       includes the app slug as a clickable chip. Click-target = the
+       whole row, navigates to that deployment's logs. */
+    .recent-list {
+      display: flex; flex-direction: column;
+    }
+    .recent-row {
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1.4fr) minmax(0, 1.6fr) 80px 90px;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.08s ease;
+      font-size: 13px;
+    }
+    .recent-row:hover  { background: var(--panel-2); }
+    .recent-row:last-child { border-bottom: none; }
+    .recent-row .recent-app {
+      font-weight: 600; color: var(--text);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .recent-row .recent-commit {
+      font-family: ui-monospace, monospace;
+      font-size: 12px;
+      color: var(--text-dim);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .recent-row .recent-commit code {
+      color: var(--text); background: var(--panel-3);
+      padding: 1px 5px; border-radius: 3px;
+      margin-right: 6px;
+    }
+    .recent-row .recent-branch {
+      font-family: ui-monospace, monospace; font-size: 11px;
+      color: var(--text-dim);
+    }
+    .recent-row .recent-when {
+      color: var(--text-dim); font-variant-numeric: tabular-nums;
+      font-size: 12px; text-align: right;
+    }
+
+    /* === Mobile-first responsiveness =====================================
+       Desktop layout (>= 769px) is the long-standing two-/three-column
+       grid with sidebars permanently docked. Below 769px (any modern
+       phone in portrait — iPhone 14 Pro is 393, Pixel 8 is 412, even
+       widescreen Android tablets in split-screen fall below) we
+       collapse both sidebars into off-canvas drawers that the user
+       opens via a hamburger button in the topbar. The shell stays
+       100vh / single-column / non-scrolling at the top level — pages
+       handle their own vertical overflow as on desktop. */
+    .mobile-nav-toggle {
+      display: none;
+      align-items: center; justify-content: center;
+      width: 36px; height: 36px;
+      background: transparent;
+      border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text); cursor: pointer;
+      flex-shrink: 0;
+      padding: 0;
+    }
+    .mobile-nav-toggle:hover { background: var(--panel-2); }
+    .mobile-nav-backdrop {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.55);
+      z-index: 90;
+    }
+    body.nav-open .mobile-nav-backdrop { display: block; }
+
+    @media (max-width: 768px) {
+      :root { --sidebar-w: 260px; --sub-sidebar-w: 240px; }
+
+      /* Collapse the shell to a single column. Sidebars overlay
+         instead of stealing layout width. */
+      .app                 { grid-template-columns: 1fr; }
+      .app.has-subnav      { grid-template-columns: 1fr; }
+
+      .mobile-nav-toggle   { display: inline-flex; }
+
+      /* Both sidebars share the off-canvas drawer pattern. They
+         live in their original DOM order but are absolutely
+         positioned over the content; only one is "active" at a
+         time (the sub-sidebar wins when an app is in scope, exactly
+         like on desktop where it slides in to the right of main). */
+      .sidebar, .sub-sidebar {
+        position: fixed; top: 0; bottom: 0; left: 0;
+        width: var(--sidebar-w); max-width: 88vw;
+        z-index: 100;
+        transform: translateX(-100%);
+        transition: transform 180ms ease;
+        box-shadow: 4px 0 18px rgba(0,0,0,0.4);
+      }
+      /* Subnav (when present) takes precedence in the drawer slot —
+         it's the contextually-relevant nav for whatever the user is
+         currently looking at. */
+      .app.has-subnav .sidebar     { display: none; }
+      .app.has-subnav .sub-sidebar { display: flex; }
+
+      body.nav-open .sidebar,
+      body.nav-open .sub-sidebar   { transform: translateX(0); }
+
+      /* Tighten the content head so the title doesn't crowd the
+         hamburger + meta on a 360px screen. Stack the meta below
+         on really narrow widths via a second breakpoint. */
+      .content-head {
+        padding: 10px 12px;
+        gap: 10px;
+      }
+      .content-head .meta { font-size: 11px; }
+      .content-head .crumbs { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+      /* Pages: tighten padding so we don't lose 1/4 of the viewport
+         to chrome on phone widths. */
+      .page-inner { padding: 14px 14px 28px; }
+      .summary    { gap: 10px; margin-bottom: 16px; }
+      .summary    { grid-template-columns: 1fr 1fr; }
+
+      /* Apps table: drop URL + Branch columns. URL is reachable via
+         the row click (-> overview -> Visit btn). Branch is in the
+         repo identity. The remaining 3 columns (name + status +
+         updated) line up cleanly without horizontal scroll. */
+      .apps-table col.col-url,
+      .apps-table col.col-branch     { display: none; }
+      .apps-table thead th:nth-child(3),
+      .apps-table thead th:nth-child(4),
+      .apps-table tbody td:nth-child(3),
+      .apps-table tbody td:nth-child(4) { display: none; }
+      .apps-table thead th { padding: 8px 10px; }
+      .apps-table tbody td { padding: 10px 10px; }
+      .apps-name-slug { font-size: 13px; }
+      .apps-name-repo { font-size: 10px; }
+
+      /* Recent deployments table simplifies: drop the branch and
+         commit columns; row shows just app + when. The full detail
+         is one tap away. */
+      .recent-row {
+        grid-template-columns: minmax(0, 1fr) 70px;
+        gap: 8px; padding: 10px 12px;
+      }
+      .recent-row .recent-app-icon,
+      .recent-row .recent-commit,
+      .recent-row .recent-branch  { display: none; }
+
+      /* Overview header: shrink the title row so the Visit pill fits
+         next to the slug. */
+      .proj-header .top h2 { font-size: 16px; }
+
+      /* Stat tiles: shrink the giant number a notch. */
+      .summary .stat .value { font-size: 18px; }
+
+      /* Generic safety: prevent accidental horizontal scroll caused
+         by a stray long URL or commit hash. */
+      body, html { overflow-x: hidden; }
+    }
+
+    /* Extra-narrow phones (< 380px): drop the secondary "meta" string
+       in the top bar and stack the summary stats to 1-column. */
+    @media (max-width: 379px) {
+      .content-head .meta { display: none; }
+      .summary { grid-template-columns: 1fr; }
+    }
+
     /* === Deployments list ================================================ */
     /* Six columns: status badge, commit + branch, ArgoCD-style 'current'
        tag (empty on every row except the one currently in production),
@@ -1513,6 +1679,21 @@
          ================================================================= -->
     <main class="content">
       <header class="content-head">
+        <!-- Mobile-only hamburger. Toggles body.nav-open which slides
+             whichever sidebar is contextually active (sub-sidebar on
+             a project page, main sidebar everywhere else) on top of
+             the content. Hidden on desktop via .mobile-nav-toggle's
+             display:none default. -->
+        <button id="mobile-nav-toggle" class="mobile-nav-toggle" type="button"
+                aria-label="Open navigation" aria-controls="main-sidebar sub-sidebar"
+                aria-expanded="false">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="3" y1="6"  x2="21" y2="6"/>
+            <line x1="3" y1="12" x2="21" y2="12"/>
+            <line x1="3" y1="18" x2="21" y2="18"/>
+          </svg>
+        </button>
         <span class="crumbs" id="crumbs">Loading…</span>
         <span class="spacer"></span>
         <a id="visit-app" class="visit-btn" target="_blank" rel="noopener" title="Open this app in a new tab">Visit ↗</a>
@@ -1717,6 +1898,10 @@
 
       </div>
     </main>
+    <!-- Mobile drawer backdrop. Click anywhere over the dimmed content
+         to close the sidebar drawer. Display is gated by body.nav-open
+         in CSS so it stays out of the layout entirely on desktop. -->
+    <div id="mobile-nav-backdrop" class="mobile-nav-backdrop" aria-hidden="true"></div>
   </div>
 
 <script>
@@ -2153,6 +2338,31 @@ function navigate(hash) {
   } else {
     window.location.hash = hash;
   }
+  // On mobile the sidebar overlays the content — any navigation should
+  // dismiss it so the user lands directly on the page they picked
+  // instead of having to tap a backdrop to reveal it. No-op on desktop
+  // (the class is never set there).
+  closeMobileNav();
+}
+
+// --- Mobile navigation drawer -------------------------------------------
+// Pure CSS handles the slide animation off body.nav-open; JS just flips
+// the class + ARIA + intercepts the obvious dismissals (backdrop click,
+// resize past the desktop breakpoint, Escape key).
+function openMobileNav() {
+  document.body.classList.add('nav-open');
+  const btn = document.getElementById('mobile-nav-toggle');
+  if (btn) btn.setAttribute('aria-expanded', 'true');
+}
+function closeMobileNav() {
+  if (!document.body.classList.contains('nav-open')) return;
+  document.body.classList.remove('nav-open');
+  const btn = document.getElementById('mobile-nav-toggle');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+function toggleMobileNav() {
+  if (document.body.classList.contains('nav-open')) closeMobileNav();
+  else                                              openMobileNav();
 }
 
 // Track which deployment a deep-link asked for so we can auto-open its
@@ -2174,6 +2384,25 @@ function applyRoute() {
 }
 
 window.addEventListener('hashchange', applyRoute);
+
+// Mobile-nav wiring. Attached unconditionally; the elements exist on
+// every viewport size but the CSS only renders them when the viewport
+// crosses the 768px breakpoint, so attaching listeners here is harmless
+// on desktop.
+document.getElementById('mobile-nav-toggle')?.addEventListener('click', toggleMobileNav);
+document.getElementById('mobile-nav-backdrop')?.addEventListener('click', closeMobileNav);
+// Escape always dismisses the drawer if it's open — same affordance as
+// nearly every mobile app.
+window.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape') closeMobileNav();
+});
+// If the user resizes past the desktop breakpoint while the drawer is
+// open (e.g. rotates a tablet to landscape), drop the open class so we
+// don't keep stale CSS transforms applied once the sidebar is laid out
+// inline again.
+window.addEventListener('resize', () => {
+  if (window.innerWidth > 768) closeMobileNav();
+});
 
 // ----- Top-level render --------------------------------------------------
 // Called by both applyRoute (route change) and refresh (data change).
@@ -2523,12 +2752,28 @@ function renderHome() {
           <tbody id="apps-tbody"></tbody>
         </table>
       </div>
+    </div>
+    <!-- Recent activity rail: flat cross-app feed of the N most-recent
+         deployments. Fills the vertical real-estate that the apps
+         table leaves empty when the user has only a few services,
+         and gives a "what happened last?" view that matches the
+         per-app deployments list visually. -->
+    <div class="panel" style="margin-top: 16px;">
+      <div class="panel-head">
+        <h3>Recent activity</h3>
+        <span class="spacer"></span>
+        <span class="apps-count" id="recent-count"></span>
+      </div>
+      <div class="panel-body" style="padding: 0;">
+        <div class="recent-list" id="recent-list"></div>
+      </div>
     </div>`;
 
   // Render the rows (and wire up interactions) from the current
   // sort/filter state. Split out so the search input + sort headers can
   // re-render just the tbody without rebuilding the whole panel.
   renderHomeTableBody(projects);
+  renderRecentDeployments(projects);
 
   $('apps-search').addEventListener('input', (ev) => {
     homeListState.query = ev.target.value;
@@ -2692,6 +2937,64 @@ function homeRowKey(ev) {
     ev.preventDefault();
     navigate(row.dataset.href);
   }
+}
+
+// Flat cross-app feed of the 10 most-recent deployments. The /v1/projects
+// payload already nests deployments under each project (10 per project,
+// newest-first), so we just flatten and re-sort. Each row tags the
+// originating project (clickable chip) and the row itself navigates to
+// that deployment's logs page. Useful both as a "what just happened"
+// glance and as a way to fill the visual real-estate beneath a short
+// apps table.
+function renderRecentDeployments(projects) {
+  const host  = $('recent-list');
+  const count = $('recent-count');
+  if (!host) return;
+
+  const flat = [];
+  for (const p of projects) {
+    for (const d of (p.deployments || [])) {
+      flat.push({ proj: p, dep: d });
+    }
+  }
+  flat.sort((a, b) => Date.parse(b.dep.created_at || 0) - Date.parse(a.dep.created_at || 0));
+  const top = flat.slice(0, 10);
+
+  count.textContent = `${top.length} most recent`;
+
+  if (top.length === 0) {
+    host.innerHTML = `<div class="apps-empty">No deployments yet — push to a connected repo or click <strong>Deploy now</strong> on an app.</div>`;
+    return;
+  }
+
+  host.innerHTML = top.map(({ proj, dep }) => {
+    const status = dep.status || 'none';
+    const sha = (dep.commit_sha || '').slice(0, 7);
+    const branch = dep.ref ? dep.ref.replace(/^refs\/heads\//, '') : (proj.production_branch || '');
+    const when = timeAgo(dep.created_at);
+    return `
+      <div class="recent-row" data-href="#/p/${proj.id}/logs?dep=${escapeHTML(dep.id)}"
+           tabindex="0" role="link"
+           aria-label="Open deployment ${sha} of ${escapeHTML(proj.slug)}">
+        <span class="badge ${status}" title="${status}">${status === 'ready' ? '✓' : status === 'failed' ? '✕' : '•'}</span>
+        <span class="recent-app" title="${escapeHTML(proj.full_name)}">${escapeHTML(proj.slug)}</span>
+        <span class="recent-commit"><code>${sha || '—'}</code>${escapeHTML(dep.message ? dep.message.split('\n')[0].slice(0, 80) : '')}</span>
+        <span class="recent-branch">${escapeHTML(branch)}</span>
+        <span class="recent-when" title="${escapeHTML(dep.created_at || '')}">${when}</span>
+      </div>`;
+  }).join('');
+
+  // Same row-click affordance as the apps table.
+  host.addEventListener('click', (ev) => {
+    if (ev.target.closest('a')) return;
+    const row = ev.target.closest('.recent-row[data-href]');
+    if (row) navigate(row.dataset.href);
+  });
+  host.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    const row = ev.target.closest('.recent-row[data-href]');
+    if (row) { ev.preventDefault(); navigate(row.dataset.href); }
+  });
 }
 
 function renderOverview() {
