@@ -66,14 +66,36 @@ func (s *server) handleDeployNow(w http.ResponseWriter, r *http.Request) {
 		branch = "main"
 	}
 
+	// Self-heal: projects created from the installation_repositories
+	// webhook get a hardcoded "main" production_branch because that
+	// webhook payload omits default_branch. When that turns out to be
+	// wrong (e.g. the repo defaults to "master"), the first fetch
+	// returns 404 — at which point we ask GitHub for the real default,
+	// persist it, and retry once. After this the project row reflects
+	// reality and subsequent deploys hit the fast path.
 	sha, err := s.gh.fetchBranchSHA(ctx, proj.InstallationID, proj.RepoFullName, branch)
+	if err != nil && strings.Contains(err.Error(), "HTTP 404") {
+		if def, derr := s.gh.fetchRepoDefaultBranch(ctx, proj.InstallationID, proj.RepoFullName); derr == nil && def != branch {
+			s.log.Info("deploy-now: production_branch corrected from API",
+				"project_id", id, "repo", proj.RepoFullName, "old", branch, "new", def)
+			if uerr := s.store.UpdateProjectProductionBranch(ctx, id, def); uerr != nil {
+				s.log.Warn("deploy-now: update production_branch failed",
+					"project_id", id, "err", uerr)
+			}
+			branch = def
+			sha, err = s.gh.fetchBranchSHA(ctx, proj.InstallationID, proj.RepoFullName, branch)
+		}
+	}
 	if err != nil {
-		// 502: we couldn't reach GitHub or the branch doesn't exist.
-		// Surface a short, actionable message — the dashboard will
-		// show this to the user in a toast.
+		// 422 (not 502): Cloudflare's "Always Show Origin Error Page"
+		// is off by default, so 5xx responses get replaced with CF's
+		// own HTML — which means the dashboard never sees our useful
+		// message. 422 ("Unprocessable Entity") is passed through and
+		// is semantically correct: the request was well-formed but
+		// referred to a branch GitHub doesn't have.
 		s.log.Warn("deploy-now: fetch HEAD sha failed",
 			"project_id", id, "repo", proj.RepoFullName, "branch", branch, "err", err)
-		http.Error(w, "couldn't resolve branch HEAD on GitHub — does the branch exist and is the App still installed?", http.StatusBadGateway)
+		http.Error(w, "couldn't resolve branch HEAD on GitHub — does the branch exist and is the App still installed?", http.StatusUnprocessableEntity)
 		return
 	}
 

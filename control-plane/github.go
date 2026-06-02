@@ -268,3 +268,45 @@ func (g *githubApp) fetchBranchSHA(ctx context.Context, installationID int64, re
 	}
 	return r.Commit.SHA, nil
 }
+
+// fetchRepoDefaultBranch returns the repo's current default branch name
+// (typically "main" or "master"). Used as a fallback when our recorded
+// production_branch turns out to be wrong — installation_repositories
+// webhook payloads don't include default_branch, so projects created
+// from that flow start with a hardcoded "main" guess that fails for
+// repos using "master" (or any custom default).
+func (g *githubApp) fetchRepoDefaultBranch(ctx context.Context, installationID int64, repoFullName string) (string, error) {
+	tok, err := g.installationToken(ctx, installationID)
+	if err != nil {
+		return "", fmt.Errorf("mint token: %w", err)
+	}
+	url := fmt.Sprintf("https://api.github.com/repos/%s", repoFullName)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := g.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode/100 != 2 {
+		return "", fmt.Errorf("fetch repo %q: HTTP %d: %s",
+			repoFullName, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var r struct {
+		DefaultBranch string `json:"default_branch"`
+	}
+	if err := json.Unmarshal(body, &r); err != nil {
+		return "", fmt.Errorf("decode repo response: %w", err)
+	}
+	if r.DefaultBranch == "" {
+		return "", errors.New("github returned empty default_branch for repo")
+	}
+	return r.DefaultBranch, nil
+}

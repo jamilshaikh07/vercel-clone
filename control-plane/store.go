@@ -241,6 +241,28 @@ func (s *store) GetProjectForDeploy(ctx context.Context, projectID, ownerUserID 
 	return &t, nil
 }
 
+// UpdateProjectProductionBranch sets the project's production_branch and
+// also writes the same value into installation_repos.default_branch so
+// later auto-deploy paths (which read from that table) stay consistent.
+// Used by the deploy-now handler when the cached branch turns out to be
+// wrong and we've just resolved the real default from the GitHub API.
+func (s *store) UpdateProjectProductionBranch(ctx context.Context, projectID, branch string) error {
+	_, err := s.pool.Exec(ctx, `
+		WITH updated AS (
+			UPDATE projects
+			   SET production_branch = $2
+			 WHERE id = $1::uuid
+			RETURNING installation_id, repo_id
+		)
+		UPDATE installation_repos r
+		   SET default_branch = $2
+		  FROM updated u
+		 WHERE r.installation_id = u.installation_id
+		   AND r.repo_id         = u.repo_id
+	`, projectID, branch)
+	return err
+}
+
 // EnqueueRedeploy inserts a new queued deployment row that mirrors the
 // (project_id, commit_sha, ref) of an existing source deployment. The
 // ownership filter is applied inline (via the join on projects) so a
