@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -26,6 +27,9 @@ var dashboardHTML []byte
 
 //go:embed static/login.html
 var loginHTML []byte
+
+//go:embed static/landing.html
+var landingHTML []byte
 
 // projectWithDeployments mirrors the JSON shape consumed by the dashboard JS.
 type projectWithDeployments struct {
@@ -54,7 +58,29 @@ func (s *server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	_, _ = w.Write(loginHTML)
+	html := strings.ReplaceAll(string(loginHTML), "{{APP_BASE}}", s.hosts.appBase)
+	html = strings.ReplaceAll(html, "{{MARKETING_BASE}}", marketingBaseURL(s.hosts))
+	_, _ = w.Write([]byte(html))
+}
+
+func (s *server) handleLandingPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	html := strings.ReplaceAll(string(landingHTML), "{{APP_BASE}}", s.hosts.appBase)
+	html = strings.ReplaceAll(html, "{{MARKETING_BASE}}", marketingBaseURL(s.hosts))
+	_, _ = w.Write([]byte(html))
+}
+
+func marketingBaseURL(hc *hostConfig) string {
+	for host := range hc.marketing {
+		if host == "spinup.in" {
+			return "https://spinup.in"
+		}
+	}
+	for host := range hc.marketing {
+		return "https://" + host
+	}
+	return "https://spinup.in"
 }
 
 func (s *server) handleListProjects(w http.ResponseWriter, r *http.Request) {

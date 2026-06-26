@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -95,10 +96,30 @@ type repoRow struct {
 	DefaultBranch string
 }
 
-func (s *store) AddRepos(ctx context.Context, installationID int64, repos []repoRow) error {
+func (s *store) AddRepos(ctx context.Context, installationID int64, repos []repoRow, maxProjectsPerUser int) error {
 	if len(repos) == 0 {
 		return nil
 	}
+
+	var ownerID *string
+	if maxProjectsPerUser > 0 {
+		var owner sql.NullString
+		if err := s.pool.QueryRow(ctx, `
+			SELECT owner_user_id::text FROM installations WHERE id = $1
+		`, installationID).Scan(&owner); err == nil && owner.Valid && owner.String != "" {
+			ownerID = &owner.String
+		}
+	}
+
+	existing := 0
+	if ownerID != nil && *ownerID != "" && maxProjectsPerUser > 0 {
+		var err error
+		existing, err = s.CountProjectsForUser(ctx, *ownerID)
+		if err != nil {
+			return err
+		}
+	}
+
 	batch := &pgx.Batch{}
 	for _, r := range repos {
 		batch.Queue(`
@@ -112,10 +133,10 @@ func (s *store) AddRepos(ctx context.Context, installationID int64, repos []repo
 			       removed_at     = NULL
 		`, installationID, r.ID, r.FullName, r.Private, r.DefaultBranch)
 
-		// Lazy-create a project per repo so first push doesn't have to do it.
-		// Pick up the installation's current owner so the project is visible
-		// to its rightful user from minute zero. NULL owner is fine and gets
-		// fixed up on the user's first login via ClaimInstallationsForUser.
+		if maxProjectsPerUser > 0 && ownerID != nil && *ownerID != "" && existing >= maxProjectsPerUser {
+			continue
+		}
+
 		batch.Queue(`
 			INSERT INTO projects (installation_id, repo_id, full_name, slug,
 			                     production_branch, owner_user_id)
@@ -124,6 +145,9 @@ func (s *store) AddRepos(ctx context.Context, installationID int64, repos []repo
 			 WHERE i.id = $1
 			ON CONFLICT (installation_id, repo_id) DO NOTHING
 		`, installationID, r.ID, r.FullName, slugify(r.FullName), r.DefaultBranch)
+		if maxProjectsPerUser > 0 && ownerID != nil && *ownerID != "" {
+			existing++
+		}
 	}
 	br := s.pool.SendBatch(ctx, batch)
 	defer br.Close()
@@ -1202,4 +1226,56 @@ func slugify(s string) string {
 		s = strings.ReplaceAll(s, "--", "-")
 	}
 	return s
+}
+
+// --- Waitlist -------------------------------------------------------------
+
+func (s *store) UpsertWaitlistSignup(ctx context.Context, email, useCase, name, college string) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO waitlist_signups (email, use_case, name, college)
+		VALUES ($1, $2, NULLIF($3, ''), NULLIF($4, ''))
+		ON CONFLICT ((lower(email))) DO UPDATE
+		   SET use_case   = EXCLUDED.use_case,
+		       name       = COALESCE(EXCLUDED.name, waitlist_signups.name),
+		       college    = COALESCE(EXCLUDED.college, waitlist_signups.college),
+		       updated_at = now()
+	`, email, useCase, name, college)
+	return err
+}
+
+func (s *store) ListWaitlistSignups(ctx context.Context) ([]waitlistSignupRow, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id::text, email, use_case,
+		       COALESCE(name, ''), COALESCE(college, ''),
+		       created_at, updated_at
+		  FROM waitlist_signups
+		 ORDER BY created_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []waitlistSignupRow
+	for rows.Next() {
+		var r waitlistSignupRow
+		var created, updated time.Time
+		if err := rows.Scan(&r.ID, &r.Email, &r.UseCase, &r.Name, &r.College, &created, &updated); err != nil {
+			return nil, err
+		}
+		r.CreatedAt = created.UTC().Format(time.RFC3339)
+		r.UpdatedAt = updated.UTC().Format(time.RFC3339)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *store) CountProjectsForUser(ctx context.Context, userID string) (int, error) {
+	if userID == "" {
+		return 0, nil
+	}
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		SELECT COUNT(*)::int FROM projects WHERE owner_user_id = $1::uuid
+	`, userID).Scan(&n)
+	return n, err
 }

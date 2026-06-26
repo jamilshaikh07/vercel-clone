@@ -50,6 +50,9 @@ type server struct {
 	gh   *githubApp
 	auth *authConfig
 	log  *slog.Logger
+	hosts       *hostConfig
+	waitlistRL  *ipRateLimiter
+	maxProjects int
 	// tcache absorbs multi-tab dashboard polling so the metrics-server
 	// + Traefik /metrics endpoints are only hit once per 5s window. Safe
 	// to share across requests — collector serialises on its own mutex.
@@ -144,9 +147,16 @@ func main() {
 		gh:            gh,
 		auth:          authCfg,
 		log:           log,
+		hosts:         loadHostConfig(authCfg.baseURL),
+		waitlistRL:    newIPRateLimiter(10, time.Minute),
+		maxProjects:   loadMaxProjects(),
 		series:        newSeriesStore(),
 		pseries:       newProjectSeries(),
 	}
+	log.Info("host routing ready",
+		"app_base", s.hosts.appBase,
+		"max_projects_per_user", s.maxProjects,
+	)
 
 	requeued, err := s.store.RequeueStuck(rootCtx)
 	if err != nil {
@@ -222,9 +232,11 @@ func main() {
 		mux.Handle(pat, s.requireUser(h, "json"))
 	}
 
+	mux.Handle("GET /admin/waitlist", s.requireUser(http.HandlerFunc(s.handleAdminWaitlist), "json"))
+
 	httpSrv := &http.Server{
 		Addr:              addr,
-		Handler:           withRequestLogging(log, mux),
+		Handler:           withRequestLogging(log, s.withHostRouting(mux)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -456,7 +468,7 @@ func (s *server) handleInstallation(ctx context.Context, env envelope, body []by
 			Repositories []githubRepo `json:"repositories"`
 		}
 		if err := json.Unmarshal(body, &p); err == nil && len(p.Repositories) > 0 {
-			if err := s.store.AddRepos(ctx, env.Installation.ID, toRepoRows(p.Repositories)); err != nil {
+			if err := s.store.AddRepos(ctx, env.Installation.ID, toRepoRows(p.Repositories), s.maxProjects); err != nil {
 				return err
 			}
 			// Belt-and-braces: backfill in case the installation was linked
@@ -535,7 +547,7 @@ func (s *server) handleInstallationRepos(ctx context.Context, env envelope, body
 		return err
 	}
 	if len(p.RepositoriesAdded) > 0 {
-		if err := s.store.AddRepos(ctx, env.Installation.ID, toRepoRows(p.RepositoriesAdded)); err != nil {
+		if err := s.store.AddRepos(ctx, env.Installation.ID, toRepoRows(p.RepositoriesAdded), s.maxProjects); err != nil {
 			return err
 		}
 		_ = s.store.SetProjectOwnerByInstallation(ctx, env.Installation.ID)

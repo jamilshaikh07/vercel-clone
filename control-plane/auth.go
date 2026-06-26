@@ -344,7 +344,9 @@ func (s *server) handleCallback(w http.ResponseWriter, r *http.Request) {
 func (s *server) renderWaitlist(w http.ResponseWriter, login string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusForbidden)
-	_, _ = fmt.Fprintf(w, waitlistHTML, html.EscapeString(login))
+	tpl := strings.ReplaceAll(waitlistHTML, "{{APP_BASE}}", s.hosts.appBase)
+	tpl = strings.ReplaceAll(tpl, "{{MARKETING_BASE}}", marketingBaseURL(s.hosts))
+	_, _ = fmt.Fprintf(w, tpl, html.EscapeString(login))
 }
 
 const waitlistHTML = `<!doctype html>
@@ -373,8 +375,8 @@ const waitlistHTML = `<!doctype html>
   <p>Spinup is invite-only while we scale up safely. Your GitHub account
      isn't on the access list yet.</p>
   <div class="who">signed in as @%s</div>
-  <p class="foot"><a href="mailto:hello@spinup.in">Request access</a>
-     &nbsp;·&nbsp; <a href="/login">Try another account</a></p>
+  <p class="foot"><a href="{{MARKETING_BASE}}/login#waitlist">Join the waitlist</a>
+     &nbsp;·&nbsp; <a href="{{APP_BASE}}/login">Try another account</a></p>
 </div></body></html>`
 
 func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
