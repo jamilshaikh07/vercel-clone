@@ -5,14 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Spinup — dashboard</title>
   <!-- Favicon mirrors the sidebar brand mark (.brand .logo svg below).
-       Inlined as a data URI to avoid an extra request and so the
-       browser tab doesn't briefly flash a default icon on first paint.
-       Stroke-only red chevron (#e11d48 = rose-600) over three fading
-       motion lines; the '#' in the colour must be %23 inside a data
-       URI. Two copies exist on purpose (here and the sidebar SVG) so
-       neither has to read from CSS — keep the geometry in sync if you
-       edit one. -->
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none' stroke='%23e11d48' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><path d='M7 14 L16 5 L25 14'/><path d='M9 19 L23 19'/><path d='M11 23 L21 23' opacity='0.7'/><path d='M13 27 L19 27' opacity='0.4'/></svg>">
+       Monochrome stroke — matches currentColor brand in light/dark. -->
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none' stroke='%23ededed' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><path d='M7 14 L16 5 L25 14'/><path d='M9 19 L23 19'/><path d='M11 23 L21 23' opacity='0.7'/><path d='M13 27 L19 27' opacity='0.4'/></svg>">
   <script>
     // Theme bootstrap — runs synchronously before <style> is parsed so the
     // body never paints in the wrong palette. Default is 'dark'; the user's
@@ -46,49 +40,50 @@
        flash-of-wrong-theme on first load. */
 
     /* === Palette / globals =================================================
-       Observability stack vibe: deep slate background, denser sidebar rail,
-       subtle accent. Variables consolidated for theme work later. */
+       Vercel-inspired monochrome: black/white surfaces, gray borders,
+       no brand-red accent — interactive elements use foreground tones. */
     :root {
-      --bg: #0b0d11;
-      --bg-2: #0e1116;
-      --panel: #14171d;
-      --panel-2: #1c2027;
-      --panel-3: #232831;
-      --border: #262b34;
-      --border-2: #1e222a;
-      --text: #e6e8eb;
-      --text-dim: #9aa1ad;
-      --text-faint: #6b7280;
-      --accent: #e11d48;
-      --accent-dim: rgba(225, 29, 72, 0.14);
-      --ok: #2ecc71;
-      --warn: #f1c40f;
-      --err: #ff6b6b;
-      --building: #5bc0de;
+      --bg: #000000;
+      --bg-2: #0a0a0a;
+      --panel: #0a0a0a;
+      --panel-2: #111111;
+      --panel-3: #1a1a1a;
+      --border: #2a2a2a;
+      --border-2: #1f1f1f;
+      --text: #ededed;
+      --text-dim: #a1a1a1;
+      --text-faint: #666666;
+      --accent: #ededed;
+      --accent-fg: #000000;
+      --accent-dim: rgba(255, 255, 255, 0.08);
+      --link: #a1a1a1;
+      --ok: #22c55e;
+      --warn: #eab308;
+      --err: #ef4444;
+      --building: #737373;
       --sidebar-w: 248px;
       --sub-sidebar-w: 220px;
       color-scheme: dark;
     }
-    /* Light theme — overrides the dark defaults via the data-theme
-       attribute on <html>. Keeps the same accent + status colors so
-       brand identity is consistent across modes. */
     html[data-theme="light"] {
-      --bg: #fafafa;
-      --bg-2: #f3f4f6;
+      --bg: #ffffff;
+      --bg-2: #fafafa;
       --panel: #ffffff;
-      --panel-2: #f3f4f6;
-      --panel-3: #e5e7eb;
-      --border: #e5e7eb;
-      --border-2: #ececf0;
-      --text: #111827;
-      --text-dim: #4b5563;
-      --text-faint: #9ca3af;
-      --accent: #e11d48;
-      --accent-dim: rgba(225, 29, 72, 0.10);
+      --panel-2: #fafafa;
+      --panel-3: #f5f5f5;
+      --border: #eaeaea;
+      --border-2: #f0f0f0;
+      --text: #000000;
+      --text-dim: #666666;
+      --text-faint: #999999;
+      --accent: #000000;
+      --accent-fg: #ffffff;
+      --accent-dim: rgba(0, 0, 0, 0.06);
+      --link: #666666;
       --ok: #16a34a;
       --warn: #ca8a04;
       --err: #dc2626;
-      --building: #0891b2;
+      --building: #737373;
       color-scheme: light;
     }
     * { box-sizing: border-box; }
@@ -97,8 +92,8 @@
       background: var(--bg); color: var(--text);
       font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     }
-    a { color: var(--accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
+    a { color: var(--link); text-decoration: none; }
+    a:hover { color: var(--text); }
     code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
     /* === Top-level layout =================================================
@@ -137,18 +132,12 @@
       width: 28px; height: 28px;
       display: flex; align-items: center; justify-content: center;
       flex-shrink: 0;
-      /* Single source of truth for brand-red. The inline SVG below uses
-         stroke='currentColor' so it inherits this. Change here once to
-         retheme the entire mark including the favicon — well, except
-         the favicon, which is a data URI and has to be hand-recoloured.
-         The colour is rose-600 (#e11d48): loud enough to be 'brand red'
-         without colliding with the --err signal used for failed states. */
-      color: #e11d48;
+      color: var(--text);
     }
     .brand .logo svg { width: 100%; height: 100%; display: block; }
     .brand .name {
       font-weight: 700; font-size: 15px; letter-spacing: 0.02em;
-      color: #e11d48;
+      color: var(--text);
     }
     .brand .meta {
       margin-left: auto;
@@ -221,13 +210,13 @@
     .nav-item.active {
       color: var(--text);
       background: var(--accent-dim);
-      border-left-color: var(--accent);
+      border-left-color: var(--text);
     }
     .nav-item .icon {
       width: 14px; height: 14px; display: inline-flex; align-items: center;
       justify-content: center; color: var(--text-faint); flex-shrink: 0;
     }
-    .nav-item.active .icon { color: var(--accent); }
+    .nav-item.active .icon { color: var(--text); }
     .nav-item .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .nav-item .pill {
       font-size: 9px; padding: 1px 6px; border-radius: 8px;
@@ -254,7 +243,7 @@
       font-size: 12px; text-align: center;
       text-decoration: none;
     }
-    .nav-install:hover { color: var(--text); border-color: var(--accent); border-style: solid; text-decoration: none; }
+    .nav-install:hover { color: var(--text); border-color: var(--text); border-style: solid; text-decoration: none; }
 
     /* Home row hosts both the Home link and the "+" affordance to add a
        new project. Flex puts them on the same line; the + stays a fixed
@@ -264,14 +253,14 @@
       display: inline-flex; align-items: center; justify-content: center;
       width: 24px; height: 24px;
       border-radius: 6px;
-      color: var(--accent);
+      color: var(--text-dim);
       border: 1px dashed var(--border);
       background: transparent;
       text-decoration: none;
       font-size: 16px; line-height: 1; font-weight: 500;
       flex-shrink: 0;
     }
-    .nav-plus:hover { background: var(--accent-dim); border-color: var(--accent); border-style: solid; text-decoration: none; }
+    .nav-plus:hover { background: var(--accent-dim); border-color: var(--text); border-style: solid; text-decoration: none; }
 
     /* Apps list in the main sidebar — each row shows the app name and
        a single colour-coded run-state icon. Three meaningful states,
@@ -336,7 +325,7 @@
       font-size: 12px; color: var(--text-dim);
       text-decoration: none;
     }
-    .sidebar-footer .support-link:hover { color: var(--accent); text-decoration: none; }
+    .sidebar-footer .support-link:hover { color: var(--text); text-decoration: none; }
 
     /* User menu in the topbar. Avatar circle on the right opens a small
        popover with the signed-in identity, a System/Light/Dark theme
@@ -348,7 +337,7 @@
       width: 28px; height: 28px;
       border-radius: 50%;
       display: inline-flex; align-items: center; justify-content: center;
-      background: linear-gradient(135deg, #7aa2f7 0%, #22c55e 100%);
+      background: linear-gradient(135deg, #525252 0%, #a3a3a3 100%);
       color: #0b0d11;
       font-size: 12px; font-weight: 700;
       flex-shrink: 0;
@@ -364,7 +353,7 @@
       display: inline-flex;
       transition: border-color 120ms;
     }
-    .user-menu-btn:hover { border-color: var(--accent); }
+    .user-menu-btn:hover { border-color: var(--text-dim); }
     .user-menu-pop {
       position: absolute;
       top: calc(100% + 8px);
@@ -423,7 +412,7 @@
     .theme-picker button:hover { color: var(--text); background: var(--panel-2); }
     .theme-picker button[aria-checked="true"] {
       background: var(--accent-dim);
-      color: var(--accent);
+      color: var(--text);
       font-weight: 600;
     }
     .user-menu-item {
@@ -473,9 +462,9 @@
       gap: 8px;
       padding: 5px 12px;
       border-radius: 6px;
-      border: 1px solid var(--accent);
-      background: rgba(99, 102, 241, 0.08);
-      color: var(--accent);
+      border: 1px solid var(--border);
+      background: var(--panel-2);
+      color: var(--text);
       text-decoration: none;
       font-size: 12px;
       font-weight: 600;
@@ -483,7 +472,8 @@
       transition: background 120ms, transform 80ms;
     }
     .content-head .visit-btn:hover {
-      background: rgba(99, 102, 241, 0.18);
+      background: var(--panel-3);
+      border-color: var(--text-dim);
     }
     .content-head .visit-btn:active { transform: translateY(1px); }
     .content-head .visit-btn.shown { display: inline-flex; }
@@ -545,7 +535,7 @@
     .install-cta h3 { margin: 0 0 10px; font-size: 18px; }
     .install-cta p { color: var(--text-dim); margin: 0 0 20px; font-size: 13px; }
     .install-cta a.btn {
-      display: inline-block; background: var(--accent); color: #14171d;
+      display: inline-block; background: var(--accent); color: var(--accent-fg);
       padding: 10px 22px; border-radius: 6px; font-weight: 600; font-size: 13px;
     }
     .install-cta a.btn:hover { text-decoration: none; opacity: 0.9; }
@@ -600,7 +590,7 @@
     }
     .summary a.stat-link:hover {
       background: var(--panel-2);
-      border-color: var(--accent);
+      border-color: var(--text-dim);
       transform: translateY(-1px);
     }
     .summary .stat .value.err  { color: var(--err); }
@@ -627,7 +617,7 @@
       background: var(--panel-2); border-radius: 4px; height: 6px; overflow: hidden;
     }
     .usage-meter > span {
-      display: block; height: 100%; background: var(--accent); border-radius: 4px;
+      display: block; height: 100%; background: var(--text-dim); border-radius: 4px;
       transition: width 0.3s ease;
     }
     .usage-row {
@@ -648,7 +638,7 @@
       text-decoration: none; color: inherit; display: block;
     }
     .project-card:hover {
-      border-color: var(--accent); transform: translateY(-2px);
+      border-color: var(--text-dim); transform: translateY(-2px);
       box-shadow: 0 8px 24px rgba(0,0,0,0.12);
     }
     .project-card .pc-head {
@@ -656,7 +646,7 @@
     }
     .project-card .pc-preview {
       width: 48px; height: 36px; border-radius: 6px; flex-shrink: 0;
-      background: linear-gradient(135deg, var(--panel-3) 0%, var(--accent) 120%);
+      background: linear-gradient(135deg, var(--panel-3) 0%, var(--border) 100%);
       border: 1px solid var(--border); opacity: 0.85;
     }
     .project-card .pc-title { font-weight: 600; font-size: 14px; line-height: 1.3; }
@@ -680,7 +670,7 @@
     }
     .activity-item .ai-icon.deploy { background: rgba(34,197,94,0.15); color: var(--ok); }
     .activity-item .ai-icon.fail { background: rgba(239,68,68,0.15); color: var(--err); }
-    .activity-item .ai-icon.hook { background: rgba(59,130,246,0.12); color: #60a5fa; }
+    .activity-item .ai-icon.hook { background: var(--accent-dim); color: var(--text-dim); }
     .activity-item .ai-body { min-width: 0; flex: 1; }
     .activity-item .ai-title { font-weight: 500; color: var(--text); }
     .activity-item .ai-detail { color: var(--text-dim); font-size: 11px; margin-top: 2px;
@@ -713,7 +703,7 @@
     }
     .last-deploy-card { padding: 12px 14px; font-size: 12px; }
     .last-deploy-card .ld-sha {
-      font-family: ui-monospace, monospace; font-weight: 600; color: var(--accent);
+      font-family: ui-monospace, monospace; font-weight: 600; color: var(--text);
     }
     .last-deploy-card .ld-msg { color: var(--text-dim); margin-top: 6px; line-height: 1.4; }
     .mini-charts-row {
@@ -724,7 +714,7 @@
       color: var(--text-faint); margin-bottom: 4px;
     }
     .badge.preview {
-      background: rgba(99,102,241,0.15); color: #818cf8; border: 1px solid rgba(99,102,241,0.3);
+      background: var(--accent-dim); color: var(--text-dim); border: 1px solid var(--border);
       font-size: 10px; padding: 1px 6px; border-radius: 4px; margin-left: 6px;
     }
     .placeholder-page { padding: 24px; max-width: 640px; }
@@ -808,7 +798,7 @@
     .apps-table thead th.sortable:hover { color: var(--text-dim); }
     .apps-table thead th .sort-ind {
       display: inline-block; width: 10px; margin-left: 4px;
-      color: var(--accent); font-weight: 700;
+      color: var(--text-dim); font-weight: 700;
     }
     /* Column widths. Service name flexes; everything else is fixed so
        wide URLs don't push the timestamp off-screen. */
@@ -842,7 +832,7 @@
       overflow: hidden; text-overflow: ellipsis;
     }
     .apps-url-link {
-      color: var(--accent);
+      color: var(--link);
       font-family: ui-monospace, monospace;
       font-size: 12px;
       text-decoration: none;
@@ -1217,7 +1207,7 @@
     .btn-modal-cancel:hover { color: var(--text); border-color: var(--text-faint); }
     .btn-modal-danger {
       padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600;
-      border: 1px solid var(--err); background: var(--err); color: #14171d;
+      border: 1px solid var(--err); background: var(--err); color: var(--accent-fg);
       cursor: pointer; font-family: inherit;
     }
     .btn-modal-danger:hover:not([disabled]) { filter: brightness(1.08); }
@@ -1234,12 +1224,12 @@
        user can do on a brand-new project — we want the eye to land on
        it without ambiguity. */
     .btn-deploy-now {
-      background: var(--accent-dim); border: 1px solid var(--accent); color: var(--accent);
+      background: transparent; border: 1px solid var(--border); color: var(--text);
       padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 600;
       cursor: pointer; font-family: inherit;
       display: inline-flex; align-items: center; gap: 6px;
     }
-    .btn-deploy-now:hover { background: var(--accent); color: var(--bg); }
+    .btn-deploy-now:hover { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
     .btn-deploy-now[disabled] { opacity: 0.5; cursor: not-allowed; }
 
     /* Start/Stop button on the overview status tile. Two-state colour:
@@ -1258,12 +1248,12 @@
 
     /* "Run analysis" primary CTA on the Insights page header. */
     .btn-primary {
-      background: var(--accent); color: var(--bg);
+      background: var(--accent); color: var(--accent-fg);
       border: 1px solid var(--accent);
       padding: 5px 14px; border-radius: 6px; font-size: 12px; cursor: pointer;
       font-family: inherit; font-weight: 500;
     }
-    .btn-primary:hover { background: transparent; color: var(--accent); }
+    .btn-primary:hover { background: transparent; color: var(--text); border-color: var(--border); }
     .btn-primary[disabled] { opacity: 0.5; cursor: not-allowed; }
 
     /* === BI charts grid ================================================== */
@@ -1605,7 +1595,7 @@
     }
     .db-empty p { color: var(--text-dim); margin: 0 0 16px; font-size: 13px; }
     .db-empty button {
-      background: var(--accent); color: #14171d; border: none;
+      background: var(--accent); color: var(--accent-fg); border: none;
       padding: 9px 20px; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer;
     }
     .db-empty button:hover { filter: brightness(1.1); }
@@ -1625,7 +1615,7 @@
     }
     .sql-editor textarea:focus { outline: none; border-color: var(--accent); }
     .sql-editor .run {
-      background: var(--accent); color: #14171d; border: none;
+      background: var(--accent); color: var(--accent-fg); border: none;
       padding: 8px 20px; border-radius: 6px; font-size: 12px; cursor: pointer;
       align-self: start; font-weight: 600;
     }
@@ -1691,7 +1681,7 @@
     }
     .env-rows .row .btn:hover { color: var(--text); border-color: var(--accent); }
     .env-rows .row .btn.danger:hover { color: var(--err); border-color: var(--err); }
-    .env-rows .row .btn.primary { background: var(--accent); color: #14171d; border-color: var(--accent); font-weight: 600; }
+    .env-rows .row .btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
     .env-rows .row .btn.primary:hover { filter: brightness(1.15); }
     .env-rows .row .btn[disabled] { opacity: 0.4; cursor: not-allowed; }
     .env-rows .empty { padding: 14px 0; font-style: italic; color: var(--text-dim); font-size: 12px; }
@@ -1803,7 +1793,7 @@
     .range-toggle button:hover { color: var(--text); background: var(--panel-2); }
     .range-toggle button.active {
       background: var(--accent-dim);
-      color: var(--accent);
+      color: var(--text-dim);
     }
     .range-bar .asof {
       margin-left: auto;
@@ -1950,7 +1940,7 @@
     .event-title .verb { font-weight: 600; }
     .event-title .sha {
       font-family: ui-monospace, monospace;
-      color: var(--accent);
+      color: var(--text-dim);
     }
     .event-title .sub {
       font-size: 11px; color: var(--text-dim);
@@ -3629,9 +3619,9 @@ async function loadHomeCardSparklines(projects) {
     try {
       const data = await fetchJSON('/v1/projects/' + p.id + '/metrics?range=1h');
       const vals = (data.points || []).map(pt => pt.requests || pt.cpu_m || 0);
-      el.innerHTML = miniSparklineSVG(vals, 220, 32, 'var(--accent)');
+      el.innerHTML = miniSparklineSVG(vals, 220, 32, 'var(--text-dim)');
     } catch (_) {
-      el.innerHTML = miniSparklineSVG([], 220, 32, 'var(--accent)');
+      el.innerHTML = miniSparklineSVG([], 220, 32, 'var(--text-dim)');
     }
   }
 }
@@ -3754,8 +3744,8 @@ async function loadOverviewSparklines(projectID) {
   try {
     const data = await fetchJSON('/v1/projects/' + projectID + '/metrics?range=1h');
     const pts = data.points || [];
-    $('ov-spark-req').innerHTML = miniSparklineSVG(pts.map(p => p.requests || 0), 160, 48, 'var(--accent)');
-    $('ov-spark-cpu').innerHTML = miniSparklineSVG(pts.map(p => p.cpu_m || 0), 160, 48, '#22c55e');
+    $('ov-spark-req').innerHTML = miniSparklineSVG(pts.map(p => p.requests || 0), 160, 48, 'var(--text-dim)');
+    $('ov-spark-cpu').innerHTML = miniSparklineSVG(pts.map(p => p.cpu_m || 0), 160, 48, 'var(--text-faint)');
   } catch (_) {}
 }
 
@@ -6112,7 +6102,7 @@ async function tickGlobalTraffic() {
         <td class="num">${a.avg_latency_ms ? a.avg_latency_ms + ' ms' : '—'}</td>
         <td>
           <div style="background:var(--panel-2);border-radius:4px;height:14px;position:relative;overflow:hidden;">
-            <div style="background:var(--accent);width:${pct.toFixed(1)}%;height:100%;"></div>
+            <div style="background:var(--text-dim);width:${pct.toFixed(1)}%;height:100%;"></div>
           </div>
         </td>
       </tr>`;
@@ -6137,7 +6127,7 @@ async function tickGlobalTraffic() {
 // rate by class) — colours mean the same thing everywhere.
 const STATUS_COLOURS = {
   '2xx': 'var(--ok)',
-  '3xx': 'var(--accent)',
+  '3xx': 'var(--text-dim)',
   '4xx': '#f1c40f',
   '5xx': 'var(--err)',
 };
@@ -6709,7 +6699,7 @@ async function tickProjectTelemetry() {
   // Charts
   const times = pts.map(p => p.t);
   lineSeries($('pt-cpu'), [
-    { name: 'CPU (mCPU)', color: 'var(--accent)', areaOpacity: 0.18, values: pts.map(p => p.cpu_m) },
+    { name: 'CPU (mCPU)', color: 'var(--text)', areaOpacity: 0.12, values: pts.map(p => p.cpu_m) },
   ], { times, yFormat: v => v + 'm', emptyMsg: 'CPU samples appear after the first 30 s tick.' });
 
   lineSeries($('pt-mem'), [
@@ -6746,7 +6736,7 @@ async function tickProjectTelemetry() {
           <tr>
             <td><code style="color:var(--text);font-size:11px;">${escapeHTML(p.name)}</code></td>
             <td class="num">${fmtCPU(p.cpu_m)}</td>
-            <td><div class="cell-bar"><div class="cell-bar-fill" style="width:${cpuPct.toFixed(0)}%; background:var(--accent);"></div></div></td>
+            <td><div class="cell-bar"><div class="cell-bar-fill" style="width:${cpuPct.toFixed(0)}%; background:var(--text-dim);"></div></div></td>
             <td class="num">${fmtMem(p.memory_mi)}</td>
             <td><div class="cell-bar"><div class="cell-bar-fill" style="width:${memPct.toFixed(0)}%; background:#9b59b6;"></div></div></td>
           </tr>`;
