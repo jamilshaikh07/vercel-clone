@@ -61,9 +61,9 @@ spec:
     retentionPolicy: "30d"
     barmanObjectStore:
       destinationPath: "s3://paas-db-backups/"
-      # MinIO custom app on the TrueNAS host (10.20.0.45). S3 API is mapped
-      # to host port 9900 (console on 9901). Plain HTTP is fine over the LAN.
-      endpointURL: "http://10.20.0.45:9900"
+      # Routes via socat proxy on Proxmox (192.168.60.2:9900) → TrueNAS MinIO over Tailscale.
+      # Direct TrueNAS LAN (10.20.0.45) is unreachable from the cluster (different physical network).
+      endpointURL: "http://192.168.60.2:9900"
       s3Credentials:
         accessKeyId:
           name: paas-db-backup-s3

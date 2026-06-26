@@ -47,7 +47,7 @@
 #       - name: paas-db-backup
 #         barmanObjectStore:
 #           destinationPath: "s3://paas-db-backups/"
-#           endpointURL: "http://10.20.0.45:9900"
+#           endpointURL: "http://192.168.60.2:9900"
 #           serverName: paas-db          # matches the folder under the bucket
 #           s3Credentials:
 #             accessKeyId:     { name: paas-db-backup-s3, key: ACCESS_KEY_ID }
