@@ -44,19 +44,20 @@
        no brand-red accent — interactive elements use foreground tones. */
     :root {
       --bg: #000000;
-      --bg-2: #0a0a0a;
-      --panel: #0a0a0a;
-      --panel-2: #111111;
-      --panel-3: #1a1a1a;
-      --border: #2a2a2a;
-      --border-2: #1f1f1f;
-      --text: #ededed;
-      --text-dim: #a1a1a1;
-      --text-faint: #666666;
-      --accent: #ededed;
+      --bg-2: #050505;
+      --panel: #111111;
+      --panel-2: #171717;
+      --panel-3: #222222;
+      --border: #333333;
+      --border-2: #262626;
+      --text: #f5f5f5;
+      --text-dim: #b3b3b3;
+      --text-faint: #888888;
+      --accent: #f5f5f5;
       --accent-fg: #000000;
-      --accent-dim: rgba(255, 255, 255, 0.08);
-      --link: #a1a1a1;
+      --accent-dim: rgba(255, 255, 255, 0.12);
+      --link: #b3b3b3;
+      --panel-shadow: 0 1px 0 rgba(255, 255, 255, 0.06), 0 4px 16px rgba(0, 0, 0, 0.35);
       --ok: #22c55e;
       --warn: #eab308;
       --err: #ef4444;
@@ -66,20 +67,21 @@
       color-scheme: dark;
     }
     html[data-theme="light"] {
-      --bg: #ffffff;
-      --bg-2: #fafafa;
+      --bg: #fafafa;
+      --bg-2: #ffffff;
       --panel: #ffffff;
-      --panel-2: #fafafa;
-      --panel-3: #f5f5f5;
-      --border: #eaeaea;
-      --border-2: #f0f0f0;
-      --text: #000000;
-      --text-dim: #666666;
-      --text-faint: #999999;
-      --accent: #000000;
+      --panel-2: #f4f4f5;
+      --panel-3: #ececee;
+      --border: #d4d4d8;
+      --border-2: #e4e4e7;
+      --text: #09090b;
+      --text-dim: #52525b;
+      --text-faint: #71717a;
+      --accent: #09090b;
       --accent-fg: #ffffff;
-      --accent-dim: rgba(0, 0, 0, 0.06);
-      --link: #666666;
+      --accent-dim: rgba(0, 0, 0, 0.08);
+      --link: #52525b;
+      --panel-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 4px 12px rgba(0, 0, 0, 0.04);
       --ok: #16a34a;
       --warn: #ca8a04;
       --err: #dc2626;
@@ -141,7 +143,7 @@
     }
     .brand .meta {
       margin-left: auto;
-      font-size: 10px; color: var(--text-faint);
+      font-size: 10px; color: var(--text-dim);
       font-family: ui-monospace, monospace;
     }
 
@@ -192,29 +194,31 @@
     .nav-section + .nav-section { border-top: 1px solid var(--border-2); margin-top: 4px; padding-top: 12px; }
     .nav-section-title {
       padding: 0 18px 6px;
-      font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
-      color: var(--text-faint); text-transform: uppercase;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+      color: var(--text-dim); text-transform: uppercase;
     }
     .nav-list { list-style: none; margin: 0; padding: 0; }
     .nav-item {
       display: flex; align-items: center; gap: 8px;
-      padding: 6px 18px;
+      padding: 7px 18px;
       color: var(--text-dim);
-      font-size: 13px;
+      font-size: 13px; font-weight: 500;
       cursor: pointer;
       border-left: 2px solid transparent;
       text-decoration: none;
       user-select: none;
+      transition: color 0.1s ease, background 0.1s ease;
     }
     .nav-item:hover { color: var(--text); background: var(--panel-2); text-decoration: none; }
     .nav-item.active {
       color: var(--text);
+      font-weight: 600;
       background: var(--accent-dim);
       border-left-color: var(--text);
     }
     .nav-item .icon {
       width: 14px; height: 14px; display: inline-flex; align-items: center;
-      justify-content: center; color: var(--text-faint); flex-shrink: 0;
+      justify-content: center; color: var(--text-dim); flex-shrink: 0;
     }
     .nav-item.active .icon { color: var(--text); }
     .nav-item .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -254,13 +258,13 @@
       width: 24px; height: 24px;
       border-radius: 6px;
       color: var(--text-dim);
-      border: 1px dashed var(--border);
-      background: transparent;
+      border: 1px solid var(--border);
+      background: var(--panel-2);
       text-decoration: none;
-      font-size: 16px; line-height: 1; font-weight: 500;
+      font-size: 16px; line-height: 1; font-weight: 600;
       flex-shrink: 0;
     }
-    .nav-plus:hover { background: var(--accent-dim); border-color: var(--text); border-style: solid; text-decoration: none; }
+    .nav-plus:hover { background: var(--accent-dim); border-color: var(--text); color: var(--text); text-decoration: none; }
 
     /* Apps list in the main sidebar — each row shows the app name and
        a single colour-coded run-state icon. Three meaningful states,
@@ -431,7 +435,7 @@
     .content {
       min-height: 0; min-width: 0;
       display: flex; flex-direction: column;
-      background: var(--bg);
+      background: var(--bg-2);
     }
     .content-head {
       display: flex; align-items: center; gap: 16px;
@@ -440,7 +444,7 @@
       background: var(--bg-2);
       flex-shrink: 0;
     }
-    .content-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+    .content-head h2 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
     .content-head .crumbs {
       font-size: 12px; color: var(--text-dim);
       font-family: ui-monospace, monospace;
@@ -514,6 +518,7 @@
       display: none;
       flex: 1; min-height: 0;
       overflow-y: auto;
+      background: var(--bg);
     }
     .page.active { display: flex; flex-direction: column; }
     .page-inner {
@@ -568,10 +573,11 @@
     .summary .stat {
       background: var(--panel); border: 1px solid var(--border);
       border-radius: 8px; padding: 12px 14px;
+      box-shadow: var(--panel-shadow);
     }
     .summary .stat .label {
       font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
-      color: var(--text-faint); font-weight: 600;
+      color: var(--text-dim); font-weight: 700;
     }
     .summary .stat .value {
       font-size: 22px; font-weight: 700; margin-top: 4px;
@@ -639,7 +645,7 @@
     }
     .project-card:hover {
       border-color: var(--text-dim); transform: translateY(-2px);
-      box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+      box-shadow: var(--panel-shadow);
     }
     .project-card .pc-head {
       display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px;
@@ -675,13 +681,14 @@
     .activity-item .ai-title { font-weight: 500; color: var(--text); }
     .activity-item .ai-detail { color: var(--text-dim); font-size: 11px; margin-top: 2px;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .activity-item .ai-when { font-size: 10px; color: var(--text-faint); flex-shrink: 0; }
-    .nav-section-title.muted { opacity: 0.7; }
+    .activity-item .ai-when { font-size: 10px; color: var(--text-dim); flex-shrink: 0; }
+    .nav-section-title.muted { opacity: 1; }
     .nav-badge {
       margin-left: auto; font-size: 10px; padding: 1px 6px; border-radius: 999px;
       background: var(--panel-3); color: var(--text-dim);
+      border: 1px solid var(--border);
     }
-    .nav-badge.soon { color: var(--text-faint); font-style: italic; }
+    .nav-badge.soon { color: var(--text-dim); font-style: italic; }
 
     /* === Overview command center ======================================== */
     .command-center {
@@ -733,13 +740,14 @@
       background: var(--panel); border: 1px solid var(--border);
       border-radius: 8px; overflow: hidden;
       margin-bottom: 16px;
+      box-shadow: var(--panel-shadow);
     }
     .panel-head {
       padding: 10px 16px; border-bottom: 1px solid var(--border);
       display: flex; align-items: center; gap: 10px;
-      background: var(--bg-2);
+      background: var(--panel-2);
     }
-    .panel-head h3 { margin: 0; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); }
+    .panel-head h3 { margin: 0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text); }
     .panel-head .spacer { flex: 1; }
     .panel-head .branch {
       font-family: ui-monospace, monospace; font-size: 11px;
@@ -1600,6 +1608,37 @@
     }
     .db-empty button:hover { filter: brightness(1.1); }
     .db-empty button[disabled] { opacity: 0.5; cursor: progress; }
+    .db-note {
+      grid-column: 1 / -1;
+      margin-top: 4px; padding-top: 14px;
+      border-top: 1px solid var(--border);
+      font-size: 12px; line-height: 1.55; color: var(--text-dim);
+    }
+    .db-note p { margin: 0 0 10px; }
+    .db-note p:last-child { margin-bottom: 0; }
+    .db-note strong { color: var(--text); font-weight: 600; }
+    .runtime-status-pane { padding: 20px 24px 28px; }
+    .runtime-status-card {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 8px; padding: 4px 0; margin-bottom: 16px;
+      box-shadow: var(--panel-shadow);
+    }
+    .runtime-status-card .rs-row {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 16px; border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .runtime-status-card .rs-row:last-child { border-bottom: none; }
+    .runtime-status-card .rs-k {
+      width: 88px; flex-shrink: 0;
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-dim);
+    }
+    .runtime-status-card .rs-v { font-family: ui-monospace, monospace; color: var(--text); }
+    .runtime-status-note {
+      margin: 0; font-size: 13px; line-height: 1.55; color: var(--text-dim);
+    }
+    .runtime-status-note a { color: var(--text); font-weight: 600; }
 
     /* === SQL page ======================================================== */
     .sql-editor {
@@ -2304,7 +2343,7 @@
                  record's metadata. We DON'T tail Kaniko pods here —
                  those are reaped after ~1h, and the user wants
                  'masked' lifecycle logs that persist forever, not
-                 raw build output. Pod logs stay on the Logs page. -->
+                 raw build output. Failed builds offer a download on Overview. -->
             <div class="panel" id="overview-events" style="margin-bottom:16px;">
               <div class="panel-head">
                 <h3>Events</h3>
@@ -2325,21 +2364,20 @@
           </div>
         </div>
 
-        <!-- RUNTIME: Logs · Env · Database -->
+        <!-- RUNTIME: Status · Env · Database -->
         <div class="page" id="page-runtime">
           <div class="runtime-shell">
             <nav class="section-tabs" id="runtime-tabs" aria-label="Runtime sections">
-              <a class="section-tab" data-tab="logs" href="#">Logs</a>
+              <a class="section-tab" data-tab="logs" href="#">Status</a>
               <a class="section-tab" data-tab="env" href="#">Env vars</a>
               <a class="section-tab" data-tab="database" href="#">Database</a>
             </nav>
             <div class="section-panel logs-panel active" id="runtime-panel-logs">
               <div class="logs-pane">
                 <div class="log-head">
+                  <span class="title" id="log-title">Runtime</span>
                   <span class="commit" id="log-commit">—</span>
-                  <a id="log-back-to-live" href="#" style="display:none" title="Stop tailing this deployment, jump back to the production pod">← latest</a>
                   <span class="spacer"></span>
-                  <span class="title" id="log-title" style="display:none">Live</span>
                   <a id="log-url" target="_blank" rel="noopener" style="display:none">open ↗</a>
                 </div>
                 <div class="log-body" id="log-body">
@@ -2491,7 +2529,7 @@
 //   #/traffic              → global traffic (build activity per app)
 //   #d=<uuid>              → legacy deep-link: auto-route to that deployment's logs
 //
-// The component functions (loadEnv, runQuery, streamLogsFor, redeployFromButton,
+// The component functions (loadEnv, runQuery, redeployFromButton,
 // addDatabase) are kept verbatim from the old dashboard — they reference
 // DOM IDs (ws-env-rows, ws-sql, ws-result, log-body, etc.) that now live
 // inside the new page containers, so they work without modification.
@@ -2520,30 +2558,22 @@ const pageEls = {
   alerts:       $('page-alerts'),
   integrations: $('page-integrations'),
 };
-// Logs-page DOM (shared with stream logic below).
+// Runtime status pane DOM.
 const logBody   = $('log-body');
 const logTitle  = $('log-title');
 const logCommit = $('log-commit');
 const logUrl    = $('log-url');
-const logBackToLive = $('log-back-to-live');
 
 // --- State ---
 let DATA  = { projects: [] };     // last /v1/projects payload
 let ROUTE = { scope: 'home' };    // current navigation
-let currentES = null;             // active SSE EventSource
 // False until the first /v1/projects load lands. The bootstrap renders
 // the route once against an empty DATA (applyRoute) before data arrives,
 // so the first refresh must render like a navigation to give a deep-
 // linked self-managed page (insights/telemetry/traffic) a data-backed
 // render. After that, background polls leave those pages alone.
 let initialDataLoaded = false;
-let selectedDeploymentID = null;  // currently-tailed deployment on the logs page
-// Track the last (id, mode) we actually started streaming, so the 10s
-// refresh tick can call renderLogsPage() without tearing down and
-// rebuilding the SSE stream every time. (mode is always 'runtime' now
-// that the Build/Runtime toggle is gone, but streamLogsFor still keys
-// on (id, mode) for symmetry with the older code path.)
-let lastStreamKey = '';
+let selectedDeploymentID = null;  // deployment pinned on Runtime → Status (deep-links)
 // Per-project SQL console state preserved across refresh() re-renders so the
 // 10s background poll doesn't wipe the user's textarea or result table.
 const sqlState = {};
@@ -2555,12 +2585,6 @@ const sqlState = {};
 // the user having to open each project. Empty on first paint —
 // CSS hides the SVG until the first response lands.
 const projectStatusMap = {};
-
-// Endpoint + placeholder per log-mode. Keeps streamLogsFor symmetric.
-const LOG_SOURCES = {
-  build:   { path: 'logs',         empty: 'Pick a deployment on the left to tail its build logs.' },
-  runtime: { path: 'runtime-logs', empty: 'Pick a deployment on the left to tail runtime output.' },
-};
 
 // ----- Utility -----------------------------------------------------------
 
@@ -2981,7 +3005,6 @@ let pendingDeploymentID = null;
 function applyRoute() {
   // Any page swap stops every per-page background activity. The
   // matching render*() functions re-start them when needed.
-  closeStream();
   stopTelemetryPoll();
   stopTrafficPoll();
   // Mobile drawer dismiss-on-navigate. Sidebar/sub-sidebar links are
@@ -3164,7 +3187,8 @@ function renderCrumbs() {
     overview: 'Overview', runtime: 'Runtime', domains: 'Domains',
     monitoring: 'Monitoring', settings: 'Settings',
   })[ROUTE.view] || ROUTE.view;
-  const tabLabel = ROUTE.tab ? ` / ${ROUTE.tab}` : '';
+  const tabNames = { logs: 'Status', env: 'Env vars', database: 'Database' };
+  const tabLabel = ROUTE.tab ? ` / ${tabNames[ROUTE.tab] || ROUTE.tab}` : '';
   crumbsEl.innerHTML = `Apps <span class="sep">/</span> <strong>${escapeHTML(proj ? projectLabel(proj) : '?')}</strong> <span class="sep">/</span> ${escapeHTML(viewLabel + tabLabel)}`;
 
   // Compute the live URL for the Visit button using the same rules
@@ -4473,7 +4497,7 @@ function synthesizeBuildLog(proj, d, isLive, liveURL) {
     }
     case 'failed':
       lines.push({ c: 'kaniko', m: '==> Building image with Kaniko' });
-      lines.push({ c: 'fail',   m: '==> Build failed — check the Logs page for the raw Kaniko output' });
+      lines.push({ c: 'fail',   m: '==> Build failed — download raw Kaniko output from Overview → Deployments' });
       break;
     default:
       lines.push({ c: 'system', m: '==> ' + d.status });
@@ -5235,17 +5259,8 @@ async function deleteDomain(projectID, host) {
   }
 }
 
-// ----- Logs page ---------------------------------------------------------
+// ----- Runtime status (no live pod tail — SSE was freezing the UI) -------
 
-// renderLogsPage decides what to tail without any UI choosing:
-//   1. If selectedDeploymentID points at a known deployment, show
-//      that deployment's BUILD logs — the deep-link / redeploy /
-//      "click a deployment row on Overview" flow lands here.
-//   2. Otherwise stream the RUNNING pod's stdout/stderr for the
-//      currently-live deployment (latest READY on the production
-//      branch, else latest READY anywhere).
-// In build mode we surface a small "← Live logs" link that flips
-// back to runtime view without a navigation.
 function renderLogsPage() {
   const proj = findProject(ROUTE.projectID);
   if (!proj) {
@@ -5254,45 +5269,60 @@ function renderLogsPage() {
   }
   const deps = proj.deployments || [];
   if (deps.length === 0) {
-    closeStream();
-    logTitle.textContent = 'Live';
+    logTitle.textContent = 'Runtime';
     logCommit.textContent = '—';
     logUrl.style.display = 'none';
-    logBackToLive.style.display = 'none';
     logBody.innerHTML = '<div class="log-placeholder">No deployments yet. Push a commit to ' +
-      escapeHTML(proj.production_branch) + ' to see logs here.</div>';
+      escapeHTML(proj.production_branch) + ' to see status here.</div>';
     return;
   }
 
-  // Always show runtime output. The build-log surface lived here as a
-  // toggle until raw Kaniko logs were demoted to a forensic download
-  // on failed deployment rows — build output isn't useful on the live
-  // tail (pods are reaped after ~1h) and forcing the choice on the
-  // user just produced confusion and 404 HTML pages rendered as log
-  // content. This page now does one thing: tail the running pod.
-  const live   = liveDeploymentForProject(proj);
+  const live = liveDeploymentForProject(proj);
   const target = (selectedDeploymentID && deps.find(d => d.id === selectedDeploymentID)) || live;
 
   if (!target) {
-    closeStream();
-    lastStreamKey = '';
-    logTitle.textContent = 'Live';
+    logTitle.textContent = 'Runtime';
     logCommit.textContent = 'no ready deployment';
     logUrl.style.display = 'none';
-    logBackToLive.style.display = 'none';
     logBody.innerHTML = '<div class="log-placeholder">Waiting for a successful deployment…</div>';
     return;
   }
 
-  // "← latest" only makes sense when we've drilled into a deployment
-  // that isn't the current production target.
-  const showBackToLive = !!(selectedDeploymentID && live && target.id !== live.id);
-  logBackToLive.style.display = showBackToLive ? '' : 'none';
+  const ref = target.ref.replace('refs/heads/', '').replace('refs/pull/', 'PR ');
+  const isLive = live && target.id === live.id;
+  logTitle.textContent = isLive ? 'Production' : 'Deployment';
+  logCommit.textContent = target.commit_sha.slice(0, 8) + ' · ' + target.status;
+  if (target.url) {
+    logUrl.href = target.url;
+    logUrl.textContent = 'open ↗';
+    logUrl.style.display = '';
+  } else {
+    logUrl.style.display = 'none';
+  }
 
-  logUrl.style.display = target.url ? '' : 'none';
-  if (target.url) logUrl.href = target.url;
-
-  streamLogsFor(target.id, target.commit_sha, 'runtime');
+  const overviewHref = '#/p/' + proj.id + '/overview';
+  logBody.innerHTML = `
+    <div class="runtime-status-pane">
+      <div class="runtime-status-card">
+        <div class="rs-row"><span class="rs-k">Commit</span><span class="rs-v">${escapeHTML(target.commit_sha.slice(0, 12))}</span></div>
+        <div class="rs-row"><span class="rs-k">Branch</span><span class="rs-v">${escapeHTML(ref)}</span></div>
+        <div class="rs-row"><span class="rs-k">Status</span><span class="rs-v"><span class="badge ${escapeHTML(target.status)}">${escapeHTML(target.status)}</span></span></div>
+        <div class="rs-row"><span class="rs-k">Deployed</span><span class="rs-v">${escapeHTML(timeAgo(target.created_at))}</span></div>
+      </div>
+      <p class="runtime-status-note">
+        Live pod log streaming was removed — chatty apps were freezing the dashboard.
+        Failed build output is available from <a href="${overviewHref}">Overview → Deployments</a> (download on failed rows).
+        ${isLive ? '' : ' <a href="#" data-back-live>← back to production</a>'}
+      </p>
+    </div>`;
+  const back = logBody.querySelector('[data-back-live]');
+  if (back) {
+    back.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      selectedDeploymentID = null;
+      renderLogsPage();
+    });
+  }
 }
 
 // liveDeploymentForProject picks the deployment whose pod is currently
@@ -5322,71 +5352,6 @@ function liveDeploymentForProject(proj) {
   return deps.find(d => d.status === 'ready' && d.ref === prodRef) ||
          deps.find(d => d.status === 'ready') ||
          null;
-}
-
-// "← latest" jumps from a historical deployment back to the current
-// production pod's runtime tail by clearing the pin and re-rendering.
-logBackToLive.addEventListener('click', (ev) => {
-  ev.preventDefault();
-  selectedDeploymentID = null;
-  renderLogsPage();
-});
-
-// streamLogsFor opens an SSE stream for (deployment, mode). Idempotent:
-// when the requested (id, mode) matches the active stream we no-op so
-// the 10s background refresh tick can't tear down the user's tail or
-// wipe the on-screen buffer. The toggle handler relies on this too —
-// double-clicks on the active half become a no-op.
-function streamLogsFor(id, commit, mode) {
-  const key = id + ':' + mode;
-  if (key === lastStreamKey && currentES) return;
-  lastStreamKey = key;
-  closeStream();
-  logBody.innerHTML = '';
-  logTitle.textContent = mode === 'runtime' ? 'Live' : 'Build';
-  logCommit.textContent = commit.slice(0, 8) + ' · streaming…';
-
-  const path = LOG_SOURCES[mode].path;
-  const es = new EventSource('/v1/deployments/' + id + '/' + path);
-  currentES = es;
-
-  es.addEventListener('status', (ev) => {
-    const d = JSON.parse(ev.data);
-    logCommit.textContent = commit.slice(0, 8) + ' · ' + (d.status || (mode === 'runtime' ? 'live' : 'streaming'));
-    if (d.url) { logUrl.textContent = 'open ↗'; logUrl.href = d.url; logUrl.style.display = ''; }
-  });
-  es.addEventListener('log', (ev) => {
-    const d = JSON.parse(ev.data);
-    appendLine(d.c, stripAnsi(d.m));
-  });
-  es.addEventListener('end', (ev) => {
-    const d = JSON.parse(ev.data);
-    logCommit.textContent = commit.slice(0, 8) + ' · ' + (d.status || d.reason || 'ended');
-    closeStream();
-    if (mode === 'build') refresh();    // build finished → re-fetch project list
-  });
-  es.onerror = () => {
-    appendLine('system', '[stream] connection closed');
-    closeStream();
-  };
-}
-
-function appendLine(container, msg) {
-  const div = document.createElement('div');
-  div.className = 'log-line ' + container;
-  const c = document.createElement('span'); c.className = 'c'; c.textContent = container;
-  const m = document.createElement('span'); m.textContent = msg;
-  div.appendChild(c); div.appendChild(m);
-  const nearBottom = logBody.scrollTop + logBody.clientHeight >= logBody.scrollHeight - 40;
-  logBody.appendChild(div);
-  if (nearBottom) logBody.scrollTop = logBody.scrollHeight;
-}
-
-function closeStream() {
-  if (currentES) {
-    currentES.close();
-    currentES = null;
-  }
 }
 
 // ----- Database page -----------------------------------------------------
@@ -5443,6 +5408,11 @@ function renderStorage(projectID, db) {
       <div class="k">host</div>         <div class="v"><span class="pill">${escapeHTML(db.host)}:${db.port}</span></div>
       <div class="k">env var</div>      <div class="v">injected into the pod as <code>DATABASE_URL</code></div>
       <div class="k">connection</div>   <div class="v"><button data-copy-uri>Copy URI</button><button data-reveal-pw>Reveal password</button><span class="pill" data-pw-slot style="display:none"></span></div>
+      <div class="db-note">
+        <p><strong>Where is this?</strong> Spinup provisions a dedicated Postgres role + database on the shared <code>paas-db</code> cluster (CloudNativePG in <code>paas-system</code>).</p>
+        <p><strong>Host URL</strong> — <code>${escapeHTML(db.host)}</code> is <em>internal Kubernetes DNS</em>. It only resolves from pods inside the cluster, not from your laptop. Your deployed app connects via the injected <code>DATABASE_URL</code> env var.</p>
+        <p><strong>Is it working?</strong> Run <code>SELECT now();</code> in the SQL viewer below. If that succeeds, the database is live. Redeploy after adding Postgres so your app picks up <code>DATABASE_URL</code>.</p>
+      </div>
     </div>`;
   host.querySelector('[data-copy-uri]').addEventListener('click', async (ev) => {
     try {
@@ -7013,11 +6983,8 @@ $('settings-delete-btn')?.addEventListener('click', () => {
 applyRoute();
 refresh();
 
-// Background poll — every 10s when no live stream so deployment lists
-// stay fresh after a webhook or another browser triggers a build.
-setInterval(() => {
-  if (!currentES) refresh();
-}, 10000);
+// Background poll — every 10s so deployment lists stay fresh.
+setInterval(() => { refresh(); }, 10000);
 // ----- end of dashboard.js -----------------------------------------------
 // (Old function render() and its 700-line tail were deleted as part of the
 //  sidebar-layout refactor; everything they did is now handled by the
