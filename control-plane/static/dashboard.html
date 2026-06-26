@@ -1012,6 +1012,83 @@
     }
     .btn-danger:hover { background: rgba(248, 113, 113, 0.12); }
     .btn-danger[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+    /* Modal — in-app confirms instead of window.prompt / alert */
+    .modal-overlay {
+      position: fixed; inset: 0; z-index: 2000;
+      display: none; align-items: center; justify-content: center;
+      padding: 24px 16px;
+      background: rgba(5, 7, 10, 0.72);
+      backdrop-filter: blur(4px);
+    }
+    .modal-overlay.open { display: flex; }
+    .modal-dialog {
+      width: min(440px, 100%);
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 24px 48px rgba(0, 0, 0, 0.45);
+      animation: modal-in 0.18s ease-out;
+    }
+    @keyframes modal-in {
+      from { opacity: 0; transform: translateY(8px) scale(0.98); }
+      to   { opacity: 1; transform: none; }
+    }
+    .modal-danger { border-color: rgba(248, 113, 113, 0.35); }
+    .modal-head {
+      display: flex; align-items: center; gap: 12px;
+      padding: 16px 18px 0;
+    }
+    .modal-head h2 { margin: 0; font-size: 16px; font-weight: 600; color: var(--err); flex: 1; }
+    .modal-close {
+      border: none; background: transparent; color: var(--text-dim);
+      font-size: 22px; line-height: 1; cursor: pointer; padding: 0 4px;
+    }
+    .modal-close:hover { color: var(--text); }
+    .modal-body { padding: 14px 18px 4px; }
+    .modal-lead { margin: 0 0 14px; font-size: 13px; color: var(--text-dim); line-height: 1.55; }
+    .modal-app-card {
+      padding: 10px 12px; margin-bottom: 12px;
+      background: var(--panel-2); border: 1px solid var(--border-2); border-radius: 8px;
+    }
+    .modal-app-name { font-size: 14px; font-weight: 600; color: var(--text); }
+    .modal-app-repo { font-size: 12px; color: var(--text-faint); margin-top: 2px; font-family: ui-monospace, monospace; }
+    .modal-bullets {
+      margin: 0 0 14px; padding-left: 18px; font-size: 12px; color: var(--text-dim); line-height: 1.55;
+    }
+    .modal-bullets strong { color: var(--text); font-weight: 600; }
+    .modal-label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
+    .modal-label kbd {
+      font-family: ui-monospace, monospace; font-size: 11px;
+      padding: 1px 6px; border-radius: 4px;
+      background: var(--panel-3); border: 1px solid var(--border); color: var(--text);
+    }
+    .modal-input {
+      width: 100%; box-sizing: border-box;
+      padding: 10px 12px; font-size: 14px; font-family: ui-monospace, monospace;
+      background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; color: var(--text);
+    }
+    .modal-input:focus { outline: none; border-color: var(--err); box-shadow: 0 0 0 2px rgba(248, 113, 113, 0.15); }
+    .modal-error {
+      margin-top: 10px; font-size: 12px; color: var(--err); line-height: 1.4;
+    }
+    .modal-foot {
+      display: flex; justify-content: flex-end; gap: 8px;
+      padding: 14px 18px 16px;
+    }
+    .btn-modal-cancel {
+      padding: 8px 14px; border-radius: 8px; font-size: 13px;
+      border: 1px solid var(--border); background: transparent; color: var(--text-dim);
+      cursor: pointer; font-family: inherit;
+    }
+    .btn-modal-cancel:hover { color: var(--text); border-color: var(--text-faint); }
+    .btn-modal-danger {
+      padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600;
+      border: 1px solid var(--err); background: var(--err); color: #14171d;
+      cursor: pointer; font-family: inherit;
+    }
+    .btn-modal-danger:hover:not([disabled]) { filter: brightness(1.08); }
+    .btn-modal-danger[disabled] { opacity: 0.45; cursor: not-allowed; }
     .btn-redeploy, .btn-build-logs {
       background: transparent; border: 1px solid var(--border); color: var(--text-dim);
       padding: 3px 10px; border-radius: 6px; font-size: 11px; cursor: pointer;
@@ -2163,6 +2240,34 @@
          to close the sidebar drawer. Display is gated by body.nav-open
          in CSS so it stays out of the layout entirely on desktop. -->
     <div id="mobile-nav-backdrop" class="mobile-nav-backdrop" aria-hidden="true"></div>
+
+    <!-- Delete-app confirmation modal (replaces native prompt/alert) -->
+    <div id="delete-modal" class="modal-overlay" hidden aria-hidden="true">
+      <div class="modal-dialog modal-danger" role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
+        <div class="modal-head">
+          <h2 id="delete-modal-title">Delete app</h2>
+          <button type="button" class="modal-close" id="delete-modal-close" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="modal-lead">This permanently removes the app from Spinup — deployments, custom domains, env vars, and live URLs.</p>
+          <div class="modal-app-card">
+            <div class="modal-app-name" id="delete-modal-app"></div>
+            <div class="modal-app-repo" id="delete-modal-repo"></div>
+          </div>
+          <ul class="modal-bullets">
+            <li>Running pods and IngressRoutes are torn down immediately.</li>
+            <li>Your GitHub repo is <strong>not</strong> uninstalled — revoke access in GitHub if needed.</li>
+          </ul>
+          <label class="modal-label" for="delete-modal-input">Type <kbd>DELETE</kbd> to confirm</label>
+          <input type="text" id="delete-modal-input" class="modal-input" autocomplete="off" spellcheck="false" placeholder="DELETE">
+          <div class="modal-error" id="delete-modal-error" hidden></div>
+        </div>
+        <div class="modal-foot">
+          <button type="button" class="btn-modal-cancel" id="delete-modal-cancel">Cancel</button>
+          <button type="button" class="btn-modal-danger" id="delete-modal-confirm" disabled>Delete app</button>
+        </div>
+      </div>
+    </div>
   </div>
 
 <script>
@@ -3497,26 +3602,26 @@ function renderOverview() {
 // link with branch, and copyable live URL. Pure DOM render — no
 // network calls — so it's safe to invoke from every refresh tick.
 async function deleteProject(proj) {
-  const label = projectLabel(proj);
-  const typed = prompt(
-    'Delete "' + label + '" (' + proj.full_name + ')?\n\n' +
-    'This removes all deployments, custom domains, and env vars from Spinup.\n' +
-    'Your GitHub repo is NOT uninstalled.\n\n' +
-    'Type DELETE to confirm:'
-  );
-  if (typed !== 'DELETE') return;
+  const confirmed = await openDeleteAppModal(proj);
+  if (!confirmed) return;
 
-  const btn = $('overview-delete-btn');
-  if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
+  const confirmBtn = $('delete-modal-confirm');
+  const triggerBtn = $('overview-delete-btn');
+  confirmBtn.disabled = true;
+  confirmBtn.textContent = 'Deleting…';
+  if (triggerBtn) { triggerBtn.disabled = true; triggerBtn.textContent = 'Deleting…'; }
   try {
     const r = await fetch('/v1/projects/' + proj.id, {
       method: 'DELETE', credentials: 'same-origin', cache: 'no-store',
     });
     if (r.status === 401) { window.location.href = '/login'; return; }
     if (!r.ok) {
-      alert('Delete failed: ' + ((await r.text()).trim() || ('HTTP ' + r.status)));
+      showDeleteModalError((await r.text()).trim() || ('HTTP ' + r.status));
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = 'Delete app';
       return;
     }
+    closeDeleteAppModal();
     const data = await r.json();
     if (data.warnings && data.warnings.length) {
       console.warn('Project delete warnings:', data.warnings);
@@ -3524,11 +3629,96 @@ async function deleteProject(proj) {
     window.location.hash = '#/';
     await refresh();
   } catch (e) {
-    alert('Delete failed: ' + e);
+    showDeleteModalError(String(e.message || e));
+    confirmBtn.disabled = false;
+    confirmBtn.textContent = 'Delete app';
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Delete app…'; }
+    if (triggerBtn) { triggerBtn.disabled = false; triggerBtn.textContent = 'Delete app…'; }
   }
 }
+
+let deleteModalResolver = null;
+
+function openDeleteAppModal(proj) {
+  const overlay = $('delete-modal');
+  const input = $('delete-modal-input');
+  const confirmBtn = $('delete-modal-confirm');
+  const errEl = $('delete-modal-error');
+  $('delete-modal-title').textContent = 'Delete ' + projectLabel(proj);
+  $('delete-modal-app').textContent = projectLabel(proj);
+  $('delete-modal-repo').textContent = proj.full_name || '';
+  input.value = '';
+  confirmBtn.disabled = true;
+  confirmBtn.textContent = 'Delete app';
+  errEl.hidden = true;
+  errEl.textContent = '';
+  overlay.hidden = false;
+  overlay.setAttribute('aria-hidden', 'false');
+  overlay.classList.add('open');
+  setTimeout(() => input.focus(), 50);
+
+  return new Promise((resolve) => {
+    deleteModalResolver = resolve;
+    overlay._onInput = () => { confirmBtn.disabled = input.value.trim() !== 'DELETE'; };
+    input.addEventListener('input', overlay._onInput);
+  });
+}
+
+function closeDeleteAppModal() {
+  const overlay = $('delete-modal');
+  const input = $('delete-modal-input');
+  if (overlay._onInput) {
+    input.removeEventListener('input', overlay._onInput);
+    overlay._onInput = null;
+  }
+  overlay.classList.remove('open');
+  overlay.hidden = true;
+  overlay.setAttribute('aria-hidden', 'true');
+  deleteModalResolver = null;
+}
+
+function cancelDeleteAppModal() {
+  if (deleteModalResolver) {
+    deleteModalResolver(false);
+    deleteModalResolver = null;
+  }
+  closeDeleteAppModal();
+}
+
+function confirmDeleteAppModal() {
+  const input = $('delete-modal-input');
+  if (input.value.trim() !== 'DELETE') return;
+  if (deleteModalResolver) {
+    deleteModalResolver(true);
+    deleteModalResolver = null;
+  }
+}
+
+function showDeleteModalError(msg) {
+  const errEl = $('delete-modal-error');
+  errEl.textContent = msg.startsWith('Delete failed') ? msg : 'Delete failed: ' + msg;
+  errEl.hidden = false;
+}
+
+(function wireDeleteModal() {
+  const overlay = $('delete-modal');
+  const input = $('delete-modal-input');
+  const confirmBtn = $('delete-modal-confirm');
+  $('delete-modal-cancel').addEventListener('click', () => cancelDeleteAppModal());
+  $('delete-modal-close').addEventListener('click', () => cancelDeleteAppModal());
+  overlay.addEventListener('click', (ev) => {
+    if (ev.target === overlay) cancelDeleteAppModal();
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (!overlay.classList.contains('open')) return;
+    if (ev.key === 'Escape') cancelDeleteAppModal();
+    if (ev.key === 'Enter' && document.activeElement === input && input.value.trim() === 'DELETE') {
+      ev.preventDefault();
+      confirmDeleteAppModal();
+    }
+  });
+  confirmBtn.addEventListener('click', () => confirmDeleteAppModal());
+})();
 
 function renderOverviewHeader(proj) {
   const host = $('overview-header');
