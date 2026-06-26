@@ -943,7 +943,7 @@
        keeping legacy rows visually identical to the pre-tag layout. */
     .deployment {
       display: grid;
-      grid-template-columns: 90px 1fr auto 100px auto auto;
+      grid-template-columns: 90px 1fr auto 100px minmax(140px, auto) auto;
       gap: 12px; align-items: center;
       padding: 8px 16px;
       cursor: pointer;
@@ -989,6 +989,16 @@
     .badge.failed    { background: rgba(255, 107, 107, 0.15); color: var(--err); }
     .badge.cancelled { background: rgba(154, 161, 173, 0.15); color: var(--text-dim); }
     .url-link { font-size: 12px; }
+    .deployment-links {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px;
+      justify-content: flex-end;
+    }
+    .deployment-links .url-sep { color: var(--text-faint); font-size: 11px; }
+    .url-link.custom { color: var(--ok); }
+    .live-url-secondary { color: var(--text-dim); font-size: 12px; }
     .btn-redeploy, .btn-build-logs {
       background: transparent; border: 1px solid var(--border); color: var(--text-dim);
       padding: 3px 10px; border-radius: 6px; font-size: 11px; cursor: pointer;
@@ -2915,19 +2925,37 @@ function applyDNSGate(el, url, { tooltipOnly = false } = {}) {
 }
 
 // liveURLForProject returns the best URL to point a user at for an app:
-//   1. Production alias (<slug>.spinup.in) if any READY deployment
-//      is on the production branch — that's the stable customer URL.
-//   2. Otherwise, the URL of the latest READY per-commit deployment —
-//      useful for apps whose production branch isn't 'main' or hasn't
-//      had a successful build yet.
-//   3. null when no READY deploys exist; caller hides the button.
-function liveURLForProject(proj) {
+//   1. Verified custom domain (e.g. urbanequestrian.in) when configured.
+//   2. Production alias (<slug>.spinup.in) if any READY deployment
+//      is on the production branch — that's the stable Spinup URL.
+//   3. Otherwise, the URL of the latest READY per-commit deployment.
+//   4. null when no READY deploys exist; caller hides the button.
+function primaryCustomDomain(proj) {
+  const domains = (proj.verified_domains || []).filter(Boolean);
+  if (domains.length === 0) return null;
+  // Prefer apex (fewest labels) over www.urbanequestrian.in etc.
+  return domains.slice().sort((a, b) => a.split('.').length - b.split('.').length)[0];
+}
+
+function spinupURLForProject(proj) {
   const deps = proj.deployments || [];
   const prodRef = 'refs/heads/' + proj.production_branch;
   const hasProd = deps.some(d => d.status === 'ready' && d.ref === prodRef);
   if (hasProd) return `https://${proj.slug}.spinup.in`;
   const readyDep = deps.find(d => d.status === 'ready' && d.url);
   return readyDep ? readyDep.url : null;
+}
+
+function liveURLForProject(proj) {
+  const custom = primaryCustomDomain(proj);
+  if (custom) return `https://${custom}`;
+  return spinupURLForProject(proj);
+}
+
+function liveURLHostsForProject(proj) {
+  const custom = primaryCustomDomain(proj);
+  const spinup = spinupURLForProject(proj);
+  return { custom, spinup, primary: custom ? `https://${custom}` : spinup };
 }
 
 // Show the page matching ROUTE; hide all others. Then call the page's
@@ -3149,11 +3177,16 @@ function renderHomeTableBody(projects) {
     // URL that's guaranteed to actually route). Same selection rule
     // as the per-app Visit button; see liveURLForProject for the
     // identical sister-function used elsewhere.
-    const ready = (p.deployments || []).find(d => d.status === 'ready' && d.url);
-    const urlCell = ready
-      ? `<a class="apps-url-link" href="${escapeHTML(ready.url)}" target="_blank" rel="noopener"
-            onclick="event.stopPropagation()" title="Open ${escapeHTML(ready.url)} in a new tab">${
-              escapeHTML(ready.url.replace(/^https?:\/\//, ''))} ↗</a>`
+    const urls = liveURLHostsForProject(p);
+    const urlCell = urls.primary
+      ? (() => {
+          const primaryHost = urls.primary.replace(/^https?:\/\//, '');
+          const secondary = (urls.custom && urls.spinup && urls.spinup !== urls.primary)
+            ? `<span class="live-url-secondary" title="${escapeHTML(urls.spinup)}"> · ${escapeHTML(urls.spinup.replace(/^https?:\/\//, ''))}</span>`
+            : '';
+          return `<a class="apps-url-link" href="${escapeHTML(urls.primary)}" target="_blank" rel="noopener"
+            onclick="event.stopPropagation()" title="Open ${escapeHTML(urls.primary)}${urls.spinup && urls.custom ? ' (also ' + urls.spinup + ')' : ''}">${escapeHTML(primaryHost)} ↗</a>${secondary}`;
+        })()
       : `<span class="apps-url-muted" title="No READY deployment yet">—</span>`;
     return `
       <tr data-href="#/p/${p.id}" tabindex="0" role="link" aria-label="Open ${escapeHTML(projectLabel(p))}">
@@ -3371,13 +3404,19 @@ function renderOverview() {
 
   $('overview-branch').textContent = proj.production_branch;
   const prodLink = $('overview-prod');
-  // Same selection rules as the global Visit button; see liveURLForProject.
-  const liveURL = liveURLForProject(proj);
-  if (liveURL) {
-    prodLink.href = liveURL;
-    prodLink.textContent = liveURL.replace(/^https?:\/\//, '') + ' ↗';
+  const urls = liveURLHostsForProject(proj);
+  if (urls.primary) {
+    prodLink.href = urls.primary;
+    const primaryHost = urls.primary.replace(/^https?:\/\//, '');
+    if (urls.custom && urls.spinup) {
+      prodLink.innerHTML = `${escapeHTML(primaryHost)} ↗ <span class="live-url-secondary">· ${escapeHTML(urls.spinup.replace(/^https?:\/\//, ''))} ↗</span>`;
+      prodLink.title = `Open ${primaryHost} (custom domain). Also available at ${urls.spinup}`;
+    } else {
+      prodLink.textContent = primaryHost + ' ↗';
+      prodLink.title = 'Open ' + primaryHost;
+    }
     prodLink.style.display = '';
-    applyDNSGate(prodLink, liveURL, { tooltipOnly: true });
+    applyDNSGate(prodLink, urls.primary, { tooltipOnly: true });
   } else {
     prodLink.style.display = 'none';
   }
@@ -3405,7 +3444,10 @@ function renderOverview() {
         .addEventListener('click', (ev) => deployNowFromButton(ev.currentTarget));
     return;
   }
-  list.innerHTML = deps.map(d => renderDeploymentRow(d, proj.id)).join('');
+  list.innerHTML = deps.map(d => {
+    const liveDep = liveDeploymentForProject(proj);
+    return renderDeploymentRow(d, proj, !!(liveDep && liveDep.id === d.id));
+  }).join('');
   list.querySelectorAll('.btn-redeploy').forEach(b => b.addEventListener('click', () => redeployFromButton(b)));
   // Failed builds expose a 'logs' button that downloads the Kaniko
   // output as a .log file. Click-anywhere-to-open-logs is intentionally
@@ -3432,8 +3474,10 @@ function renderOverview() {
 function renderOverviewHeader(proj) {
   const host = $('overview-header');
   if (!host) return;
-  const liveURL = liveURLForProject(proj);
+  const urls = liveURLHostsForProject(proj);
+  const liveURL = urls.primary;
   const liveHost = liveURL ? liveURL.replace(/^https?:\/\//, '') : '';
+  const spinupHost = urls.spinup ? urls.spinup.replace(/^https?:\/\//, '') : '';
   const repoHTML = proj.full_name
     ? `<a href="https://github.com/${escapeHTML(proj.full_name)}" target="_blank" rel="noopener" title="Open on GitHub">${escapeHTML(proj.full_name)}</a>`
     : '<span>—</span>';
@@ -3462,7 +3506,9 @@ function renderOverviewHeader(proj) {
           <span class="meta">
             <span style="color:var(--text-faint);">↗</span>
             <a class="live-url-anchor" href="${liveURL}" target="_blank" rel="noopener">${escapeHTML(liveHost)}</a>
-            <button class="copy" type="button" data-copy="${escapeHTML(liveURL)}" title="Copy URL">⧉</button>
+            ${urls.custom && urls.spinup ? `<span style="color:var(--text-faint);">·</span>
+            <a class="live-url-anchor live-url-secondary" href="${escapeHTML(urls.spinup)}" target="_blank" rel="noopener">${escapeHTML(spinupHost)}</a>` : ''}
+            <button class="copy" type="button" data-copy="${escapeHTML(liveURL)}" title="Copy primary URL">⧉</button>
           </span>` : ''}
       </div>
     </div>
@@ -3675,7 +3721,15 @@ function synthesizeBuildLog(proj, d, isLive, liveURL) {
       lines.push({ c: 'system', m: '==> Rolling out Deployment to tenant namespace' });
       const url = d.url || (isLive ? liveURL : '') || '';
       if (isLive) {
-        lines.push({ c: 'live',   m: '==> ' + (url ? 'Service is live at ' + url : 'Service is live') + ' 🎉' });
+        const urls = liveURLHostsForProject(proj);
+        let liveMsg = '==> Service is live';
+        if (urls.custom) {
+          liveMsg += ' at https://' + urls.custom;
+          if (urls.spinup) liveMsg += ' · ' + urls.spinup;
+        } else if (url || liveURL) {
+          liveMsg += ' at ' + (url || liveURL);
+        }
+        lines.push({ c: 'live', m: liveMsg + ' 🎉' });
       } else {
         lines.push({ c: 'system', m: '==> Build artefacts ready' + (url ? ' at ' + url : '') });
         lines.push({ c: 'system', m: '==> Not the current production target — available for instant rollback' });
@@ -3692,21 +3746,32 @@ function synthesizeBuildLog(proj, d, isLive, liveURL) {
   return lines;
 }
 
-function renderDeploymentRow(d, projectID) {
+function deploymentLinksHTML(d, proj, isCurrent) {
+  if (d.status === 'failed') {
+    return `<button class="btn-build-logs" data-deployment-id="${d.id}" data-commit="${d.commit_sha}" title="Download the raw Kaniko build log for this failed deployment">logs</button>`;
+  }
+  const links = [];
+  if (d.url) {
+    const host = d.url.replace(/^https?:\/\//, '');
+    links.push(`<a class="url-link" href="${escapeHTML(d.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="${escapeHTML(d.url)}">${escapeHTML(host)} ↗</a>`);
+  }
+  const custom = primaryCustomDomain(proj);
+  if (isCurrent && custom && d.status === 'ready') {
+    links.push(`<a class="url-link custom" href="https://${escapeHTML(custom)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Custom domain">${escapeHTML(custom)} ↗</a>`);
+  }
+  if (links.length === 0) return '<span></span>';
+  return `<span class="deployment-links">${links.join('<span class="url-sep">·</span>')}</span>`;
+}
+
+function renderDeploymentRow(d, proj, isCurrent) {
   const inFlight = (d.status === 'queued' || d.status === 'building' || d.status === 'deploying');
-  // The current-tag slot is empty by default; paintLiveDeploymentRow()
-  // adds .is-current to the row whose commit the production alias is
-  // pointing at, which both reveals the tag and lights up the left
-  // edge of the row — ArgoCD's revision-history style.
   return `
     <div class="deployment" data-id="${d.id}" data-commit="${d.commit_sha}" data-status="${d.status}" data-url="${d.url || ''}">
       <span class="badge ${d.status}">${d.status}</span>
       <span class="commit"><span class="sha">${d.commit_sha.slice(0,8)}</span> · ${d.ref.replace('refs/heads/','')}</span>
       <span class="current-tag" title="This commit is currently serving production traffic">current</span>
       <span class="ago" title="${d.created_at}">${timeAgo(d.created_at)}</span>
-      ${d.url ? `<a class="url-link" href="${d.url}" target="_blank" rel="noopener" onclick="event.stopPropagation()">open ↗</a>`
-        : d.status === 'failed' ? `<button class="btn-build-logs" data-deployment-id="${d.id}" data-commit="${d.commit_sha}" title="Download the raw Kaniko build log for this failed deployment">logs</button>`
-        : '<span></span>'}
+      ${deploymentLinksHTML(d, proj, isCurrent)}
       <button class="btn-redeploy"
               data-deployment-id="${d.id}"
               data-commit="${d.commit_sha}"
@@ -4276,6 +4341,15 @@ async function loadDomains(projectID) {
     $('domains-list').innerHTML =
       `<div class="empty" style="color:var(--err);">Failed: ${escapeHTML(e.message || String(e))}</div>`;
     return;
+  }
+  const proj = findProject(projectID);
+  if (proj) {
+    proj.verified_domains = (data.domains || []).filter(d => d.verified).map(d => d.hostname);
+    if (ROUTE.projectID === projectID) {
+      renderOverviewHeader(proj);
+      renderCrumbs();
+      if (ROUTE.view === 'overview') renderOverview();
+    }
   }
   paintDomains(projectID, data);
 }

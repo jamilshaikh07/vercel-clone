@@ -34,7 +34,8 @@ var landingHTML []byte
 // projectWithDeployments mirrors the JSON shape consumed by the dashboard JS.
 type projectWithDeployments struct {
 	projectRow
-	Deployments []deploymentRow `json:"deployments"`
+	Deployments      []deploymentRow `json:"deployments"`
+	VerifiedDomains  []string        `json:"verified_domains,omitempty"`
 }
 
 func (s *server) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -109,12 +110,19 @@ func (s *server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	domainsByProject, err := s.store.ListVerifiedDomainsForProjects(ctx, ids)
+	if err != nil {
+		s.log.Error("list verified domains for projects failed", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 
 	out := make([]projectWithDeployments, 0, len(projects))
 	for _, p := range projects {
 		out = append(out, projectWithDeployments{
-			projectRow:  p,
-			Deployments: depsByProject[p.ID],
+			projectRow:      p,
+			Deployments:     depsByProject[p.ID],
+			VerifiedDomains: domainsByProject[p.ID],
 		})
 	}
 

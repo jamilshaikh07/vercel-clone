@@ -182,6 +182,33 @@ func (s *store) ListVerifiedDomainsForProject(ctx context.Context, projectID str
 	return out, rows.Err()
 }
 
+// ListVerifiedDomainsForProjects returns verified hostnames keyed by project ID.
+func (s *store) ListVerifiedDomainsForProjects(ctx context.Context, projectIDs []string) (map[string][]string, error) {
+	out := make(map[string][]string, len(projectIDs))
+	if len(projectIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT project_id::text, hostname
+		  FROM project_domains
+		 WHERE project_id = ANY($1::uuid[])
+		   AND verified_at IS NOT NULL
+		 ORDER BY created_at
+	`, projectIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var pid, host string
+		if err := rows.Scan(&pid, &host); err != nil {
+			return nil, err
+		}
+		out[pid] = append(out[pid], host)
+	}
+	return out, rows.Err()
+}
+
 // isUniqueViolation pattern-matches the error string for SQLSTATE 23505.
 // pgx exposes a structured *pgconn.PgError but we keep this lightweight
 // and string-based to avoid importing a second pg dep purely for one
