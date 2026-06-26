@@ -1,0 +1,22 @@
+---
+description: Spinup marketing and UI must stay tiny — fast on 2G, credible to recruiters.
+globs:
+  - control-plane/static/**
+alwaysApply: false
+---
+
+# Spinup — lightweight by design
+
+This platform runs on a **two-node homelab**. Every marketing byte is served from
+an embedded Go binary through Cloudflare. There is no CDN asset pipeline, no React
+bundle, no font CDN.
+
+When touching `control-plane/static/*`:
+
+1. **One HTML file, inline CSS, minimal JS** — no build step, no dependencies.
+2. **Skip expensive CSS** — no `backdrop-filter`, heavy box-shadows, or scroll listeners.
+3. **Prefer native HTML** — `<details>`, `<a href="#id">`, form validation attributes.
+4. **Target < 10 KB** for the landing page (uncompressed HTML). Recruiters on mobile
+   in India should see content in under a second.
+5. **Message**: affordable deploys for students and builders who cannot pay Vercel-scale
+   bills — self-hosted, invite-only, real infrastructure.

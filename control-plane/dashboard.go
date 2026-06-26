@@ -65,7 +65,8 @@ func (s *server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleLandingPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
+	// ponytail: static marketing page — cache at the edge; bust on redeploy via pod rollout.
+	w.Header().Set("Cache-Control", "public, max-age=300, stale-while-revalidate=3600")
 	html := strings.ReplaceAll(string(landingHTML), "{{APP_BASE}}", s.hosts.appBase)
 	html = strings.ReplaceAll(html, "{{MARKETING_BASE}}", marketingBaseURL(s.hosts))
 	_, _ = w.Write([]byte(html))

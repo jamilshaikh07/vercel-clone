@@ -1,391 +1,132 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Spinup — push to GitHub, get a live URL</title>
-  <meta name="description" content="Self-hosted deploy platform. Connect a repo, push to main, get HTTPS URLs, Postgres, and live logs — built in India on bare-metal Kubernetes.">
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none' stroke='%23e11d48' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><path d='M7 14 L16 5 L25 14'/><path d='M9 19 L23 19'/><path d='M11 23 L21 23' opacity='0.7'/><path d='M13 27 L19 27' opacity='0.4'/></svg>">
-  <style>
-    :root {
-      --bg: #08090c;
-      --bg-elevated: #10131a;
-      --panel: #141820;
-      --border: #252b36;
-      --text: #eef0f4;
-      --muted: #8b93a3;
-      --accent: #e11d48;
-      --accent-soft: rgba(225, 29, 72, 0.12);
-      --accent-glow: rgba(225, 29, 72, 0.35);
-      --blue: #7aa2f7;
-      --radius: 12px;
-      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    html { scroll-behavior: smooth; }
-    body {
-      font: 16px/1.6 var(--font);
-      color: var(--text);
-      background: var(--bg);
-      background-image:
-        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(225, 29, 72, 0.15), transparent),
-        radial-gradient(ellipse 60% 40% at 100% 0%, rgba(122, 162, 247, 0.08), transparent);
-    }
-    a { color: inherit; text-decoration: none; }
-    .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
-
-    /* Header */
-    header {
-      position: sticky; top: 0; z-index: 50;
-      border-bottom: 1px solid transparent;
-      backdrop-filter: blur(12px);
-      background: rgba(8, 9, 12, 0.75);
-    }
-    header.scrolled { border-color: var(--border); }
-    .nav {
-      display: flex; align-items: center; justify-content: space-between;
-      height: 64px;
-    }
-    .logo {
-      display: flex; align-items: center; gap: 10px;
-      font-weight: 700; font-size: 18px; letter-spacing: -0.02em;
-    }
-    .logo-mark {
-      width: 28px; height: 28px;
-      stroke: var(--accent); fill: none; stroke-width: 2.5;
-      stroke-linecap: round; stroke-linejoin: round;
-    }
-    .nav-links { display: flex; align-items: center; gap: 12px; }
-    .btn {
-      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-      padding: 10px 18px; border-radius: 8px; font-weight: 600; font-size: 14px;
-      border: 1px solid transparent; cursor: pointer; transition: transform .12s, box-shadow .12s;
-    }
-    .btn:hover { transform: translateY(-1px); }
-    .btn-ghost { color: var(--muted); border-color: var(--border); background: transparent; }
-    .btn-ghost:hover { color: var(--text); border-color: #3a4250; }
-    .btn-primary {
-      background: var(--accent); color: #fff;
-      box-shadow: 0 0 24px var(--accent-glow);
-    }
-    .btn-primary:hover { box-shadow: 0 0 32px var(--accent-glow); }
-    .btn-primary:disabled { opacity: .55; cursor: not-allowed; transform: none; }
-
-    /* Hero */
-    .hero { padding: 72px 0 48px; text-align: center; }
-    .eyebrow {
-      display: inline-block; font-size: 11px; font-weight: 600;
-      letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted);
-      margin-bottom: 20px;
-    }
-    .hero h1 {
-      font-size: clamp(36px, 6vw, 56px); font-weight: 700;
-      line-height: 1.08; letter-spacing: -0.03em; max-width: 820px; margin: 0 auto 20px;
-    }
-    .hero h1 em { font-style: normal; color: var(--accent); }
-    .hero .lead {
-      font-size: 18px; color: var(--muted); max-width: 620px; margin: 0 auto 36px;
-    }
-    .hero-cta { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
-    .code-card {
-      margin-top: 56px; text-align: left;
-      background: var(--panel); border: 1px solid var(--border);
-      border-radius: var(--radius); overflow: hidden;
-      box-shadow: 0 24px 80px rgba(0,0,0,.45);
-    }
-    .code-head {
-      padding: 12px 16px; border-bottom: 1px solid var(--border);
-      font-size: 12px; color: var(--muted); font-family: ui-monospace, monospace;
-    }
-    .code-body {
-      padding: 20px; font-size: 13px; line-height: 1.7;
-      font-family: ui-monospace, "SF Mono", Menlo, monospace; color: #c4cad6;
-      overflow-x: auto;
-    }
-    .code-body .k { color: #7aa2f7; }
-    .code-body .s { color: #9ece6a; }
-    .code-body .c { color: #565f89; }
-
-    /* Sections */
-    section { padding: 64px 0; }
-    .section-label {
-      font-size: 11px; font-weight: 600; letter-spacing: 0.16em;
-      text-transform: uppercase; color: var(--accent); margin-bottom: 12px;
-    }
-    h2 { font-size: clamp(28px, 4vw, 36px); letter-spacing: -0.02em; margin-bottom: 12px; }
-    .section-sub { color: var(--muted); max-width: 560px; margin-bottom: 40px; }
-
-    .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
-    .step {
-      background: var(--bg-elevated); border: 1px solid var(--border);
-      border-radius: var(--radius); padding: 28px;
-    }
-    .step-num {
-      font-size: 12px; font-weight: 700; color: var(--accent);
-      margin-bottom: 12px;
-    }
-    .step h3 { font-size: 17px; margin-bottom: 8px; }
-    .step p { font-size: 14px; color: var(--muted); }
-
-    .audience { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
-    .audience-card {
-      padding: 20px; border-radius: var(--radius); border: 1px solid var(--border);
-      background: linear-gradient(180deg, var(--bg-elevated), transparent);
-    }
-    .audience-card h3 { font-size: 15px; margin-bottom: 6px; }
-    .audience-card p { font-size: 13px; color: var(--muted); }
-
-    .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-    .feature {
-      padding: 22px; border: 1px solid var(--border); border-radius: var(--radius);
-    }
-    .feature h3 { font-size: 15px; margin-bottom: 6px; }
-    .feature p { font-size: 13px; color: var(--muted); }
-
-    .proof { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-    .proof a {
-      display: block; padding: 20px; border-radius: var(--radius);
-      border: 1px solid var(--border); background: var(--bg-elevated);
-      transition: border-color .15s;
-    }
-    .proof a:hover { border-color: var(--accent); }
-    .proof .host { font-weight: 600; font-size: 15px; margin-bottom: 4px; }
-    .proof .desc { font-size: 13px; color: var(--muted); }
-
-    /* Waitlist */
-    #waitlist { scroll-margin-top: 80px; }
-    .waitlist-panel {
-      position: relative; overflow: hidden;
-      background: var(--panel); border: 1px solid var(--border);
-      border-radius: 16px; padding: 40px;
-    }
-    .waitlist-panel::before {
-      content: ""; position: absolute; inset: 0;
-      background: radial-gradient(ellipse at top, var(--accent-soft), transparent 60%);
-      pointer-events: none;
-    }
-    .waitlist-inner { position: relative; max-width: 640px; }
-    .waitlist-form {
-      display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px;
-    }
-    .input, .select {
-      flex: 1 1 200px; padding: 12px 14px; border-radius: 8px;
-      border: 1px solid var(--border); background: var(--bg);
-      color: var(--text); font: inherit; font-size: 14px;
-    }
-    .input:focus, .select:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
-    .form-msg { width: 100%; font-size: 14px; margin-top: 4px; }
-    .form-msg.ok { color: #4ade80; }
-    .form-msg.err { color: #f87171; }
-
-    footer {
-      padding: 48px 0; border-top: 1px solid var(--border);
-      color: var(--muted); font-size: 13px; text-align: center;
-    }
-
-    @media (max-width: 900px) {
-      .steps, .features, .proof { grid-template-columns: 1fr; }
-      .audience { grid-template-columns: repeat(2, 1fr); }
-    }
-    @media (max-width: 560px) {
-      .audience { grid-template-columns: 1fr; }
-      .nav-links .btn-ghost { display: none; }
-    }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Spinup — git push to a live URL</title>
+<meta name="description" content="Affordable git-push deploys with HTTPS and Postgres. Self-hosted on a two-node Kubernetes homelab in India — for students and builders who cannot afford big SaaS bills.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none' stroke='%23e11d48' stroke-width='3'><path d='M7 14L16 5l9 9M9 19h14M11 23h10' stroke-linecap='round'/></svg>">
+<style>
+:root{--bg:#090a0d;--line:#2a303a;--fg:#eceef2;--dim:#8d95a3;--acc:#e11d48}
+*{box-sizing:border-box;margin:0}
+body{font:15px/1.55 system-ui,sans-serif;color:var(--fg);background:var(--bg)}
+a{color:inherit;text-decoration:none}
+.wrap{max-width:720px;margin:0 auto;padding:0 20px}
+nav{display:flex;justify-content:space-between;align-items:center;padding:16px 0;border-bottom:1px solid var(--line)}
+.logo{font-weight:700}
+nav div{display:flex;gap:8px;flex-wrap:wrap}
+.btn{display:inline-block;padding:9px 16px;border-radius:6px;font-weight:600;font-size:14px;border:1px solid var(--line)}
+.btn-p{background:var(--acc);border-color:var(--acc);color:#fff}
+.hero{padding:48px 0 32px}
+.eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);margin-bottom:12px}
+h1{font-size:clamp(28px,5vw,42px);line-height:1.12;letter-spacing:-.02em;margin-bottom:12px}
+h1 span{color:var(--acc)}
+.lead{color:var(--dim);max-width:36em;margin-bottom:20px}
+.mission{font-size:14px;border-left:3px solid var(--acc);padding-left:12px;margin:20px 0;color:var(--fg)}
+.cta{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:28px}
+pre{background:#12151a;border:1px solid var(--line);border-radius:8px;padding:14px;overflow:auto;font:13px/1.5 ui-monospace,monospace;color:#b8c0cc}
+section{padding:32px 0;border-top:1px solid var(--line)}
+h2{font-size:20px;margin-bottom:8px}
+.sub{color:var(--dim);font-size:14px;margin-bottom:16px}
+ol{padding-left:1.2em;color:var(--dim)}
+ol li{margin:.35em 0}
+ol b{color:var(--fg)}
+ul.columns{columns:2;gap:24px;padding-left:1.1em;font-size:14px;color:var(--dim)}
+ul.columns b{color:var(--fg)}
+#waitlist{scroll-margin-top:12px}
+form{display:grid;gap:8px;margin-top:12px}
+input,select,button{font:inherit;padding:10px 12px;border-radius:6px;border:1px solid var(--line);background:#12151a;color:var(--fg)}
+button.btn-p{cursor:pointer;border:none}
+.msg{font-size:14px}
+.msg.ok{color:#4ade80}.msg.err{color:#f87171}
+footer{padding:28px 0 40px;color:var(--dim);font-size:13px;text-align:center}
+@media(max-width:560px){ul.columns{columns:1}}
+</style>
 </head>
 <body>
-  <header id="top">
-    <div class="wrap nav">
-      <a href="/" class="logo">
-        <svg class="logo-mark" viewBox="0 0 32 32" aria-hidden="true">
-          <path d="M7 14 L16 5 L25 14"/><path d="M9 19 L23 19"/>
-          <path d="M11 23 L21 23" opacity="0.7"/><path d="M13 27 L19 27" opacity="0.4"/>
-        </svg>
-        spinup
-      </a>
-      <div class="nav-links">
-        <a class="btn btn-ghost" href="#how">How it works</a>
-        <a class="btn btn-ghost" href="#waitlist">Waitlist</a>
-        <a class="btn btn-primary" href="{{APP_BASE}}/auth/login">Sign in</a>
-      </div>
-    </div>
-  </header>
-
-  <main>
-    <section class="hero wrap">
-      <div class="eyebrow">Self-hosted PaaS · git push to HTTPS</div>
-      <h1>Ship from GitHub.<br><em>Live in minutes.</em></h1>
-      <p class="lead">
-        Connect a repository, push to <code>main</code>, and get a production URL plus
-        per-commit previews — with Postgres, env vars, custom domains, and live build logs.
-        Running on bare-metal Kubernetes in India.
-      </p>
-      <div class="hero-cta">
-        <a class="btn btn-primary" href="#waitlist">Join the waitlist →</a>
-        <a class="btn btn-ghost" href="{{APP_BASE}}/auth/login">Sign in with GitHub</a>
-      </div>
-
-      <div class="code-card">
-        <div class="code-head">your-repo/Dockerfile</div>
-        <pre class="code-body"><span class="k">FROM</span> nginxinc/nginx-unprivileged:alpine
-<span class="k">COPY</span> . /usr/share/nginx/html
-<span class="k">EXPOSE</span> 8080
-<span class="c"># push to main → https://your-app.spinup.in</span>
-<span class="c"># preview   → https://your-app-abc1234.spinup.in</span></pre>
-      </div>
-    </section>
-
-    <section id="how" class="wrap">
-      <div class="section-label">How it works</div>
-      <h2>Three steps to production</h2>
-      <p class="section-sub">No YAML ceremony. Bring a Dockerfile (or a static site) and a GitHub repo.</p>
-      <div class="steps">
-        <div class="step">
-          <div class="step-num">01</div>
-          <h3>Add a Dockerfile</h3>
-          <p>Most frameworks fit in a few lines. We build rootless in-cluster with Kaniko.</p>
-        </div>
-        <div class="step">
-          <div class="step-num">02</div>
-          <h3>Connect GitHub</h3>
-          <p>Install the Spinup GitHub App on your repo. Every push queues a build automatically.</p>
-        </div>
-        <div class="step">
-          <div class="step-num">03</div>
-          <h3>Get your URL</h3>
-          <p>Production tracks <code>main</code>. Each commit gets its own preview hostname. Attach your own domain when you're ready.</p>
-        </div>
-      </div>
-    </section>
-
-    <section class="wrap">
-      <div class="section-label">Who it's for</div>
-      <h2>Built for builders</h2>
-      <p class="section-sub">Students, indie hackers, agencies, and small teams — anyone who wants Vercel-style deploys without the SaaS bill.</p>
-      <div class="audience">
-        <div class="audience-card"><h3>Students</h3><p>Final-year projects with a real URL and database for your report.</p></div>
-        <div class="audience-card"><h3>Portfolios</h3><p>Show employers a live demo, not a localhost screenshot.</p></div>
-        <div class="audience-card"><h3>Small business</h3><p>Landing pages and lightweight apps on your own domain.</p></div>
-        <div class="audience-card"><h3>Side projects</h3><p>Push on weekends; previews for every commit.</p></div>
-      </div>
-    </section>
-
-    <section class="wrap">
-      <div class="section-label">Platform</div>
-      <h2>What you get</h2>
-      <div class="features">
-        <div class="feature"><h3>HTTPS on every deploy</h3><p>Wildcard TLS via Cloudflare. Custom domains with DNS verification.</p></div>
-        <div class="feature"><h3>Postgres per project</h3><p>One-click database provisioning. Connection string injected on deploy.</p></div>
-        <div class="feature"><h3>Live logs</h3><p>Stream build output and runtime stdout from the dashboard.</p></div>
-        <div class="feature"><h3>Env vars</h3><p>Secrets managed in the UI, applied on the next build.</p></div>
-        <div class="feature"><h3>Telemetry</h3><p>CPU, memory, requests, and latency per app — refreshed every few seconds.</p></div>
-        <div class="feature"><h3>Rollback</h3><p>Redeploy any past commit or promote a preview to production.</p></div>
-      </div>
-    </section>
-
-    <section class="wrap">
-      <div class="section-label">Live on Spinup</div>
-      <h2>Apps in production</h2>
-      <p class="section-sub">Real workloads on the same cluster you'll deploy to.</p>
-      <div class="proof">
-        <a href="https://spinup.in" target="_blank" rel="noopener">
-          <div class="host">spinup.in</div>
-          <div class="desc">The platform dashboard &amp; control plane</div>
-        </a>
-        <a href="https://superpetroleum.in" target="_blank" rel="noopener">
-          <div class="host">superpetroleum.in</div>
-          <div class="desc">Business site — custom domain</div>
-        </a>
-        <a href="https://urbanequestrian.in" target="_blank" rel="noopener">
-          <div class="host">urbanequestrian.in</div>
-          <div class="desc">Business site — custom domain</div>
-        </a>
-      </div>
-    </section>
-
-    <section id="waitlist" class="wrap">
-      <div class="waitlist-panel">
-        <div class="waitlist-inner">
-          <div class="section-label">Early access</div>
-          <h2>Join the waitlist</h2>
-          <p class="section-sub" style="margin-bottom:0">
-            We're opening invites in batches while we scale the cluster safely.
-            Drop your email — we'll reach out when your GitHub account is approved.
-          </p>
-          <form class="waitlist-form" id="waitlist-form" novalidate>
-            <input class="input" type="email" name="email" required placeholder="you@college.edu.in" autocomplete="email">
-            <input class="input" type="text" name="name" placeholder="Name (optional)" maxlength="120">
-            <select class="select" name="use_case" required>
-              <option value="" disabled selected>What are you building?</option>
-              <option value="final-year-project">Final-year project</option>
-              <option value="portfolio">Portfolio</option>
-              <option value="small-business">Small business site</option>
-              <option value="hackathon">Hackathon</option>
-              <option value="side-project">Side project</option>
-              <option value="other">Other</option>
-            </select>
-            <input class="input" type="text" name="college" placeholder="College / city (optional)" maxlength="120">
-            <button class="btn btn-primary" type="submit" id="waitlist-btn">Join waitlist</button>
-            <p class="form-msg" id="waitlist-msg" hidden></p>
-          </form>
-        </div>
-      </div>
-    </section>
-  </main>
-
-  <footer class="wrap">
-  Already invited? <a href="{{APP_BASE}}/auth/login" style="color:var(--accent)">Sign in with GitHub</a>
-  · Dashboard at <a href="{{APP_BASE}}/" style="color:var(--muted)">{{APP_BASE}}</a>
-  </footer>
-
-  <script>
-    (function () {
-      var header = document.getElementById('top');
-      window.addEventListener('scroll', function () {
-        header.classList.toggle('scrolled', window.scrollY > 8);
-      });
-
-      if (location.hash === '#waitlist') {
-        requestAnimationFrame(function () {
-          document.getElementById('waitlist')?.scrollIntoView({ behavior: 'smooth' });
-        });
-      }
-
-      var form = document.getElementById('waitlist-form');
-      var msg = document.getElementById('waitlist-msg');
-      var btn = document.getElementById('waitlist-btn');
-
-      form.addEventListener('submit', async function (e) {
-        e.preventDefault();
-        msg.hidden = true;
-        btn.disabled = true;
-        var fd = new FormData(form);
-        var body = {
-          email: (fd.get('email') || '').trim(),
-          name: (fd.get('name') || '').trim(),
-          college: (fd.get('college') || '').trim(),
-          use_case: fd.get('use_case')
-        };
-        try {
-          var r = await fetch('/v1/waitlist', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-          });
-          if (!r.ok) throw new Error('request failed');
-          msg.textContent = "You're on the list — we'll email you when your invite is ready.";
-          msg.className = 'form-msg ok';
-          msg.hidden = false;
-          form.reset();
-        } catch (_) {
-          msg.textContent = 'Something went wrong — please try again in a moment.';
-          msg.className = 'form-msg err';
-          msg.hidden = false;
-        } finally {
-          btn.disabled = false;
-        }
-      });
-    })();
-  </script>
+<header class="wrap">
+<nav>
+  <a class="logo" href="/">spinup</a>
+  <div>
+    <a class="btn" href="#waitlist">Waitlist</a>
+    <a class="btn btn-p" href="{{APP_BASE}}/auth/login">Sign in</a>
+  </div>
+</nav>
+</header>
+<main class="wrap">
+<section class="hero">
+  <p class="eyebrow">Self-hosted PaaS · 2-node Kubernetes homelab</p>
+  <h1>Push to GitHub.<br><span>Get a live URL.</span></h1>
+  <p class="lead">Connect a repo, push to <code>main</code>, receive HTTPS URLs, Postgres, env vars, and build logs — without Vercel-scale bills.</p>
+  <p class="mission">Built so students and indie builders in India can ship real projects on infrastructure I run myself. Invite-only while the cluster scales.</p>
+  <div class="cta">
+    <a class="btn btn-p" href="#waitlist">Join waitlist</a>
+    <a class="btn" href="{{APP_BASE}}/auth/login">Sign in with GitHub</a>
+  </div>
+  <pre>FROM nginxinc/nginx-unprivileged:alpine
+COPY . /usr/share/nginx/html
+EXPOSE 8080
+# → https://your-app.spinup.in</pre>
+</section>
+<section id="how">
+  <h2>How it works</h2>
+  <p class="sub">Bring a Dockerfile and a GitHub repo. No platform YAML.</p>
+  <ol>
+    <li><b>Dockerfile in repo</b> — we build rootless in-cluster.</li>
+    <li><b>Install the GitHub App</b> — every push queues a deploy.</li>
+    <li><b>Live URL</b> — production on <code>main</code>, preview per commit, custom domain optional.</li>
+  </ol>
+</section>
+<section>
+  <h2>Included</h2>
+  <ul class="columns">
+    <li><b>HTTPS</b> on every deploy</li>
+    <li><b>Postgres</b> per project</li>
+    <li><b>Env vars</b> &amp; secrets</li>
+    <li><b>Live build logs</b></li>
+    <li><b>CPU / memory telemetry</b></li>
+    <li><b>Rollback</b> to any commit</li>
+  </ul>
+</section>
+<section id="waitlist">
+  <h2>Early access</h2>
+  <p class="sub">We approve in batches. You'll sign in with GitHub once invited.</p>
+  <form id="f">
+    <input type="email" name="email" required placeholder="Email" autocomplete="email">
+    <input type="text" name="name" placeholder="Name (optional)" maxlength="120">
+    <select name="use_case" required>
+      <option value="" disabled selected>What are you building?</option>
+      <option value="final-year-project">Final-year project</option>
+      <option value="portfolio">Portfolio</option>
+      <option value="small-business">Small business</option>
+      <option value="hackathon">Hackathon</option>
+      <option value="side-project">Side project</option>
+      <option value="other">Other</option>
+    </select>
+    <input type="text" name="college" placeholder="College / city (optional)" maxlength="120">
+    <button class="btn-p" type="submit">Join waitlist</button>
+    <p class="msg" id="m" hidden></p>
+  </form>
+</section>
+</main>
+<footer class="wrap">
+  <a href="{{APP_BASE}}/auth/login">Dashboard</a> · <a href="{{MARKETING_BASE}}/login#waitlist">Share link</a>
+</footer>
+<script>
+document.getElementById('f').onsubmit=async function(e){
+  e.preventDefault();
+  var m=document.getElementById('m'),b=e.submitter;b.disabled=true;m.hidden=true;
+  var d=new FormData(this);
+  try{
+    var r=await fetch('/v1/waitlist',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({email:d.get('email').trim(),name:d.get('name').trim(),
+        college:d.get('college').trim(),use_case:d.get('use_case')})});
+    if(!r.ok)throw 0;
+    m.textContent="You're on the list — we'll email when you're approved.";
+    m.className='msg ok';this.reset();
+  }catch(_){m.textContent='Something went wrong — try again.';m.className='msg err'}
+  m.hidden=false;b.disabled=false;
+};
+</script>
 </body>
 </html>
