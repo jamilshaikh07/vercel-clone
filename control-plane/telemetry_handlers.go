@@ -130,6 +130,34 @@ func (s *server) handleGlobalTelemetry(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+type telemetryRollup struct {
+	TotalReqs  float64
+	TotalPods  int
+}
+
+func (s *server) telemetryRollupForUser(ctx context.Context, userID string) (telemetryRollup, error) {
+	rows, err := s.store.ListProjectsWithTenant(ctx, userID)
+	if err != nil {
+		return telemetryRollup{}, err
+	}
+	snap := s.tcache.get(ctx, s.k8s)
+	var out telemetryRollup
+	for _, p := range rows {
+		ns := "paas-tenant-" + p.TenantLogin
+		for _, pod := range snap.Pods[ns] {
+			if strings.HasPrefix(pod.Name, p.Slug+"-") {
+				out.TotalPods++
+			}
+		}
+		for svcName, t := range snap.Services {
+			if strings.Contains(svcName, p.Slug) {
+				out.TotalReqs += t.Requests
+			}
+		}
+	}
+	return out, nil
+}
+
 type projectTelemetryResponse struct {
 	AsOf         string      `json:"as_of"`
 	Degraded     string      `json:"degraded,omitempty"`

@@ -42,6 +42,11 @@ const (
 	synthRequestTimeout = 6 * time.Second
 )
 
+type liveAppTarget struct {
+	ProjectID string
+	URL       string
+}
+
 func startSyntheticMonitor(ctx context.Context, srv *server, log *slog.Logger) {
 	if strings.EqualFold(os.Getenv("PAAS_DISABLE_SYNTHETIC"), "1") {
 		log.Info("synthetic monitor disabled via PAAS_DISABLE_SYNTHETIC=1")
@@ -92,25 +97,24 @@ func runSyntheticCycle(parent context.Context, srv *server, client *http.Client,
 	ctx, cancel := context.WithTimeout(parent, synthInterval-2*time.Second)
 	defer cancel()
 
-	urls, err := liveAppURLs(ctx, srv)
+	targets, err := liveAppTargets(ctx, srv)
 	if err != nil {
 		log.Warn("list live apps failed", "err", err)
 		return
 	}
-	for _, u := range urls {
-		hitApp(ctx, client, u, log)
+	for _, t := range targets {
+		hitApp(ctx, client, srv, t, log)
 	}
 }
 
-// hitApp fires synthMinHitsPerApp..synthMaxHitsPerApp GETs at one URL,
-// spaced ~200 ms apart. The spacing makes the resulting RPS look more
-// like organic browsing on the dashboard than a synchronized burst,
-// AND gives metrics-server a couple of scrape windows to register a
-// CPU bump on the pod.
-func hitApp(ctx context.Context, client *http.Client, target string, log *slog.Logger) {
+func hitApp(ctx context.Context, client *http.Client, srv *server, target liveAppTarget, log *slog.Logger) {
 	n := synthMinHitsPerApp + rand.Intn(synthMaxHitsPerApp-synthMinHitsPerApp+1)
+	var lastOK bool
+	var lastMs int
+	var lastStatus int
 	for i := 0; i < n; i++ {
-		req, err := http.NewRequestWithContext(ctx, "GET", target, nil)
+		start := time.Now()
+		req, err := http.NewRequestWithContext(ctx, "GET", target.URL, nil)
 		if err != nil {
 			return
 		}
@@ -121,10 +125,10 @@ func hitApp(ctx context.Context, client *http.Client, target string, log *slog.L
 		req.Header.Set("Accept", "text/html,application/xhtml+xml,*/*")
 		resp, err := client.Do(req)
 		if err != nil {
-			// Don't log every flake — only at debug. A real outage will
-			// show up as 5xx volume on the dashboard's traffic chart.
-			log.Debug("synthetic probe error", "url", target, "err", err)
-			return
+			log.Debug("synthetic probe error", "url", target.URL, "err", err)
+			lastOK = false
+			lastMs = int(time.Since(start).Milliseconds())
+			continue
 		}
 		// Read up to a few KiB to make Traefik record a duration_sum.
 		// Without ANY body read, some Traefik versions short-circuit
@@ -132,6 +136,9 @@ func hitApp(ctx context.Context, client *http.Client, target string, log *slog.L
 		// also gives the tenant pod a realistic request lifecycle.
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 8192))
 		resp.Body.Close()
+		lastMs = int(time.Since(start).Milliseconds())
+		lastStatus = resp.StatusCode
+		lastOK = resp.StatusCode >= 200 && resp.StatusCode < 400
 		// Inter-request gap. Skip the sleep on the last iteration so
 		// we don't waste the cycle's final 200ms.
 		if i < n-1 {
@@ -142,13 +149,12 @@ func hitApp(ctx context.Context, client *http.Client, target string, log *slog.L
 			}
 		}
 	}
+	if srv.uptime != nil && target.ProjectID != "" {
+		srv.uptime.record(target.ProjectID, lastOK, lastMs, lastStatus)
+	}
 }
 
-// liveAppURLs joins ListProjectsWithTenant (every project) with the
-// latest READY deployment URL per project. We use the existing helpers
-// instead of a dedicated query to keep the data path symmetric with
-// what the dashboard already reads.
-func liveAppURLs(ctx context.Context, srv *server) ([]string, error) {
+func liveAppTargets(ctx context.Context, srv *server) ([]liveAppTarget, error) {
 	projects, err := srv.store.ListProjectsWithTenant(ctx, "")
 	if err != nil {
 		return nil, err
@@ -164,11 +170,11 @@ func liveAppURLs(ctx context.Context, srv *server) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]string, 0, len(projects))
+	out := make([]liveAppTarget, 0, len(projects))
 	for _, p := range projects {
 		for _, d := range deps[p.ID] {
 			if d.Status == "ready" && d.URL != nil && *d.URL != "" {
-				out = append(out, *d.URL)
+				out = append(out, liveAppTarget{ProjectID: p.ID, URL: *d.URL})
 				break
 			}
 		}

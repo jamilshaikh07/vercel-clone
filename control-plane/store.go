@@ -192,6 +192,7 @@ func (s *store) EnqueueDeployment(
 	ctx context.Context,
 	installationID, repoID int64,
 	commitSHA, ref, deliveryID, triggeredBy string,
+	opts ...enqueueOptions,
 ) (*deploymentEnqueued, error) {
 	// Audit-log values: 'webhook' (push event), 'install' (auto-deploy
 	// fired after the GitHub App was installed on a repo), 'manual'
@@ -252,12 +253,26 @@ func (s *store) EnqueueDeployment(
 		}
 	}
 
+	var opt enqueueOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	var prNum *int
+	if opt.PRNumber > 0 {
+		prNum = &opt.PRNumber
+	}
+	var commitMsg *string
+	if opt.CommitMessage != "" {
+		commitMsg = &opt.CommitMessage
+	}
+
 	var deploymentID string
 	if err := s.pool.QueryRow(ctx, `
-		INSERT INTO deployments (project_id, commit_sha, ref, triggered_by, delivery_id)
-		VALUES ($1::uuid, $2, $3, $4, NULLIF($5, ''))
+		INSERT INTO deployments (project_id, commit_sha, ref, triggered_by, delivery_id,
+		                         commit_message, is_preview, pr_number)
+		VALUES ($1::uuid, $2, $3, $4, NULLIF($5, ''), $6, $7, $8)
 		RETURNING id::text
-	`, projectID, commitSHA, ref, triggeredBy, deliveryID).Scan(&deploymentID); err != nil {
+	`, projectID, commitSHA, ref, triggeredBy, deliveryID, commitMsg, opt.IsPreview, prNum).Scan(&deploymentID); err != nil {
 		return nil, fmt.Errorf("insert deployment: %w", err)
 	}
 	return &deploymentEnqueued{ProjectID: projectID, DeploymentID: deploymentID, Slug: slug}, nil
@@ -381,17 +396,37 @@ func (s *store) EnqueueRedeploy(ctx context.Context, sourceDeploymentID, userID 
 }
 
 type deploymentRow struct {
-	ID         string  `json:"id"`
-	ProjectID  string  `json:"project_id"`
-	Slug       string  `json:"project_slug"`
-	CommitSHA  string  `json:"commit_sha"`
-	Ref        string  `json:"ref"`
-	Status     string  `json:"status"`
-	URL        *string `json:"url,omitempty"`
-	Image      *string `json:"image,omitempty"`
-	CreatedAt  string  `json:"created_at"`
-	DeliveryID *string `json:"delivery_id,omitempty"`
+	ID             string  `json:"id"`
+	ProjectID      string  `json:"project_id"`
+	Slug           string  `json:"project_slug"`
+	CommitSHA      string  `json:"commit_sha"`
+	Ref            string  `json:"ref"`
+	Status         string  `json:"status"`
+	URL            *string `json:"url,omitempty"`
+	Image          *string `json:"image,omitempty"`
+	CreatedAt      string  `json:"created_at"`
+	DeliveryID     *string `json:"delivery_id,omitempty"`
+	TriggeredBy    string  `json:"triggered_by,omitempty"`
+	BuildStartedAt *string `json:"build_started_at,omitempty"`
+	BuildEndedAt   *string `json:"build_ended_at,omitempty"`
+	ReadyAt        *string `json:"ready_at,omitempty"`
+	Error          *string `json:"error,omitempty"`
+	CommitMessage  *string `json:"commit_message,omitempty"`
+	IsPreview      bool    `json:"is_preview,omitempty"`
+	PRNumber       *int    `json:"pr_number,omitempty"`
 }
+
+// deploymentSelectCols is the standard column list for dashboard-facing
+// deployment queries.
+const deploymentSelectCols = `
+	d.id::text, d.project_id::text, p.slug, d.commit_sha, d.ref, d.status,
+	d.url, d.image,
+	to_char(d.created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+	d.delivery_id, COALESCE(d.triggered_by, ''),
+	to_char(d.build_started_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+	to_char(d.build_ended_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+	to_char(d.ready_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+	d.error, d.commit_message, d.is_preview, d.pr_number`
 
 func (s *store) ListRecentDeployments(ctx context.Context, limit int) ([]deploymentRow, error) {
 	if limit <= 0 || limit > 200 {
@@ -542,14 +577,20 @@ func (s *store) ListDeploymentsForProjects(ctx context.Context, projectIDs []str
 			SELECT d.id::text AS id, d.project_id::text AS project_id,
 			       p.slug, d.commit_sha, d.ref, d.status, d.url, d.image,
 			       to_char(d.created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at,
-			       d.delivery_id,
+			       d.delivery_id, COALESCE(d.triggered_by, '') AS triggered_by,
+			       to_char(d.build_started_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS build_started_at,
+			       to_char(d.build_ended_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS build_ended_at,
+			       to_char(d.ready_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS ready_at,
+			       d.error, d.commit_message, d.is_preview, d.pr_number,
 			       row_number() OVER (PARTITION BY d.project_id ORDER BY d.created_at DESC) AS rn
 			  FROM deployments d
 			  JOIN projects p ON p.id = d.project_id
 			 WHERE d.project_id::text = ANY($1)
 		)
 		SELECT id, project_id, slug, commit_sha, ref, status, url, image,
-		       created_at, delivery_id
+		       created_at, delivery_id, triggered_by,
+		       build_started_at, build_ended_at, ready_at, error,
+		       commit_message, is_preview, pr_number
 		  FROM ranked
 		 WHERE rn <= $2
 		 ORDER BY project_id, created_at DESC
@@ -562,7 +603,9 @@ func (s *store) ListDeploymentsForProjects(ctx context.Context, projectIDs []str
 	for rows.Next() {
 		var d deploymentRow
 		if err := rows.Scan(&d.ID, &d.ProjectID, &d.Slug, &d.CommitSHA, &d.Ref,
-			&d.Status, &d.URL, &d.Image, &d.CreatedAt, &d.DeliveryID); err != nil {
+			&d.Status, &d.URL, &d.Image, &d.CreatedAt, &d.DeliveryID,
+			&d.TriggeredBy, &d.BuildStartedAt, &d.BuildEndedAt, &d.ReadyAt,
+			&d.Error, &d.CommitMessage, &d.IsPreview, &d.PRNumber); err != nil {
 			return nil, err
 		}
 		out[d.ProjectID] = append(out[d.ProjectID], d)

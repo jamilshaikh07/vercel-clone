@@ -606,6 +606,139 @@
     .summary .stat .value.err  { color: var(--err); }
     .summary .stat .value.warn { color: var(--warn, #d18b1f); }
 
+    /* === Enterprise home dashboard (Vercel-style 3-column) ============= */
+    .home-dashboard {
+      display: grid;
+      grid-template-columns: minmax(220px, 280px) minmax(0, 1fr) minmax(240px, 320px);
+      gap: 16px;
+      align-items: start;
+    }
+    @media (max-width: 1100px) {
+      .home-dashboard { grid-template-columns: 1fr 1fr; }
+      .home-col-activity { grid-column: 1 / -1; }
+    }
+    @media (max-width: 720px) {
+      .home-dashboard { grid-template-columns: 1fr; }
+    }
+    .home-col .panel { margin-bottom: 0; }
+    .home-col + .home-col .panel { margin-top: 0; }
+    .usage-meter {
+      margin: 10px 0 4px;
+      background: var(--panel-2); border-radius: 4px; height: 6px; overflow: hidden;
+    }
+    .usage-meter > span {
+      display: block; height: 100%; background: var(--accent); border-radius: 4px;
+      transition: width 0.3s ease;
+    }
+    .usage-row {
+      display: flex; justify-content: space-between; align-items: baseline;
+      font-size: 12px; padding: 6px 0; border-bottom: 1px solid var(--border);
+    }
+    .usage-row:last-child { border-bottom: none; }
+    .usage-row .uk { color: var(--text-dim); }
+    .usage-row .uv { font-weight: 600; font-variant-numeric: tabular-nums; }
+    .project-cards {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 12px; padding: 12px;
+    }
+    .project-card {
+      background: var(--panel-2); border: 1px solid var(--border);
+      border-radius: 10px; padding: 14px; cursor: pointer;
+      transition: border-color 0.12s ease, transform 0.12s ease, box-shadow 0.12s ease;
+      text-decoration: none; color: inherit; display: block;
+    }
+    .project-card:hover {
+      border-color: var(--accent); transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    }
+    .project-card .pc-head {
+      display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px;
+    }
+    .project-card .pc-preview {
+      width: 48px; height: 36px; border-radius: 6px; flex-shrink: 0;
+      background: linear-gradient(135deg, var(--panel-3) 0%, var(--accent) 120%);
+      border: 1px solid var(--border); opacity: 0.85;
+    }
+    .project-card .pc-title { font-weight: 600; font-size: 14px; line-height: 1.3; }
+    .project-card .pc-repo { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+    .project-card .pc-spark { height: 32px; margin: 8px 0; opacity: 0.9; }
+    .project-card .pc-foot {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 11px; color: var(--text-dim); margin-top: 8px;
+    }
+    .activity-feed { max-height: 520px; overflow-y: auto; }
+    .activity-item {
+      display: flex; gap: 10px; padding: 10px 14px;
+      border-bottom: 1px solid var(--border); font-size: 12px;
+      cursor: pointer; transition: background 0.08s;
+    }
+    .activity-item:hover { background: var(--panel-2); }
+    .activity-item .ai-icon {
+      width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; background: var(--panel-3); color: var(--text-dim);
+    }
+    .activity-item .ai-icon.deploy { background: rgba(34,197,94,0.15); color: var(--ok); }
+    .activity-item .ai-icon.fail { background: rgba(239,68,68,0.15); color: var(--err); }
+    .activity-item .ai-icon.hook { background: rgba(59,130,246,0.12); color: #60a5fa; }
+    .activity-item .ai-body { min-width: 0; flex: 1; }
+    .activity-item .ai-title { font-weight: 500; color: var(--text); }
+    .activity-item .ai-detail { color: var(--text-dim); font-size: 11px; margin-top: 2px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .activity-item .ai-when { font-size: 10px; color: var(--text-faint); flex-shrink: 0; }
+    .nav-section-title.muted { opacity: 0.7; }
+    .nav-badge {
+      margin-left: auto; font-size: 10px; padding: 1px 6px; border-radius: 999px;
+      background: var(--panel-3); color: var(--text-dim);
+    }
+    .nav-badge.soon { color: var(--text-faint); font-style: italic; }
+
+    /* === Overview command center ======================================== */
+    .command-center {
+      display: grid; grid-template-columns: 1fr 1fr 1.2fr;
+      gap: 12px; margin-bottom: 16px;
+    }
+    @media (max-width: 900px) { .command-center { grid-template-columns: 1fr; } }
+    .health-strip { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 14px; }
+    .health-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
+      background: var(--panel-2); border: 1px solid var(--border);
+    }
+    .health-pill.ok { border-color: rgba(34,197,94,0.4); color: var(--ok); }
+    .health-pill.warn { border-color: rgba(209,139,31,0.4); color: var(--warn, #d18b1f); }
+    .health-pill.err { border-color: rgba(239,68,68,0.4); color: var(--err); }
+    .health-pill .dot {
+      width: 6px; height: 6px; border-radius: 50%; background: currentColor;
+    }
+    .last-deploy-card { padding: 12px 14px; font-size: 12px; }
+    .last-deploy-card .ld-sha {
+      font-family: ui-monospace, monospace; font-weight: 600; color: var(--accent);
+    }
+    .last-deploy-card .ld-msg { color: var(--text-dim); margin-top: 6px; line-height: 1.4; }
+    .mini-charts-row {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 10px 12px;
+    }
+    .mini-chart-label {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--text-faint); margin-bottom: 4px;
+    }
+    .badge.preview {
+      background: rgba(99,102,241,0.15); color: #818cf8; border: 1px solid rgba(99,102,241,0.3);
+      font-size: 10px; padding: 1px 6px; border-radius: 4px; margin-left: 6px;
+    }
+    .placeholder-page { padding: 24px; max-width: 640px; }
+    .placeholder-page h2 { margin: 0 0 8px; font-size: 18px; }
+    .placeholder-page p { color: var(--text-dim); line-height: 1.5; font-size: 13px; }
+    .placeholder-cards {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 12px; margin-top: 20px;
+    }
+    .placeholder-card {
+      border: 1px dashed var(--border); border-radius: 8px; padding: 16px;
+      background: var(--panel-2); font-size: 12px; color: var(--text-dim);
+    }
+
     .panel {
       background: var(--panel); border: 1px solid var(--border);
       border-radius: 8px; overflow: hidden;
@@ -1989,6 +2122,16 @@
                  target="_blank" rel="noopener"
                  title="Connect a new GitHub repo" aria-label="Connect a new GitHub repo">+</a>
             </li>
+            <li><a class="nav-item" data-globalview="activity" href="#/activity"><span class="label">Activity</span></a></li>
+            <li><a class="nav-item" data-globalview="telemetry" href="#/telemetry"><span class="label">Telemetry</span></a></li>
+            <li><a class="nav-item" data-globalview="traffic" href="#/traffic"><span class="label">Traffic</span></a></li>
+          </ul>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title muted">Platform</div>
+          <ul class="nav-list">
+            <li><a class="nav-item" data-globalview="alerts" href="#/alerts"><span class="label">Alerts</span><span class="nav-badge soon">Soon</span></a></li>
+            <li><a class="nav-item" data-globalview="integrations" href="#/integrations"><span class="label">Integrations</span><span class="nav-badge soon">Soon</span></a></li>
           </ul>
         </div>
 
@@ -2111,6 +2254,48 @@
           </div>
         </div>
 
+        <!-- GLOBAL: Activity log -->
+        <div class="page" id="page-activity">
+          <div class="page-inner">
+            <div class="panel">
+              <div class="panel-head">
+                <h3>Activity</h3>
+                <span class="spacer"></span>
+                <span id="activity-asof" style="color:var(--text-faint);font-size:11px;">—</span>
+              </div>
+              <div class="activity-feed" id="activity-feed-body"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- GLOBAL: Alerts placeholder (Phase 3) -->
+        <div class="page" id="page-alerts">
+          <div class="page-inner placeholder-page">
+            <h2>Alerts</h2>
+            <p>Configure anomaly detection on error rate, build failures, and uptime drops. Coming soon — evaluate whether you want email, Slack, or webhook delivery.</p>
+            <div class="placeholder-cards">
+              <div class="placeholder-card"><strong>Build failed</strong><br>Notify when any production deploy fails</div>
+              <div class="placeholder-card"><strong>Error rate spike</strong><br>5xx share exceeds threshold for 5 min</div>
+              <div class="placeholder-card"><strong>Uptime drop</strong><br>Synthetic probe fails 3 cycles in a row</div>
+              <div class="placeholder-card"><strong>Domain expiry</strong><br>Custom domain verification lapses</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- GLOBAL: Integrations placeholder (Phase 3) -->
+        <div class="page" id="page-integrations">
+          <div class="page-inner placeholder-page">
+            <h2>Integrations</h2>
+            <p>Connect external services to your deployment workflow. These are preview cards — tell us which to build first.</p>
+            <div class="placeholder-cards">
+              <div class="placeholder-card"><strong>Slack</strong><br>Deploy notifications to a channel</div>
+              <div class="placeholder-card"><strong>Discord</strong><br>Webhook on build ready / failed</div>
+              <div class="placeholder-card"><strong>Sentry</strong><br>Auto-inject DSN as env var</div>
+              <div class="placeholder-card"><strong>Datadog</strong><br>Forward Traefik metrics</div>
+            </div>
+          </div>
+        </div>
+
         <!-- OVERVIEW: per-project landing page. A Render-style header
              strip (badge + service id + repo + URL) sits at the very
              top so the most-asked-for facts are above the fold. Below
@@ -2120,6 +2305,7 @@
         <div class="page" id="page-overview">
           <div class="page-inner">
             <div class="proj-header" id="overview-header"></div>
+            <div class="command-center" id="overview-command-center"></div>
             <div class="summary" id="overview-summary"></div>
             <!-- Events timeline. One row per deployment, newest first.
                  Each row is collapsible and expands to a synthesized
@@ -2334,12 +2520,15 @@ const crumbsEl      = $('crumbs');
 const meta          = $('meta');
 
 const pageEls = {
-  home:       $('page-home'),
-  overview:   $('page-overview'),
-  runtime:    $('page-runtime'),
-  monitoring: $('page-monitoring'),
-  settings:   $('page-settings'),
-  domains:    $('page-domains'),
+  home:         $('page-home'),
+  overview:     $('page-overview'),
+  runtime:      $('page-runtime'),
+  monitoring:   $('page-monitoring'),
+  settings:     $('page-settings'),
+  domains:      $('page-domains'),
+  activity:     $('page-activity'),
+  alerts:       $('page-alerts'),
+  integrations: $('page-integrations'),
 };
 // Logs-page DOM (shared with stream logic below).
 const logBody   = $('log-body');
@@ -2729,8 +2918,11 @@ function parseHash() {
     return route;
   }
 
-  // #/telemetry or #/traffic (cluster-wide)
-  if (raw === 'telemetry' || raw === 'traffic') return { scope: 'global', view: raw };
+  // #/activity | #/telemetry | #/traffic | #/alerts | #/integrations
+  if (raw === 'activity' || raw === 'telemetry' || raw === 'traffic' ||
+      raw === 'alerts' || raw === 'integrations') {
+    return { scope: 'global', view: raw };
+  }
 
   return { scope: 'home' };
 }
@@ -2969,8 +3161,12 @@ function renderCrumbs() {
     return;
   }
   if (ROUTE.scope === 'global') {
-    const label = ROUTE.view === 'telemetry' ? 'Telemetry' : 'Traffic';
-    crumbsEl.innerHTML = `Monitoring <span class="sep">/</span> <strong>${label}</strong>`;
+    const labels = {
+      activity: 'Activity', telemetry: 'Telemetry', traffic: 'Traffic',
+      alerts: 'Alerts', integrations: 'Integrations',
+    };
+    const label = labels[ROUTE.view] || ROUTE.view;
+    crumbsEl.innerHTML = `<strong>${escapeHTML(label)}</strong>`;
     return;
   }
   const proj = findProject(ROUTE.projectID);
@@ -3127,19 +3323,23 @@ function liveURLHostsForProject(proj) {
 // Show the page matching ROUTE; hide all others. Then call the page's
 // render function so its content reflects current DATA + route.
 function showPage(isNavigation) {
-  const pageKey =
+  let pageKey =
     ROUTE.scope === 'home' ? 'home' :
-    ROUTE.scope === 'global' ? 'monitoring' :
+    ROUTE.scope === 'global' ? (
+      (ROUTE.view === 'telemetry' || ROUTE.view === 'traffic') ? 'monitoring' : ROUTE.view
+    ) :
     ROUTE.view || 'overview';
 
   Object.entries(pageEls).forEach(([k, el]) => {
-    el.classList.toggle('active', k === pageKey);
+    if (el) el.classList.toggle('active', k === pageKey);
   });
 
   const monTabs = $('monitoring-tabs');
 
-  // Cluster-wide Telemetry / Traffic (main sidebar, no app selected).
   if (ROUTE.scope === 'global') {
+    if (ROUTE.view === 'activity') return renderActivityPage();
+    if (ROUTE.view === 'alerts') return;
+    if (ROUTE.view === 'integrations') return;
     if (monTabs) monTabs.style.display = 'none';
     paintMonitoringPanels(ROUTE.view);
     const selfManaged = ROUTE.view === 'telemetry' || ROUTE.view === 'traffic';
@@ -3265,8 +3465,6 @@ function renderHome() {
   const installEl = $('home-install');
   const summaryEl = $('home-summary');
 
-  // First-run state: no GitHub App installed yet. The hero install CTA
-  // is enough — skip the grid entirely.
   if (projects.length === 0) {
     installEl.style.display = '';
     summaryEl.innerHTML = '';
@@ -3274,106 +3472,305 @@ function renderHome() {
   }
   installEl.style.display = 'none';
 
-  const totalDeploys = projects.reduce((n, p) => n + (p.deployments || []).length, 0);
-  const live = projects.filter(p => {
-    const l = (p.deployments || [])[0];
-    return l && l.status === 'ready';
-  }).length;
-
   summaryEl.innerHTML = `
-    <div class="summary">
-      <div class="stat">
-        <div class="label">Apps</div>
-        <div class="value">${projects.length}</div>
-        <div class="sub">connected GitHub repos</div>
+    <div class="home-dashboard" id="home-dashboard">
+      <div class="home-col home-col-usage">
+        <div class="panel">
+          <div class="panel-head"><h3>Usage</h3><span class="spacer"></span><span style="font-size:11px;color:var(--text-faint);">last 30 days</span></div>
+          <div class="panel-body" style="padding:12px 14px;" id="home-usage-body">loading…</div>
+        </div>
+        <div class="panel" style="margin-top:14px;">
+          <div class="panel-head"><h3>Build health</h3></div>
+          <div class="panel-body" style="padding:12px 14px;" id="home-build-body">loading…</div>
+        </div>
       </div>
-      <div class="stat">
-        <div class="label">Total deployments</div>
-        <div class="value">${totalDeploys}</div>
+      <div class="home-col home-col-projects">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Projects</h3>
+            <span class="spacer"></span>
+            <input id="apps-search" class="apps-search" type="search" autocomplete="off"
+                   placeholder="Search…" value="${escapeHTML(homeListState.query)}"
+                   style="max-width:180px;padding:6px 10px;font-size:12px;">
+            <a class="prod-link" href="https://github.com/apps/spinup-app/installations/new"
+               target="_blank" rel="noopener">+ Connect ↗</a>
+          </div>
+          <div class="project-cards" id="home-project-cards"></div>
+        </div>
       </div>
-      <div class="stat">
-        <div class="label">Live</div>
-        <div class="value ok">${live}</div>
-        <div class="sub">apps with READY production</div>
-      </div>
-    </div>
-    <div class="panel">
-      <div class="panel-head">
-        <h3>Your apps</h3>
-        <span class="spacer"></span>
-        <a class="prod-link" href="https://github.com/apps/spinup-app/installations/new"
-           target="_blank" rel="noopener">+ Connect a repo ↗</a>
-      </div>
-      <div class="apps-toolbar">
-        <input id="apps-search" class="apps-search" type="search" autocomplete="off"
-               placeholder="Search apps by name, repo, branch, or URL…"
-               value="${escapeHTML(homeListState.query)}">
-        <span id="apps-count" class="apps-count"></span>
-      </div>
-      <div class="panel-body" style="padding: 0;">
-        <table class="apps-table">
-          <colgroup>
-            <col class="col-name"/>
-            <col class="col-status"/>
-            <col class="col-url"/>
-            <col class="col-branch"/>
-            <col class="col-updated"/>
-          </colgroup>
-          <thead>
-            <tr>
-              <th class="sortable" data-sort="name">Service${sortInd('name')}</th>
-              <th class="sortable" data-sort="status">Status${sortInd('status')}</th>
-              <th>URL</th>
-              <th class="sortable" data-sort="branch">Branch${sortInd('branch')}</th>
-              <th class="sortable" data-sort="updated">Updated${sortInd('updated')}</th>
-            </tr>
-          </thead>
-          <tbody id="apps-tbody"></tbody>
-        </table>
-      </div>
-    </div>
-    <!-- Recent activity rail: flat cross-app feed of the N most-recent
-         deployments. Fills the vertical real-estate that the apps
-         table leaves empty when the user has only a few services,
-         and gives a "what happened last?" view that matches the
-         per-app deployments list visually. -->
-    <div class="panel" style="margin-top: 16px;">
-      <div class="panel-head">
-        <h3>Recent activity</h3>
-        <span class="spacer"></span>
-        <span class="apps-count" id="recent-count"></span>
-      </div>
-      <div class="panel-body" style="padding: 0;">
-        <div class="recent-list" id="recent-list"></div>
+      <div class="home-col home-col-activity">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Recent activity</h3>
+            <span class="spacer"></span>
+            <a class="prod-link" href="#/activity">View all</a>
+          </div>
+          <div class="activity-feed" id="home-activity-feed"></div>
+        </div>
       </div>
     </div>`;
 
-  // Render the rows (and wire up interactions) from the current
-  // sort/filter state. Split out so the search input + sort headers can
-  // re-render just the tbody without rebuilding the whole panel.
-  renderHomeTableBody(projects);
-  renderRecentDeployments(projects);
+  renderHomeProjectCards(projects);
+  loadHomeEnterpriseData(projects);
 
-  $('apps-search').addEventListener('input', (ev) => {
-    homeListState.query = ev.target.value;
-    renderHomeTableBody(projects);
+  const search = $('apps-search');
+  if (search) {
+    search.addEventListener('input', (ev) => {
+      homeListState.query = ev.target.value;
+      renderHomeProjectCards(projects);
+    });
+  }
+}
+
+let homeSummaryCache = null;
+let homeActivityCache = null;
+let homeUptimeCache = null;
+
+async function loadHomeEnterpriseData(projects) {
+  try {
+    homeSummaryCache = await fetchJSON('/v1/home/summary');
+    renderHomeUsagePanel(homeSummaryCache);
+    renderHomeBuildPanel(homeSummaryCache);
+  } catch (_) {
+    $('home-usage-body').innerHTML = '<div class="empty">Usage unavailable</div>';
+    $('home-build-body').innerHTML = '<div class="empty">—</div>';
+  }
+  try {
+    homeActivityCache = await fetchJSON('/v1/activity');
+    renderActivityFeed($('home-activity-feed'), (homeActivityCache.items || []).slice(0, 12), true);
+  } catch (_) {
+    renderRecentDeployments(projects, $('home-activity-feed'));
+  }
+  try {
+    homeUptimeCache = await fetchJSON('/v1/uptime');
+    paintHomeCardUptime(homeUptimeCache.projects || []);
+  } catch (_) {}
+  loadHomeCardSparklines(projects);
+}
+
+function renderHomeUsagePanel(s) {
+  if (!s || !$('home-usage-body')) return;
+  const reqPct = Math.min(100, (s.total_requests || 0) / 100000 * 100);
+  $('home-usage-body').innerHTML = `
+    <div class="usage-row"><span class="uk">Apps connected</span><span class="uv">${s.apps}</span></div>
+    <div class="usage-row"><span class="uk">Live production</span><span class="uv ok">${s.live_apps}</span></div>
+    <div class="usage-row"><span class="uk">Total requests</span><span class="uv">${fmtCount(s.total_requests)}</span></div>
+    <div class="usage-meter" title="Relative traffic volume"><span style="width:${reqPct.toFixed(0)}%"></span></div>
+    <div class="usage-row"><span class="uk">Running pods</span><span class="uv">${s.total_pods || 0}</span></div>
+    <div class="usage-row"><span class="uk">Deployments</span><span class="uv">${s.total_deployments}</span></div>`;
+}
+
+function renderHomeBuildPanel(s) {
+  if (!s || !$('home-build-body')) return;
+  const rate = s.success_rate_pct != null ? s.success_rate_pct + '%' : '—';
+  const avg = s.avg_build_sec != null ? s.avg_build_sec + 's avg build' : 'building…';
+  $('home-build-body').innerHTML = `
+    <div class="usage-row"><span class="uk">Builds today</span><span class="uv">${s.builds_today}</span></div>
+    <div class="usage-row"><span class="uk">Failed (24h)</span><span class="uv ${s.failed_24h ? 'err' : ''}">${s.failed_24h}</span></div>
+    <div class="usage-row"><span class="uk">Success rate</span><span class="uv">${rate}</span></div>
+    <div class="usage-meter"><span style="width:${Math.min(100, s.success_rate_pct || 0)}%;background:var(--ok)"></span></div>
+    <div style="font-size:11px;color:var(--text-dim);margin-top:8px;">${escapeHTML(avg)}</div>`;
+}
+
+function renderHomeProjectCards(projects) {
+  const host = $('home-project-cards');
+  if (!host) return;
+  const q = homeListState.query.trim().toLowerCase();
+  const filtered = q ? projects.filter(p => {
+    const hay = `${projectLabel(p)} ${p.slug} ${p.full_name}`.toLowerCase();
+    return hay.includes(q);
+  }) : projects;
+
+  if (filtered.length === 0) {
+    host.innerHTML = `<div class="apps-empty" style="padding:20px;grid-column:1/-1;">No apps match.</div>`;
+    return;
+  }
+  host.innerHTML = filtered.map(p => {
+    const latest = (p.deployments || [])[0];
+    const status = latest ? latest.status : 'none';
+    const urls = liveURLHostsForProject(p);
+    const when = latest ? timeAgo(latest.created_at) : 'no deploys';
+    return `
+      <a class="project-card" href="#/p/${p.id}/overview" data-project-id="${p.id}">
+        <div class="pc-head">
+          <div class="pc-preview" aria-hidden="true"></div>
+          <div>
+            <div class="pc-title">${escapeHTML(projectLabel(p))}</div>
+            <div class="pc-repo">${escapeHTML(p.full_name)}</div>
+          </div>
+        </div>
+        <div class="pc-spark" id="home-spark-${p.id}"></div>
+        <div class="pc-foot">
+          <span class="badge ${status}">${status}</span>
+          <span data-uptime-pill="${p.id}">${when}</span>
+        </div>
+        ${urls.primary ? `<div style="font-size:10px;color:var(--text-faint);margin-top:6px;font-family:ui-monospace,monospace;">${escapeHTML(urls.primary.replace(/^https?:\/\//, ''))}</div>` : ''}
+      </a>`;
+  }).join('');
+}
+
+function paintHomeCardUptime(uptimeProjects) {
+  const map = {};
+  (uptimeProjects || []).forEach(u => { map[u.project_id] = u; });
+  document.querySelectorAll('[data-uptime-pill]').forEach(el => {
+    const pid = el.dataset.uptimePill;
+    const u = map[pid];
+    if (!u) return;
+    const pct = u.uptime_pct != null ? u.uptime_pct.toFixed(1) + '% uptime' : '';
+    el.textContent = u.last_ok ? (pct || 'healthy') : 'probe failing';
+    el.style.color = u.last_ok ? 'var(--ok)' : 'var(--err)';
   });
-  document.querySelectorAll('.apps-table th.sortable').forEach(th => {
-    th.addEventListener('click', () => {
-      const key = th.dataset.sort;
-      if (homeListState.sortKey === key) {
-        homeListState.sortDir = homeListState.sortDir === 'asc' ? 'desc' : 'asc';
-      } else {
-        homeListState.sortKey = key;
-        // Default to descending for "updated" (newest first feels
-        // right) and ascending for everything else (alphabetical).
-        homeListState.sortDir = key === 'updated' ? 'desc' : 'asc';
-      }
-      // Re-render the header so the indicator moves to the new column,
-      // and rebuild the body with the new ordering.
-      renderHome();
+}
+
+async function loadHomeCardSparklines(projects) {
+  for (const p of projects.slice(0, 12)) {
+    const el = $('home-spark-' + p.id);
+    if (!el) continue;
+    try {
+      const data = await fetchJSON('/v1/projects/' + p.id + '/metrics?range=1h');
+      const vals = (data.points || []).map(pt => pt.requests || pt.cpu_m || 0);
+      el.innerHTML = miniSparklineSVG(vals, 220, 32, 'var(--accent)');
+    } catch (_) {
+      el.innerHTML = miniSparklineSVG([], 220, 32, 'var(--accent)');
+    }
+  }
+}
+
+function miniSparklineSVG(values, w, h, color) {
+  if (!values || values.length < 2) {
+    return `<svg width="100%" height="${h}" viewBox="0 0 ${w} ${h}"><text x="${w/2}" y="${h/2}" text-anchor="middle" fill="var(--text-faint)" font-size="10">no data yet</text></svg>`;
+  }
+  const max = Math.max(1, ...values);
+  const pts = values.map((v, i) => {
+    const x = (i / (values.length - 1)) * w;
+    const y = h - 4 - (v / max) * (h - 8);
+    return x.toFixed(1) + ',' + y.toFixed(1);
+  }).join(' ');
+  return `<svg width="100%" height="${h}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><polyline fill="none" stroke="${color}" stroke-width="1.5" points="${pts}"/></svg>`;
+}
+
+function renderActivityFeed(host, items, compact) {
+  if (!host) return;
+  if (!items || items.length === 0) {
+    host.innerHTML = '<div class="empty" style="padding:16px;">No activity yet.</div>';
+    return;
+  }
+  host.innerHTML = items.map(it => {
+    const iconCls = it.kind === 'webhook' ? 'hook' : (it.status === 'failed' ? 'fail' : 'deploy');
+    const icon = it.kind === 'webhook' ? '⚡' : (it.status === 'failed' ? '✕' : (it.status === 'ready' ? '✓' : '•'));
+    const href = it.deployment_id && it.project_id
+      ? '#/p/' + it.project_id + '/runtime/logs?dep=' + it.deployment_id
+      : (it.project_id ? '#/p/' + it.project_id + '/overview' : '#/activity');
+    const preview = it.is_preview ? ' · preview' : '';
+    return `
+      <div class="activity-item" data-href="${escapeHTML(href)}" tabindex="0" role="link">
+        <div class="ai-icon ${iconCls}">${icon}</div>
+        <div class="ai-body">
+          <div class="ai-title">${escapeHTML(it.project_name || it.project_slug || 'Cluster')} — ${escapeHTML(it.title)}${preview}</div>
+          <div class="ai-detail">${escapeHTML(it.detail || it.commit_sha?.slice(0, 7) || '')}</div>
+        </div>
+        <div class="ai-when">${timeAgo(it.at)}</div>
+      </div>`;
+  }).join('');
+  host.querySelectorAll('.activity-item[data-href]').forEach(row => {
+    row.addEventListener('click', () => navigate(row.dataset.href));
+    row.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); navigate(row.dataset.href); }
     });
   });
+}
+
+function renderActivityPage() {
+  const host = $('activity-feed-body');
+  if (homeActivityCache && homeActivityCache.items) {
+    renderActivityFeed(host, homeActivityCache.items, false);
+    $('activity-asof').textContent = 'updated ' + new Date(homeActivityCache.as_of || Date.now()).toLocaleTimeString();
+    return;
+  }
+  host.innerHTML = '<div class="empty" style="padding:20px;">Loading…</div>';
+  fetchJSON('/v1/activity').then(data => {
+    homeActivityCache = data;
+    renderActivityFeed(host, data.items || [], false);
+    $('activity-asof').textContent = 'updated ' + new Date(data.as_of || Date.now()).toLocaleTimeString();
+  }).catch(e => {
+    host.innerHTML = `<div class="empty" style="color:var(--err);">${escapeHTML(e.message)}</div>`;
+  });
+}
+
+function buildDurationSec(dep) {
+  if (!dep || !dep.build_started_at) return null;
+  const end = dep.build_ended_at || dep.ready_at;
+  if (!end) return null;
+  return Math.max(0, Math.round((Date.parse(end) - Date.parse(dep.build_started_at)) / 1000));
+}
+
+function renderOverviewCommandCenter(proj) {
+  const host = $('overview-command-center');
+  if (!host) return;
+  const deps = proj.deployments || [];
+  const latest = deps[0];
+  const ready = deps.filter(d => d.status === 'ready').length;
+  const failed = deps.filter(d => d.status === 'failed').length;
+  const building = deps.filter(d => ['queued','building','deploying'].includes(d.status)).length;
+  const dur = latest ? buildDurationSec(latest) : null;
+  const msg = latest?.commit_message || (latest ? 'Deploy ' + latest.commit_sha.slice(0, 8) : '');
+
+  host.innerHTML = `
+    <div class="panel">
+      <div class="panel-head"><h3>Health</h3></div>
+      <div class="health-strip" id="overview-health-strip">
+        <span class="health-pill ok"><span class="dot"></span>${ready} ready</span>
+        ${building ? `<span class="health-pill warn"><span class="dot"></span>${building} in flight</span>` : ''}
+        ${failed ? `<span class="health-pill err"><span class="dot"></span>${failed} failed</span>` : ''}
+        <span class="health-pill" id="overview-uptime-pill"><span class="dot"></span>uptime …</span>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h3>Latest deploy</h3></div>
+      <div class="last-deploy-card">
+        ${latest ? `
+          <span class="badge ${latest.status}">${latest.status}</span>
+          ${latest.is_preview ? '<span class="badge preview">Preview</span>' : ''}
+          <span class="ld-sha">${escapeHTML(latest.commit_sha.slice(0, 8))}</span>
+          · ${escapeHTML(latest.ref.replace('refs/heads/', '').replace('refs/pull/', 'PR '))}
+          ${dur != null ? `<span style="color:var(--text-dim);"> · ${dur}s build</span>` : ''}
+          <div class="ld-msg">${escapeHTML((msg || '').split('\n')[0].slice(0, 120))}</div>
+        ` : '<div class="empty">No deployments yet</div>'}
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h3>Live signals · 1h</h3></div>
+      <div class="mini-charts-row">
+        <div><div class="mini-chart-label">Requests</div><div id="ov-spark-req"></div></div>
+        <div><div class="mini-chart-label">CPU</div><div id="ov-spark-cpu"></div></div>
+      </div>
+    </div>`;
+
+  loadOverviewSparklines(proj.id);
+  loadOverviewUptimePill(proj.id);
+}
+
+async function loadOverviewSparklines(projectID) {
+  try {
+    const data = await fetchJSON('/v1/projects/' + projectID + '/metrics?range=1h');
+    const pts = data.points || [];
+    $('ov-spark-req').innerHTML = miniSparklineSVG(pts.map(p => p.requests || 0), 160, 48, 'var(--accent)');
+    $('ov-spark-cpu').innerHTML = miniSparklineSVG(pts.map(p => p.cpu_m || 0), 160, 48, '#22c55e');
+  } catch (_) {}
+}
+
+async function loadOverviewUptimePill(projectID) {
+  const pill = $('overview-uptime-pill');
+  if (!pill) return;
+  try {
+    const data = await fetchJSON('/v1/uptime');
+    const u = (data.projects || []).find(p => p.project_id === projectID);
+    if (!u) { pill.textContent = 'uptime n/a'; return; }
+    pill.className = 'health-pill ' + (u.last_ok ? 'ok' : 'err');
+    pill.innerHTML = `<span class="dot"></span>${u.uptime_pct.toFixed(1)}% uptime · ${u.avg_latency_ms}ms`;
+  } catch (_) {
+    pill.textContent = 'uptime n/a';
+  }
 }
 
 // Module-scope state for the home apps list. Survives re-renders so the
@@ -3530,8 +3927,8 @@ function homeRowKey(ev) {
 // that deployment's logs page. Useful both as a "what just happened"
 // glance and as a way to fill the visual real-estate beneath a short
 // apps table.
-function renderRecentDeployments(projects) {
-  const host  = $('recent-list');
+function renderRecentDeployments(projects, hostEl) {
+  const host  = hostEl || $('recent-list');
   const count = $('recent-count');
   if (!host) return;
 
@@ -3544,7 +3941,7 @@ function renderRecentDeployments(projects) {
   flat.sort((a, b) => Date.parse(b.dep.created_at || 0) - Date.parse(a.dep.created_at || 0));
   const top = flat.slice(0, 10);
 
-  count.textContent = `${top.length} most recent`;
+  if (count) count.textContent = `${top.length} most recent`;
 
   if (top.length === 0) {
     host.innerHTML = `<div class="apps-empty">No deployments yet — push to a connected repo or click <strong>Deploy now</strong> on an app.</div>`;
@@ -3562,8 +3959,8 @@ function renderRecentDeployments(projects) {
            aria-label="Open deployment ${sha} of ${escapeHTML(projectLabel(proj))}">
         <span class="badge ${status}" title="${status}">${status === 'ready' ? '✓' : status === 'failed' ? '✕' : '•'}</span>
         <span class="recent-app" title="${escapeHTML(proj.full_name)}">${escapeHTML(projectLabel(proj))}</span>
-        <span class="recent-commit"><code>${sha || '—'}</code>${escapeHTML(dep.message ? dep.message.split('\n')[0].slice(0, 80) : '')}</span>
-        <span class="recent-branch">${escapeHTML(branch)}</span>
+        <span class="recent-commit"><code>${sha || '—'}</code>${escapeHTML(dep.commit_message ? dep.commit_message.split('\n')[0].slice(0, 80) : '')}</span>
+        <span class="recent-branch">${escapeHTML(branch)}${dep.is_preview ? ' · preview' : ''}</span>
         <span class="recent-when" title="${escapeHTML(dep.created_at || '')}">${when}</span>
       </div>`;
   }).join('');
@@ -3599,6 +3996,7 @@ function renderOverview() {
   // link, and live URL. Sits above the stat tiles so the most-asked-for
   // facts are above the fold.
   renderOverviewHeader(proj);
+  renderOverviewCommandCenter(proj);
 
   // Events timeline: one expandable row per deployment showing
   // synthesized lifecycle logs (==> Cloning / Building / Service
@@ -4115,7 +4513,8 @@ function renderDeploymentRow(d, proj, isCurrent) {
   return `
     <div class="deployment" data-id="${d.id}" data-commit="${d.commit_sha}" data-status="${d.status}" data-url="${d.url || ''}">
       <span class="badge ${d.status}">${d.status}</span>
-      <span class="commit"><span class="sha">${d.commit_sha.slice(0,8)}</span> · ${d.ref.replace('refs/heads/','')}</span>
+      ${d.is_preview ? '<span class="badge preview">preview</span>' : ''}
+      <span class="commit"><span class="sha">${d.commit_sha.slice(0,8)}</span> · ${escapeHTML(d.ref.replace('refs/heads/','').replace('refs/pull/','PR '))}</span>
       <span class="current-tag" title="This commit is currently serving production traffic">current</span>
       <span class="ago" title="${d.created_at}">${timeAgo(d.created_at)}</span>
       ${deploymentLinksHTML(d, proj, isCurrent)}

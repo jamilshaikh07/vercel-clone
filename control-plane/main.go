@@ -65,6 +65,8 @@ type server struct {
 	// RPS, and real latency percentiles. Powers the BI-style charts on
 	// the per-app Telemetry/Traffic pages.
 	pseries *projectSeries
+	// uptime records synthetic probe results for the dashboard uptime strip.
+	uptime *uptimeTracker
 }
 
 func main() {
@@ -152,6 +154,7 @@ func main() {
 		maxProjects:   loadMaxProjects(),
 		series:        newSeriesStore(),
 		pseries:       newProjectSeries(),
+		uptime:        newUptimeTracker(),
 	}
 	log.Info("host routing ready",
 		"app_base", s.hosts.appBase,
@@ -243,6 +246,9 @@ func main() {
 		"POST /v1/projects/{id}/domains":                      s.handleAddProjectDomain,
 		"POST /v1/projects/{id}/domains/{hostname}/verify":    s.handleVerifyProjectDomain,
 		"DELETE /v1/projects/{id}/domains/{hostname}":         s.handleDeleteProjectDomain,
+		"GET /v1/activity":                                    s.handleActivity,
+		"GET /v1/home/summary":                                s.handleHomeSummary,
+		"GET /v1/uptime":                                      s.handleUptime,
 	}
 	for pat, h := range apiHandlers {
 		mux.Handle(pat, s.requireUser(h, "json"))
@@ -425,7 +431,9 @@ func (s *server) dispatch(ctx context.Context, event string, body []byte, env en
 			return nil
 		}
 		res, err := s.store.EnqueueDeployment(ctx,
-			env.Installation.ID, env.Repository.ID, env.After, env.Ref, deliveryID, "webhook")
+			env.Installation.ID, env.Repository.ID, env.After, env.Ref, deliveryID, "webhook",
+			enqueueOptions{CommitMessage: pushCommitMessage(body)},
+		)
 		if err != nil {
 			return err
 		}
@@ -456,6 +464,9 @@ func (s *server) dispatch(ctx context.Context, event string, body []byte, env en
 			"sha", env.After,
 		)
 		return nil
+
+	case "pull_request":
+		return s.handlePullRequest(ctx, body, env, deliveryID)
 	}
 	return nil
 }
