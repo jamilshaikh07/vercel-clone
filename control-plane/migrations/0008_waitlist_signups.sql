@@ -9,7 +9,6 @@ CREATE TABLE IF NOT EXISTS waitlist_signups (
   college    TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT waitlist_email_unique UNIQUE (lower(email)),
   CONSTRAINT waitlist_use_case_check CHECK (
     use_case IN (
       'final-year-project',
@@ -21,6 +20,9 @@ CREATE TABLE IF NOT EXISTS waitlist_signups (
     )
   )
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS waitlist_signups_email_lower_idx
+  ON waitlist_signups (lower(email));
 
 CREATE INDEX IF NOT EXISTS waitlist_signups_created_idx
   ON waitlist_signups (created_at DESC);
