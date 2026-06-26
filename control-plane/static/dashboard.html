@@ -1576,7 +1576,45 @@
       display: flex; flex-direction: column;
       background: var(--bg-2);
     }
-    #page-logs { padding: 0; }
+    #page-runtime { padding: 0; }
+    .runtime-shell {
+      flex: 1; min-height: 0; display: flex; flex-direction: column;
+      background: var(--bg-2);
+    }
+    .section-tabs {
+      display: flex; gap: 4px; flex-shrink: 0;
+      padding: 10px 16px 0;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+    }
+    .section-tab {
+      padding: 8px 14px; font-size: 13px; font-weight: 500;
+      color: var(--text-dim); text-decoration: none;
+      border-radius: 8px 8px 0 0; margin-bottom: -1px;
+      border: 1px solid transparent; border-bottom: none;
+    }
+    .section-tab:hover { color: var(--text); }
+    .section-tab.active {
+      color: var(--text); background: var(--bg-2);
+      border-color: var(--border); border-bottom-color: var(--bg-2);
+    }
+    .section-panel { display: none; flex: 1; min-height: 0; }
+    .section-panel.active { display: flex; flex-direction: column; }
+    .section-panel.page-inner-panel { display: none; padding: 16px; overflow: auto; }
+    .section-panel.page-inner-panel.active { display: block; }
+    .settings-grid { display: flex; flex-direction: column; gap: 14px; }
+    .settings-row {
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      padding: 12px 0; border-bottom: 1px solid var(--border-2);
+    }
+    .settings-row:last-child { border-bottom: none; }
+    .settings-k { width: 140px; flex-shrink: 0; font-size: 12px; color: var(--text-dim); }
+    .settings-v { flex: 1; min-width: 0; font-size: 13px; }
+    .settings-v input[type="text"] {
+      width: min(320px, 100%); padding: 8px 10px; font-size: 13px;
+      background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; color: var(--text);
+    }
+    .settings-v input[type="text"]:focus { outline: none; border-color: var(--accent); }
     .log-head {
       display: flex; align-items: center; gap: 10px;
       padding: 8px 16px;
@@ -1662,6 +1700,9 @@
       background: transparent; border: 1px solid transparent;
       color: var(--text); font: inherit; font-size: 22px; font-weight: 600;
       padding: 2px 8px; border-radius: 6px; min-width: 140px; max-width: 100%;
+    }
+    .proj-title {
+      color: var(--text); font-size: 22px; font-weight: 600;
     }
     .proj-rename:hover { border-color: var(--border); }
     .proj-rename:focus { border-color: var(--accent); outline: none; background: var(--panel-2); }
@@ -1992,13 +2033,10 @@
       <div class="sub-sidebar-scroll">
         <ul class="nav-list">
           <li><a class="nav-item" data-subview="overview" href="#"><span class="label">Overview</span></a></li>
-          <li><a class="nav-item" data-subview="logs"     href="#"><span class="label">Logs</span></a></li>
-          <li><a class="nav-item" data-subview="database" href="#"><span class="label">Database</span></a></li>
-          <li><a class="nav-item" data-subview="env"      href="#"><span class="label">Env vars</span></a></li>
-          <li><a class="nav-item" data-subview="domains"  href="#"><span class="label">Domains</span></a></li>
-          <li><a class="nav-item" data-subview="telemetry" href="#"><span class="label">Telemetry</span></a></li>
-          <li><a class="nav-item" data-subview="traffic"   href="#"><span class="label">Traffic</span></a></li>
-          <li><a class="nav-item" data-subview="insights"  href="#"><span class="label">Insights</span></a></li>
+          <li><a class="nav-item" data-subview="runtime" href="#"><span class="label">Runtime</span></a></li>
+          <li><a class="nav-item" data-subview="domains" href="#"><span class="label">Domains</span></a></li>
+          <li><a class="nav-item" data-subview="monitoring" href="#"><span class="label">Monitoring</span></a></li>
+          <li><a class="nav-item" data-subview="settings" href="#"><span class="label">Settings</span></a></li>
         </ul>
       </div>
     </aside>
@@ -2108,126 +2146,109 @@
               </div>
               <div class="panel-body" id="overview-deployments"></div>
             </div>
-            <div class="panel danger" id="overview-danger" style="margin-top:16px;">
+          </div>
+        </div>
+
+        <!-- RUNTIME: Logs · Env · Database -->
+        <div class="page" id="page-runtime">
+          <div class="runtime-shell">
+            <nav class="section-tabs" id="runtime-tabs" aria-label="Runtime sections">
+              <a class="section-tab" data-tab="logs" href="#">Logs</a>
+              <a class="section-tab" data-tab="env" href="#">Env vars</a>
+              <a class="section-tab" data-tab="database" href="#">Database</a>
+            </nav>
+            <div class="section-panel logs-panel active" id="runtime-panel-logs">
+              <div class="logs-pane">
+                <div class="log-head">
+                  <span class="commit" id="log-commit">—</span>
+                  <a id="log-back-to-live" href="#" style="display:none" title="Stop tailing this deployment, jump back to the production pod">← latest</a>
+                  <span class="spacer"></span>
+                  <span class="title" id="log-title" style="display:none">Live</span>
+                  <a id="log-url" target="_blank" rel="noopener" style="display:none">open ↗</a>
+                </div>
+                <div class="log-body" id="log-body">
+                  <div class="log-placeholder">Loading…</div>
+                </div>
+              </div>
+            </div>
+            <div class="section-panel page-inner-panel" id="runtime-panel-env">
+              <div class="panel">
+                <div class="panel-head">
+                  <h3>Environment variables</h3>
+                  <span class="spacer"></span>
+                  <span style="color:var(--text-dim);font-size:11px">applied on next deploy</span>
+                </div>
+                <div class="env-head">
+                  <span class="spacer"></span>
+                  <button class="btn-add" id="ws-env-add">+ Add variable</button>
+                </div>
+                <div class="env-rows" id="ws-env-rows"></div>
+                <div class="env-toast" id="ws-env-toast"></div>
+              </div>
+            </div>
+            <div class="section-panel page-inner-panel" id="runtime-panel-database">
+              <div class="panel">
+                <div class="panel-head">
+                  <h3>Postgres</h3>
+                  <span class="spacer"></span>
+                  <span style="color:var(--text-dim);font-size:11px">per-project database</span>
+                </div>
+                <div id="ws-storage">loading…</div>
+              </div>
+              <div class="panel sql-panel" id="sql-panel" style="display:none;margin-top:18px;">
+                <div class="panel-head">
+                  <h3>SQL viewer</h3>
+                  <span class="spacer"></span>
+                  <span style="color:var(--text-dim);font-size:11px">⌘+Enter to run</span>
+                </div>
+                <div class="sql-editor">
+                  <textarea id="ws-sql" spellcheck="false" placeholder="-- Try:  SELECT now();"></textarea>
+                  <button class="run" id="ws-run">Run ⌘↵</button>
+                </div>
+                <div class="sql-result" id="ws-result"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- MONITORING: Telemetry · Traffic · Insights -->
+        <div class="page" id="page-monitoring">
+          <div class="page-inner">
+            <nav class="section-tabs" id="monitoring-tabs" aria-label="Monitoring sections">
+              <a class="section-tab" data-tab="telemetry" href="#">Telemetry</a>
+              <a class="section-tab" data-tab="traffic" href="#">Traffic</a>
+              <a class="section-tab" data-tab="insights" href="#">Insights</a>
+            </nav>
+            <div class="section-panel page-inner-panel active" id="monitoring-panel-telemetry">
+              <div id="telemetry-content"></div>
+            </div>
+            <div class="section-panel page-inner-panel" id="monitoring-panel-traffic">
+              <div id="traffic-content"></div>
+            </div>
+            <div class="section-panel page-inner-panel" id="monitoring-panel-insights">
+              <div id="insights-content"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SETTINGS: app identity + delete -->
+        <div class="page" id="page-settings">
+          <div class="page-inner">
+            <div class="panel">
+              <div class="panel-head"><h3>General</h3></div>
+              <div class="panel-body settings-grid" id="settings-general"></div>
+            </div>
+            <div class="panel danger" style="margin-top:14px;">
               <div class="panel-head"><h3>Danger zone</h3></div>
               <div class="danger-body">
-                <p>Permanently delete this app from Spinup — all deployments, domains, env vars, and live URLs are removed. Your GitHub repo is kept; remove it from the Spinup GitHub App separately to stop future pushes.</p>
-                <button type="button" class="btn-danger" id="overview-delete-btn">Delete app…</button>
+                <p>Permanently delete this app from Spinup. Deployments, domains, and env vars are removed. Your GitHub repo stays connected until you revoke the Spinup App.</p>
+                <button type="button" class="btn-danger" id="settings-delete-btn">Delete app…</button>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- LOGS: a single, focused viewer. By default it tails the
-             RUNNING pod's stdout/stderr (live runtime logs) for the
-             currently-live deployment. When the user deep-links to a
-             specific deployment (via #d=<uuid>, the redeploy flow, or
-             the Overview deployments list) the page transparently
-             switches to that deployment's build logs and shows a
-             "← Back to live logs" link to return. Build logs are
-             only retained while the build pod exists (~1h post
-             completion). -->
-        <div class="page" id="page-logs">
-          <div class="logs-pane">
-            <div class="log-head">
-              <!-- Logs are runtime-only now — we tail the running pod's
-                   stdout/stderr via /v1/deployments/{id}/runtime-logs.
-                   Build output (Kaniko) is no longer surfaced here; on a
-                   failed deployment the row on Overview exposes a 'logs'
-                   button that downloads the raw build log as a text file
-                   while the build pod still exists. -->
-              <span class="commit" id="log-commit">—</span>
-              <a id="log-back-to-live" href="#" style="display:none" title="Stop tailing this deployment, jump back to the production pod">← latest</a>
-              <span class="spacer"></span>
-              <!-- log-title is kept (hidden) because streamLogsFor() still
-                   writes to it; no visible source-of-truth lives in the
-                   header now that the toggle is gone. -->
-              <span class="title" id="log-title" style="display:none">Live</span>
-              <a id="log-url" target="_blank" rel="noopener" style="display:none">open ↗</a>
-            </div>
-            <div class="log-body" id="log-body">
-              <div class="log-placeholder">Loading…</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- DATABASE: provision details + inline SQL viewer when a
-             database exists. SQL panel is hidden until the DB is
-             provisioned (renderStorage toggles 'sql-panel.shown'). -->
-        <div class="page" id="page-database">
-          <div class="page-inner">
-            <div class="panel">
-              <div class="panel-head">
-                <h3>Postgres</h3>
-                <span class="spacer"></span>
-                <span style="color:var(--text-dim);font-size:11px">per-project database</span>
-              </div>
-              <div id="ws-storage">loading…</div>
-            </div>
-            <div class="panel sql-panel" id="sql-panel" style="display:none;margin-top:18px;">
-              <div class="panel-head">
-                <h3>SQL viewer</h3>
-                <span class="spacer"></span>
-                <span style="color:var(--text-dim);font-size:11px">⌘+Enter to run</span>
-              </div>
-              <div class="sql-editor">
-                <textarea id="ws-sql" spellcheck="false" placeholder="-- Try:  SELECT now();"></textarea>
-                <button class="run" id="ws-run">Run ⌘↵</button>
-              </div>
-              <div class="sql-result" id="ws-result"></div>
-            </div>
-          </div>
-        </div>
-
-        <!-- ENV VARS: per-project plaintext key/value pairs. Applied on next deploy. -->
-        <div class="page" id="page-env">
-          <div class="page-inner">
-            <div class="panel">
-              <div class="panel-head">
-                <h3>Environment variables</h3>
-                <span class="spacer"></span>
-                <span style="color:var(--text-dim);font-size:11px">applied on next deploy</span>
-              </div>
-              <div class="env-head">
-                <span class="spacer"></span>
-                <button class="btn-add" id="ws-env-add">+ Add variable</button>
-              </div>
-              <div class="env-rows" id="ws-env-rows"></div>
-              <div class="env-toast" id="ws-env-toast"></div>
-            </div>
-          </div>
-        </div>
-
-        <!-- TELEMETRY: live per-app CPU/memory (metrics-server) + request
-             counts and average latency (Traefik /metrics). Polled every 5s
-             while the page is visible. -->
-        <div class="page" id="page-telemetry">
-          <div class="page-inner">
-            <div id="telemetry-content"></div>
-          </div>
-        </div>
-
-        <!-- TRAFFIC: traffic-per-app view sourced from the same /v1/telemetry
-             snapshot, sorted by request volume with a share bar. -->
-        <div class="page" id="page-traffic">
-          <div class="page-inner">
-            <div id="traffic-content"></div>
-          </div>
-        </div>
-
-        <!-- INSIGHTS: per-app SEO + production-readiness checks. The page
-             triggers a server-side fetch of the production URL on demand;
-             the resulting report lists actionable pass/warn/fail checks. -->
-        <div class="page" id="page-insights">
-          <div class="page-inner">
-            <div id="insights-content"></div>
-          </div>
-        </div>
-
-        <!-- DOMAINS: per-app custom-domain management. Add/verify/delete
-             hostnames; the verify step does a live DNS TXT lookup and,
-             on success, applies the Traefik IngressRoute that maps the
-             host to the project's latest READY Service. -->
+        <!-- DOMAINS -->
         <div class="page" id="page-domains">
           <div class="page-inner">
             <div id="domains-content"></div>
@@ -2313,15 +2334,12 @@ const crumbsEl      = $('crumbs');
 const meta          = $('meta');
 
 const pageEls = {
-  home:      $('page-home'),
-  overview:  $('page-overview'),
-  logs:      $('page-logs'),
-  database:  $('page-database'),
-  env:       $('page-env'),
-  telemetry: $('page-telemetry'),
-  traffic:   $('page-traffic'),
-  insights:  $('page-insights'),
-  domains:   $('page-domains'),
+  home:       $('page-home'),
+  overview:   $('page-overview'),
+  runtime:    $('page-runtime'),
+  monitoring: $('page-monitoring'),
+  settings:   $('page-settings'),
+  domains:    $('page-domains'),
 };
 // Logs-page DOM (shared with stream logic below).
 const logBody   = $('log-body');
@@ -2666,48 +2684,64 @@ function paintSidebarRunStates() {
 // Hash format documented at the top of the script.
 
 function parseHash() {
-  const raw = window.location.hash.replace(/^#\/?/, '');
+  const full = window.location.hash.replace(/^#\/?/, '');
+  const raw = full.split('?')[0];
+  const query = full.includes('?') ? new URLSearchParams(full.split('?')[1]) : null;
   if (!raw) return { scope: 'home' };
 
-  // Legacy: #d=<uuid> → find owning project, route to its logs.
+  const legacyRuntime = { logs: 'logs', env: 'env', database: 'database', sql: 'database' };
+  const legacyMonitoring = { telemetry: 'telemetry', traffic: 'traffic', insights: 'insights' };
+
+  // Legacy: #d=<uuid> → find owning project, route to runtime logs.
   const dMatch = raw.match(/^d=([0-9a-fA-F-]{36})$/);
   if (dMatch) {
     const dep = findDeployment(dMatch[1]);
-    if (dep) return { scope: 'project', projectID: dep.projectID, view: 'logs', deploymentID: dMatch[1] };
+    if (dep) {
+      return { scope: 'project', projectID: dep.projectID, view: 'runtime', tab: 'logs', deploymentID: dMatch[1] };
+    }
     return { scope: 'home', pendingDeploymentID: dMatch[1] };
   }
 
-  // Legacy /sql sub-route: the SQL viewer now lives inline inside
-  // the Database page. Remap any bookmark / status-check that still
-  // points at /sql so the breadcrumb and sub-nav highlight stay in
-  // sync with where the user actually lands.
-  const sqlRemap = raw.match(/^p\/([0-9a-fA-F-]{36})\/sql$/);
-  if (sqlRemap) {
-    return { scope: 'project', projectID: sqlRemap[1], view: 'database' };
-  }
-
-  // #/p/<uuid>[/<view>]
-  // Whitelist every per-app sub-view. Anything not on the list falls
-  // back to overview — protects against typos and old bookmarks but
-  // means new views MUST be added here or they'll silently route to
-  // overview while the sidebar item appears active.
-  const pMatch = raw.match(/^p\/([0-9a-fA-F-]+)(?:\/([a-z]+))?$/);
+  // #/p/<uuid>[/<view>[/<tab>]]
+  const pMatch = raw.match(/^p\/([0-9a-fA-F-]+)(?:\/([a-z]+))?(?:\/([a-z]+))?$/);
   if (pMatch) {
-    const view = pMatch[2] || 'overview';
-    const allowed = [
-      'overview', 'logs', 'database', 'sql', 'env',
-      'telemetry', 'traffic', 'insights', 'domains',
-    ];
-    if (!allowed.includes(view)) {
+    let view = pMatch[2] || 'overview';
+    let tab = pMatch[3] || '';
+
+    if (legacyRuntime[view]) {
+      tab = legacyRuntime[view];
+      view = 'runtime';
+    } else if (legacyMonitoring[view]) {
+      tab = legacyMonitoring[view];
+      view = 'monitoring';
+    }
+
+    const allowedViews = ['overview', 'runtime', 'domains', 'monitoring', 'settings'];
+    if (!allowedViews.includes(view)) {
       return { scope: 'project', projectID: pMatch[1], view: 'overview' };
     }
-    return { scope: 'project', projectID: pMatch[1], view };
+    if (view === 'runtime' && !tab) tab = 'logs';
+    if (view === 'monitoring' && !tab) tab = 'telemetry';
+
+    const route = { scope: 'project', projectID: pMatch[1], view };
+    if (tab) route.tab = tab;
+    if (query && query.get('dep')) route.deploymentID = query.get('dep');
+    return route;
   }
 
-  // #/telemetry or #/traffic
+  // #/telemetry or #/traffic (cluster-wide)
   if (raw === 'telemetry' || raw === 'traffic') return { scope: 'global', view: raw };
 
   return { scope: 'home' };
+}
+
+function projectRouteHash(view, tab) {
+  const pid = ROUTE.projectID;
+  if (!pid) return '#/';
+  if (tab && (view === 'runtime' || view === 'monitoring')) {
+    return `#/p/${pid}/${view}/${tab}`;
+  }
+  return `#/p/${pid}/${view}`;
 }
 
 // Walk DATA looking for a deployment by ID — returns {projectID, deployment} or null.
@@ -2775,6 +2809,10 @@ function applyRoute() {
   // here covers every navigation entry-point in one place.
   closeMobileNav();
   ROUTE = parseHash();
+  if (ROUTE.deploymentID) {
+    selectedDeploymentID = ROUTE.deploymentID;
+    delete ROUTE.deploymentID;
+  }
   if (ROUTE.pendingDeploymentID) {
     pendingDeploymentID = ROUTE.pendingDeploymentID;
     delete ROUTE.pendingDeploymentID;
@@ -2831,7 +2869,7 @@ function renderUI(isNavigation) {
     if (hit) {
       const id = pendingDeploymentID;
       pendingDeploymentID = null;
-      navigate('#/p/' + hit.projectID + '/logs');
+      navigate('#/p/' + hit.projectID + '/runtime/logs');
       selectedDeploymentID = id;       // tells renderLogs() to auto-select on its next pass
     }
   }
@@ -2876,6 +2914,8 @@ function renderSidebar() {
   } else {
     appsSection.style.display = '';
     const view = (inProject && ROUTE.view) ? ROUTE.view : 'overview';
+    const tab = (inProject && ROUTE.tab) ? ROUTE.tab : '';
+    const tabSuffix = tab && (view === 'runtime' || view === 'monitoring') ? '/' + tab : '';
     $('main-sidebar-apps').innerHTML = projects.map(p => {
       const isActive = inProject && p.id === ROUTE.projectID;
       // Run-state icon is seeded from the run-state cache + the
@@ -2886,7 +2926,7 @@ function renderSidebar() {
       // and CSS hides every SVG variant until /status returns.
       const { state, title } = computeRunState(p);
       return `
-        <li><a class="nav-item ${isActive ? 'active' : ''}" href="#/p/${p.id}/${view}" data-project-id="${p.id}">
+        <li><a class="nav-item ${isActive ? 'active' : ''}" href="#/p/${p.id}/${view}${tabSuffix}" data-project-id="${p.id}">
           <span class="label" title="${escapeHTML(p.full_name)}">${escapeHTML(projectLabel(p))}</span>
           <span class="runstate" data-runstate="${state}" title="${escapeHTML(title)}">
             <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
@@ -2935,10 +2975,11 @@ function renderCrumbs() {
   }
   const proj = findProject(ROUTE.projectID);
   const viewLabel = ({
-    overview: 'Overview', logs: 'Logs', database: 'Database',
-    env: 'Env vars'
+    overview: 'Overview', runtime: 'Runtime', domains: 'Domains',
+    monitoring: 'Monitoring', settings: 'Settings',
   })[ROUTE.view] || ROUTE.view;
-  crumbsEl.innerHTML = `Apps <span class="sep">/</span> <strong>${escapeHTML(proj ? projectLabel(proj) : '?')}</strong> <span class="sep">/</span> ${escapeHTML(viewLabel)}`;
+  const tabLabel = ROUTE.tab ? ` / ${ROUTE.tab}` : '';
+  crumbsEl.innerHTML = `Apps <span class="sep">/</span> <strong>${escapeHTML(proj ? projectLabel(proj) : '?')}</strong> <span class="sep">/</span> ${escapeHTML(viewLabel + tabLabel)}`;
 
   // Compute the live URL for the Visit button using the same rules
   // as the per-page overview-prod link: production-branch alias
@@ -3088,37 +3129,123 @@ function liveURLHostsForProject(proj) {
 function showPage(isNavigation) {
   const pageKey =
     ROUTE.scope === 'home' ? 'home' :
-    ROUTE.scope === 'global' ? ROUTE.view :
+    ROUTE.scope === 'global' ? 'monitoring' :
     ROUTE.view || 'overview';
 
   Object.entries(pageEls).forEach(([k, el]) => {
     el.classList.toggle('active', k === pageKey);
   });
 
-  // Self-managed live pages own their own update lifecycle:
-  //   - insights: on-demand only (the user clicks "Run analysis")
-  //   - telemetry / traffic: drive their own 5s metric poll
-  // Re-rendering them from the 10s background data poll would re-fetch
-  // (insights re-runs the whole live-URL analysis), tear down + restart
-  // their polls, and yank the scroll back to the top. So on a data poll
-  // we leave them as-is and only (re)render on an explicit navigation.
-  // The poll still refreshes the sidebar run-states + the data-driven
-  // pages (home / overview / logs / …) below.
-  const selfManaged = pageKey === 'insights' || pageKey === 'telemetry' || pageKey === 'traffic';
+  const monTabs = $('monitoring-tabs');
+
+  // Cluster-wide Telemetry / Traffic (main sidebar, no app selected).
+  if (ROUTE.scope === 'global') {
+    if (monTabs) monTabs.style.display = 'none';
+    paintMonitoringPanels(ROUTE.view);
+    const selfManaged = ROUTE.view === 'telemetry' || ROUTE.view === 'traffic';
+    if (selfManaged && !isNavigation) return;
+    if (ROUTE.view === 'telemetry') return renderGlobalTelemetry();
+    if (ROUTE.view === 'traffic') return renderGlobalTraffic();
+    return;
+  }
+  if (monTabs) monTabs.style.display = '';
+
+  const monTab = ROUTE.tab || 'telemetry';
+  const selfManaged =
+    pageKey === 'monitoring' &&
+    (monTab === 'telemetry' || monTab === 'traffic' || monTab === 'insights');
   if (selfManaged && !isNavigation) return;
 
   switch (pageKey) {
-    case 'home':      return renderHome();
-    case 'overview':  return renderOverview();
-    case 'logs':      return renderLogsPage();
-    case 'database':
-    case 'sql':       return renderDatabasePage();
-    case 'env':       return renderEnvPage();
-    case 'telemetry': return renderTelemetry();
-    case 'traffic':   return renderTraffic();
-    case 'insights':  return renderInsights();
-    case 'domains':   return renderDomains();
+    case 'home':       return renderHome();
+    case 'overview':   return renderOverview();
+    case 'runtime':    return renderRuntime();
+    case 'monitoring': return renderMonitoring();
+    case 'settings':   return renderSettings();
+    case 'domains':    return renderDomains();
   }
+}
+
+function paintSectionTabs(containerId, activeTab) {
+  const nav = $(containerId);
+  if (!nav) return;
+  nav.querySelectorAll('.section-tab').forEach(a => {
+    const tab = a.dataset.tab;
+    a.href = projectRouteHash(containerId === 'runtime-tabs' ? 'runtime' : 'monitoring', tab);
+    a.classList.toggle('active', tab === activeTab);
+  });
+}
+
+function paintRuntimePanels(activeTab) {
+  ['logs', 'env', 'database'].forEach(t => {
+    const el = $('runtime-panel-' + t);
+    if (el) el.classList.toggle('active', t === activeTab);
+  });
+}
+
+function paintMonitoringPanels(activeTab) {
+  ['telemetry', 'traffic', 'insights'].forEach(t => {
+    const el = $('monitoring-panel-' + t);
+    if (el) el.classList.toggle('active', t === activeTab);
+  });
+}
+
+function renderRuntime() {
+  const tab = ROUTE.tab || 'logs';
+  paintSectionTabs('runtime-tabs', tab);
+  paintRuntimePanels(tab);
+  if (tab === 'logs') return renderLogsPage();
+  if (tab === 'env') return renderEnvPage();
+  if (tab === 'database') return renderDatabasePage();
+}
+
+function renderMonitoring() {
+  const tab = ROUTE.tab || 'telemetry';
+  paintSectionTabs('monitoring-tabs', tab);
+  paintMonitoringPanels(tab);
+  if (tab === 'telemetry') return renderTelemetry();
+  if (tab === 'traffic') return renderTraffic();
+  if (tab === 'insights') return renderInsights();
+}
+
+function renderSettings() {
+  const proj = findProject(ROUTE.projectID);
+  if (!proj) {
+    $('settings-general').innerHTML = '<div class="empty">Project not found.</div>';
+    return;
+  }
+  const repoLink = proj.full_name
+    ? `<a href="https://github.com/${escapeHTML(proj.full_name)}" target="_blank" rel="noopener">${escapeHTML(proj.full_name)} ↗</a>`
+    : '—';
+  $('settings-general').innerHTML = `
+    <div class="settings-row">
+      <div class="settings-k">Display name</div>
+      <div class="settings-v">
+        <input type="text" id="settings-display-name" maxlength="80"
+               value="${escapeHTML(projectLabel(proj))}" aria-label="App display name">
+      </div>
+    </div>
+    <div class="settings-row">
+      <div class="settings-k">GitHub repo</div>
+      <div class="settings-v">${repoLink}</div>
+    </div>
+    <div class="settings-row">
+      <div class="settings-k">Production branch</div>
+      <div class="settings-v"><code>${escapeHTML(proj.production_branch)}</code></div>
+    </div>
+    <div class="settings-row">
+      <div class="settings-k">Service ID</div>
+      <div class="settings-v">
+        <code>${escapeHTML(proj.id)}</code>
+        <button class="copy" type="button" data-copy="${escapeHTML(proj.id)}" title="Copy">⧉</button>
+      </div>
+    </div>
+    <div class="settings-row">
+      <div class="settings-k">GitHub App</div>
+      <div class="settings-v">
+        <a href="https://github.com/apps/spinup-app/installations/new" target="_blank" rel="noopener">Manage repository access ↗</a>
+      </div>
+    </div>`;
 }
 
 // ----- Pages -------------------------------------------------------------
@@ -3430,7 +3557,7 @@ function renderRecentDeployments(projects) {
     const branch = dep.ref ? dep.ref.replace(/^refs\/heads\//, '') : (proj.production_branch || '');
     const when = timeAgo(dep.created_at);
     return `
-      <div class="recent-row" data-href="#/p/${proj.id}/logs?dep=${escapeHTML(dep.id)}"
+      <div class="recent-row" data-href="#/p/${proj.id}/runtime/logs?dep=${escapeHTML(dep.id)}"
            tabindex="0" role="link"
            aria-label="Open deployment ${sha} of ${escapeHTML(projectLabel(proj))}">
         <span class="badge ${status}" title="${status}">${status === 'ready' ? '✓' : status === 'failed' ? '✕' : '•'}</span>
@@ -3506,22 +3633,22 @@ function renderOverview() {
       <div class="value" style="font-size:14px;font-family:ui-monospace,monospace;">${latest ? latest.status : '—'}</div>
       <div class="sub">${latest ? timeAgo(latest.created_at) : 'no deployments yet'}</div>
     </div>
-    <a class="stat stat-link" id="cpu-tile" href="#/p/${proj.id}/telemetry" title="Open Telemetry">
+    <a class="stat stat-link" id="cpu-tile" href="#/p/${proj.id}/monitoring/telemetry" title="Open Telemetry">
       <div class="label">CPU</div>
       <div class="value" style="font-size:18px;color:var(--text-dim);">…</div>
       <div class="sub">live</div>
     </a>
-    <a class="stat stat-link" id="mem-tile" href="#/p/${proj.id}/telemetry" title="Open Telemetry">
+    <a class="stat stat-link" id="mem-tile" href="#/p/${proj.id}/monitoring/telemetry" title="Open Telemetry">
       <div class="label">Memory</div>
       <div class="value" style="font-size:18px;color:var(--text-dim);">…</div>
       <div class="sub">live</div>
     </a>
-    <a class="stat stat-link" id="req-tile" href="#/p/${proj.id}/traffic" title="Open Traffic">
+    <a class="stat stat-link" id="req-tile" href="#/p/${proj.id}/monitoring/traffic" title="Open Traffic">
       <div class="label">Requests</div>
       <div class="value" style="font-size:18px;color:var(--text-dim);">…</div>
       <div class="sub">since Traefik start</div>
     </a>
-    <a class="stat stat-link" id="err-tile" href="#/p/${proj.id}/traffic" title="Open Traffic">
+    <a class="stat stat-link" id="err-tile" href="#/p/${proj.id}/monitoring/traffic" title="Open Traffic">
       <div class="label">Error rate</div>
       <div class="value" style="font-size:18px;color:var(--text-dim);">…</div>
       <div class="sub">5xx share</div>
@@ -3590,11 +3717,6 @@ function renderOverview() {
   // isn't the production target. Runs after the rows are wired so
   // the button text/title overrides land cleanly on top.
   paintLiveDeploymentRow(proj.id);
-
-  const delBtn = $('overview-delete-btn');
-  if (delBtn) {
-    delBtn.onclick = () => deleteProject(proj);
-  }
 }
 
 // renderOverviewHeader paints the Render-style strip at the top of the
@@ -3606,7 +3728,7 @@ async function deleteProject(proj) {
   if (!confirmed) return;
 
   const confirmBtn = $('delete-modal-confirm');
-  const triggerBtn = $('overview-delete-btn');
+  const triggerBtn = $('settings-delete-btn');
   confirmBtn.disabled = true;
   confirmBtn.textContent = 'Deleting…';
   if (triggerBtn) { triggerBtn.disabled = true; triggerBtn.textContent = 'Deleting…'; }
@@ -3734,10 +3856,7 @@ function renderOverviewHeader(proj) {
     <div class="ph-main">
       <div class="top">
         <span class="type-badge" title="Container web service">Web Service</span>
-        <input class="proj-rename" type="text" maxlength="80"
-               value="${escapeHTML(projectLabel(proj))}"
-               title="App display name — saved on change"
-               aria-label="App display name">
+        <span class="proj-title">${escapeHTML(projectLabel(proj))}</span>
       </div>
       <div class="meta-row">
         <span class="meta" title="Internal service identifier">
@@ -3784,27 +3903,6 @@ function renderOverviewHeader(proj) {
       } catch (_) { /* clipboard blocked — silent no-op */ }
     });
   });
-  const nameInput = host.querySelector('.proj-rename');
-  if (nameInput) {
-    nameInput.addEventListener('change', async () => {
-      const val = nameInput.value.trim();
-      try {
-        const r = await fetch('/v1/projects/' + proj.id, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ display_name: val }),
-        });
-        if (r.status === 401) { window.location.href = '/login'; return; }
-        if (!r.ok) throw new Error('save failed');
-        proj.display_name = val;
-        renderSidebar();
-        renderBreadcrumbs();
-        renderHomeTableBody(DATA.projects || []);
-      } catch (_) {
-        nameInput.value = projectLabel(proj);
-      }
-    });
-  }
   // Gate the freshly-rendered Visit button + inline URL anchor on a
   // live DNS resolution. Both anchors point at the same host so a
   // single probe unlocks them together. Pill button shows the inline
@@ -5347,7 +5445,7 @@ async function rebuildFromButton(btn) {
       // Stay on the logs page for this project + auto-select the new row
       // as soon as it appears in refresh()'s data.
       selectedDeploymentID = data.deployment_id;
-      if (ROUTE.projectID) navigate('#/p/' + ROUTE.projectID + '/logs');
+      if (ROUTE.projectID) navigate('#/p/' + ROUTE.projectID + '/runtime/logs');
     }
     refresh();
   } catch (e) {
@@ -5559,7 +5657,7 @@ async function tickGlobalTelemetry() {
     const errCls = a.errors > 0 ? 'style="color:var(--err);"' : '';
     return `
       <tr>
-        <td><a href="#/p/${a.project_id}/telemetry">${escapeHTML(a.slug)}</a></td>
+        <td><a href="#/p/${a.project_id}/monitoring/telemetry">${escapeHTML(a.slug)}</a></td>
         <td class="num">${a.pods}</td>
         <td class="num">${fmtCPU(a.cpu_m)}</td>
         <td class="num">${fmtMem(a.memory_mi)}</td>
@@ -5609,7 +5707,7 @@ async function tickGlobalTraffic() {
     const pct = (a.requests / max) * 100;
     return `
       <tr>
-        <td><a href="#/p/${a.project_id}/traffic">${escapeHTML(a.slug)}</a></td>
+        <td><a href="#/p/${a.project_id}/monitoring/traffic">${escapeHTML(a.slug)}</a></td>
         <td class="num">${fmtCount(a.requests)}</td>
         <td class="num" ${a.errors > 0 ? 'style="color:var(--err);"' : ''}>${fmtCount(a.errors)}</td>
         <td class="num">${a.avg_latency_ms ? a.avg_latency_ms + ' ms' : '—'}</td>
@@ -6485,6 +6583,44 @@ window.navigate = navigate;
 initUserMenu();
 loadMe();
 loadVersion();
+
+$('page-settings')?.addEventListener('click', async (ev) => {
+  const btn = ev.target.closest('#settings-general .copy');
+  if (!btn) return;
+  try {
+    await navigator.clipboard.writeText(btn.dataset.copy);
+    btn.textContent = '✓';
+    setTimeout(() => { btn.textContent = '⧉'; }, 1200);
+  } catch (_) {}
+});
+$('page-settings')?.addEventListener('change', async (ev) => {
+  if (ev.target.id !== 'settings-display-name') return;
+  if (ROUTE.scope !== 'project' || ROUTE.view !== 'settings') return;
+  const proj = findProject(ROUTE.projectID);
+  if (!proj) return;
+  const val = ev.target.value.trim();
+  try {
+    const r = await fetch('/v1/projects/' + proj.id, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ display_name: val }),
+    });
+    if (r.status === 401) { window.location.href = '/login'; return; }
+    if (!r.ok) throw new Error('save failed');
+    proj.display_name = val;
+    renderSidebar();
+    renderCrumbs();
+    renderOverviewHeader(proj);
+    renderHomeTableBody(DATA.projects || []);
+  } catch (_) {
+    ev.target.value = projectLabel(proj);
+  }
+});
+$('settings-delete-btn')?.addEventListener('click', () => {
+  const proj = findProject(ROUTE.projectID);
+  if (proj) deleteProject(proj);
+});
+
 applyRoute();
 refresh();
 
