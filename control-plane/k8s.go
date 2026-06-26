@@ -464,6 +464,75 @@ func (k *kubeClient) deleteIngressRoute(ctx context.Context, namespace, name str
 	return fmt.Errorf("delete ingressroute: kube returned %d: %s", status, string(body))
 }
 
+// listResourceNames returns metadata.name for every item in a namespaced list.
+func (k *kubeClient) listResourceNames(ctx context.Context, listPath string) ([]string, error) {
+	status, body, err := k.do(ctx, "GET", listPath, nil)
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("list resources: status %d: %s", status, snippet(body))
+	}
+	var resp struct {
+		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("decode list: %w", err)
+	}
+	out := make([]string, 0, len(resp.Items))
+	for _, it := range resp.Items {
+		out = append(out, it.Metadata.Name)
+	}
+	return out, nil
+}
+
+func (k *kubeClient) deleteResource(ctx context.Context, path string) error {
+	status, body, err := k.do(ctx, "DELETE", path, nil)
+	if err != nil {
+		return err
+	}
+	if status == http.StatusNotFound || status == http.StatusOK {
+		return nil
+	}
+	return fmt.Errorf("delete resource: status %d: %s", status, snippet(body))
+}
+
+// deleteAllByLabel deletes every namespaced resource matching labelSelector.
+func (k *kubeClient) deleteAllByLabel(ctx context.Context, namespace, apiPrefix, resource, labelSelector string) error {
+	listPath := fmt.Sprintf("/%s/namespaces/%s/%s?labelSelector=%s",
+		strings.Trim(apiPrefix, "/"),
+		url.PathEscape(namespace),
+		resource,
+		url.QueryEscape(labelSelector),
+	)
+	names, err := k.listResourceNames(ctx, listPath)
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		delPath := fmt.Sprintf("/%s/namespaces/%s/%s/%s",
+			strings.Trim(apiPrefix, "/"),
+			url.PathEscape(namespace),
+			resource,
+			url.PathEscape(name),
+		)
+		if err := k.deleteResource(ctx, delPath); err != nil {
+			return fmt.Errorf("delete %s/%s: %w", resource, name, err)
+		}
+	}
+	return nil
+}
+
+func (k *kubeClient) deleteSecret(ctx context.Context, namespace, name string) error {
+	path := fmt.Sprintf("/api/v1/namespaces/%s/secrets/%s",
+		url.PathEscape(namespace), url.PathEscape(name))
+	return k.deleteResource(ctx, path)
+}
+
 // --- Namespace / Quota / NetworkPolicy (tenant isolation, Slice B) ------
 
 func (k *kubeClient) applyNamespace(ctx context.Context, name string, obj map[string]any) error {

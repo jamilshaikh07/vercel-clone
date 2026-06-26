@@ -218,6 +218,7 @@ func main() {
 		"GET /v1/version":                       s.handleVersion,
 		"GET /v1/projects":                      s.handleListProjects,
 		"PATCH /v1/projects/{id}":                 s.handlePatchProject,
+		"DELETE /v1/projects/{id}":                s.handleDeleteProject,
 		"GET /v1/deployments":                   s.handleListDeployments,
 		"GET /v1/deployments/{id}/logs":         s.handleDeploymentLogs,
 		"GET /v1/deployments/{id}/runtime-logs": s.handleDeploymentRuntimeLogs,

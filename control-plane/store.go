@@ -1162,6 +1162,56 @@ type projectInfo struct {
 	OwnerUserID   string
 }
 
+// GetProjectDeleteMeta returns fields needed to tear down K8s + DB rows.
+func (s *store) GetProjectDeleteMeta(ctx context.Context, projectID, ownerUserID string) (*projectDeleteMeta, error) {
+	q := `
+		SELECT p.id::text, p.slug, p.full_name, p.installation_id, p.repo_id,
+		       COALESCE(i.account_login, '')
+		  FROM projects p
+		  LEFT JOIN installations i ON i.id = p.installation_id
+		 WHERE p.id = $1::uuid
+		   AND ($2 = '' OR p.owner_user_id = $2::uuid)
+	`
+	var m projectDeleteMeta
+	if err := s.pool.QueryRow(ctx, q, projectID, ownerUserID).
+		Scan(&m.ID, &m.Slug, &m.FullName, &m.InstallationID, &m.RepoID, &m.TenantLogin); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &m, nil
+}
+
+// DeleteProject removes a project row. Related rows CASCADE via FK.
+func (s *store) DeleteProject(ctx context.Context, projectID string) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM projects WHERE id = $1::uuid`, projectID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// ListDeploymentIDsForProject returns every deployment UUID for build-secret cleanup.
+func (s *store) ListDeploymentIDsForProject(ctx context.Context, projectID string) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id::text FROM deployments WHERE project_id = $1::uuid
+	`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 func (s *store) GetProjectForOwner(ctx context.Context, projectID, ownerUserID string) (*projectInfo, error) {
 	q := `
 		SELECT p.id::text, p.slug, COALESCE(i.account_login, ''), COALESCE(p.owner_user_id::text, '')

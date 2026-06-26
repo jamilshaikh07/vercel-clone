@@ -999,6 +999,19 @@
     .deployment-links .url-sep { color: var(--text-faint); font-size: 11px; }
     .url-link.custom { color: var(--ok); }
     .live-url-secondary { color: var(--text-dim); font-size: 12px; }
+
+    /* Danger zone — delete app panel on Overview */
+    .panel.danger { border-color: rgba(248, 113, 113, 0.35); }
+    .panel.danger .panel-head h3 { color: var(--err); }
+    .danger-body { padding: 14px 16px 16px; }
+    .danger-body p { margin: 0 0 12px; font-size: 13px; color: var(--text-dim); line-height: 1.5; }
+    .btn-danger {
+      padding: 8px 14px; border-radius: 6px; font-size: 13px; font-weight: 600;
+      border: 1px solid var(--err); background: transparent; color: var(--err);
+      cursor: pointer; font-family: inherit;
+    }
+    .btn-danger:hover { background: rgba(248, 113, 113, 0.12); }
+    .btn-danger[disabled] { opacity: 0.5; cursor: not-allowed; }
     .btn-redeploy, .btn-build-logs {
       background: transparent; border: 1px solid var(--border); color: var(--text-dim);
       padding: 3px 10px; border-radius: 6px; font-size: 11px; cursor: pointer;
@@ -2017,6 +2030,13 @@
                 <a class="prod-link" id="overview-prod" target="_blank" rel="noopener" style="display:none"></a>
               </div>
               <div class="panel-body" id="overview-deployments"></div>
+            </div>
+            <div class="panel danger" id="overview-danger" style="margin-top:16px;">
+              <div class="panel-head"><h3>Danger zone</h3></div>
+              <div class="danger-body">
+                <p>Permanently delete this app from Spinup — all deployments, domains, env vars, and live URLs are removed. Your GitHub repo is kept; remove it from the Spinup GitHub App separately to stop future pushes.</p>
+                <button type="button" class="btn-danger" id="overview-delete-btn">Delete app…</button>
+              </div>
             </div>
           </div>
         </div>
@@ -3465,12 +3485,51 @@ function renderOverview() {
   // isn't the production target. Runs after the rows are wired so
   // the button text/title overrides land cleanly on top.
   paintLiveDeploymentRow(proj.id);
+
+  const delBtn = $('overview-delete-btn');
+  if (delBtn) {
+    delBtn.onclick = () => deleteProject(proj);
+  }
 }
 
 // renderOverviewHeader paints the Render-style strip at the top of the
 // Overview page: type badge, project title, copyable service id, repo
 // link with branch, and copyable live URL. Pure DOM render — no
 // network calls — so it's safe to invoke from every refresh tick.
+async function deleteProject(proj) {
+  const label = projectLabel(proj);
+  const typed = prompt(
+    'Delete "' + label + '" (' + proj.full_name + ')?\n\n' +
+    'This removes all deployments, custom domains, and env vars from Spinup.\n' +
+    'Your GitHub repo is NOT uninstalled.\n\n' +
+    'Type DELETE to confirm:'
+  );
+  if (typed !== 'DELETE') return;
+
+  const btn = $('overview-delete-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Deleting…'; }
+  try {
+    const r = await fetch('/v1/projects/' + proj.id, {
+      method: 'DELETE', credentials: 'same-origin', cache: 'no-store',
+    });
+    if (r.status === 401) { window.location.href = '/login'; return; }
+    if (!r.ok) {
+      alert('Delete failed: ' + ((await r.text()).trim() || ('HTTP ' + r.status)));
+      return;
+    }
+    const data = await r.json();
+    if (data.warnings && data.warnings.length) {
+      console.warn('Project delete warnings:', data.warnings);
+    }
+    window.location.hash = '#/';
+    await refresh();
+  } catch (e) {
+    alert('Delete failed: ' + e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Delete app…'; }
+  }
+}
+
 function renderOverviewHeader(proj) {
   const host = $('overview-header');
   if (!host) return;
