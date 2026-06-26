@@ -59,8 +59,8 @@
       --text: #e6e8eb;
       --text-dim: #9aa1ad;
       --text-faint: #6b7280;
-      --accent: #7aa2f7;
-      --accent-dim: rgba(122, 162, 247, 0.15);
+      --accent: #e11d48;
+      --accent-dim: rgba(225, 29, 72, 0.14);
       --ok: #2ecc71;
       --warn: #f1c40f;
       --err: #ff6b6b;
@@ -83,8 +83,8 @@
       --text: #111827;
       --text-dim: #4b5563;
       --text-faint: #9ca3af;
-      --accent: #2563eb;
-      --accent-dim: rgba(37, 99, 235, 0.10);
+      --accent: #e11d48;
+      --accent-dim: rgba(225, 29, 72, 0.10);
       --ok: #16a34a;
       --warn: #ca8a04;
       --err: #dc2626;
@@ -1558,6 +1558,13 @@
       gap: 16px;
     }
     .proj-header .ph-main { min-width: 0; flex: 1; }
+    .proj-rename {
+      background: transparent; border: 1px solid transparent;
+      color: var(--text); font: inherit; font-size: 22px; font-weight: 600;
+      padding: 2px 8px; border-radius: 6px; min-width: 140px; max-width: 100%;
+    }
+    .proj-rename:hover { border-color: var(--border); }
+    .proj-rename:focus { border-color: var(--accent); outline: none; background: var(--panel-2); }
     .proj-header .ph-aside {
       display: flex; flex-direction: column; align-items: flex-end;
       gap: 12px; flex-shrink: 0;
@@ -2714,8 +2721,8 @@ function renderSidebar() {
   // points at the right hash route, with the active one highlighted.
   if (inProject) {
     const proj = findProject(ROUTE.projectID);
-    subSidebarTitleEl.textContent = proj ? proj.slug : 'App';
-    subSidebarTitleEl.title = proj ? proj.full_name : '';
+    subSidebarTitleEl.textContent = proj ? projectLabel(proj) : 'App';
+    subSidebarTitleEl.title = proj ? (proj.full_name || proj.slug) : '';
     subSidebarEl.querySelectorAll('a[data-subview]').forEach(a => {
       a.href = `#/p/${ROUTE.projectID}/${a.dataset.subview}`;
       a.classList.toggle('active', ROUTE.view === a.dataset.subview);
@@ -2745,7 +2752,7 @@ function renderSidebar() {
       const { state, title } = computeRunState(p);
       return `
         <li><a class="nav-item ${isActive ? 'active' : ''}" href="#/p/${p.id}/${view}" data-project-id="${p.id}">
-          <span class="label" title="${escapeHTML(p.full_name)}">${escapeHTML(p.slug)}</span>
+          <span class="label" title="${escapeHTML(p.full_name)}">${escapeHTML(projectLabel(p))}</span>
           <span class="runstate" data-runstate="${state}" title="${escapeHTML(title)}">
             <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
               <polygon class="play" points="4,2.5 13,8 4,13.5"/>
@@ -2796,7 +2803,7 @@ function renderCrumbs() {
     overview: 'Overview', logs: 'Logs', database: 'Database',
     env: 'Env vars'
   })[ROUTE.view] || ROUTE.view;
-  crumbsEl.innerHTML = `Apps <span class="sep">/</span> <strong>${escapeHTML(proj ? proj.slug : '?')}</strong> <span class="sep">/</span> ${escapeHTML(viewLabel)}`;
+  crumbsEl.innerHTML = `Apps <span class="sep">/</span> <strong>${escapeHTML(proj ? projectLabel(proj) : '?')}</strong> <span class="sep">/</span> ${escapeHTML(viewLabel)}`;
 
   // Compute the live URL for the Visit button using the same rules
   // as the per-page overview-prod link: production-branch alias
@@ -2963,6 +2970,16 @@ function showPage(isNavigation) {
 
 // ----- Pages -------------------------------------------------------------
 
+// Friendly label: user display_name, else short slug (drop owner prefix).
+function projectLabel(p) {
+  if (!p) return 'App';
+  const custom = (p.display_name || '').trim();
+  if (custom) return custom;
+  const slug = p.slug || '';
+  const dash = slug.indexOf('-');
+  return dash > 0 ? slug.slice(dash + 1) : slug;
+}
+
 function renderHome() {
   const projects = DATA.projects || [];
   const installEl = $('home-install');
@@ -3105,7 +3122,7 @@ function renderHomeTableBody(projects) {
     ? projects.filter(p => {
         const latest = (p.deployments || []).find(d => d.status === 'ready' && d.url);
         const url = latest ? latest.url : '';
-        const hay = `${p.slug} ${p.full_name} ${p.production_branch} ${url}`.toLowerCase();
+        const hay = `${projectLabel(p)} ${p.slug} ${p.full_name} ${p.display_name || ''} ${p.production_branch} ${url}`.toLowerCase();
         return hay.includes(q);
       })
     : projects.slice();
@@ -3139,10 +3156,10 @@ function renderHomeTableBody(projects) {
               escapeHTML(ready.url.replace(/^https?:\/\//, ''))} ↗</a>`
       : `<span class="apps-url-muted" title="No READY deployment yet">—</span>`;
     return `
-      <tr data-href="#/p/${p.id}" tabindex="0" role="link" aria-label="Open ${escapeHTML(p.slug)}">
+      <tr data-href="#/p/${p.id}" tabindex="0" role="link" aria-label="Open ${escapeHTML(projectLabel(p))}">
         <td>
           <div class="apps-name-cell">
-            <span class="apps-name-slug">${escapeHTML(p.slug)}</span>
+            <span class="apps-name-slug">${escapeHTML(projectLabel(p))}</span>
             <span class="apps-name-repo">${escapeHTML(p.full_name)}</span>
           </div>
         </td>
@@ -3177,7 +3194,7 @@ function appsSortComparator(key, dir) {
     let av, bv;
     switch (key) {
       case 'name':
-        av = a.slug; bv = b.slug; break;
+        av = projectLabel(a); bv = projectLabel(b); break;
       case 'branch':
         av = a.production_branch; bv = b.production_branch; break;
       case 'status': {
@@ -3257,9 +3274,9 @@ function renderRecentDeployments(projects) {
     return `
       <div class="recent-row" data-href="#/p/${proj.id}/logs?dep=${escapeHTML(dep.id)}"
            tabindex="0" role="link"
-           aria-label="Open deployment ${sha} of ${escapeHTML(proj.slug)}">
+           aria-label="Open deployment ${sha} of ${escapeHTML(projectLabel(proj))}">
         <span class="badge ${status}" title="${status}">${status === 'ready' ? '✓' : status === 'failed' ? '✕' : '•'}</span>
-        <span class="recent-app" title="${escapeHTML(proj.full_name)}">${escapeHTML(proj.slug)}</span>
+        <span class="recent-app" title="${escapeHTML(proj.full_name)}">${escapeHTML(projectLabel(proj))}</span>
         <span class="recent-commit"><code>${sha || '—'}</code>${escapeHTML(dep.message ? dep.message.split('\n')[0].slice(0, 80) : '')}</span>
         <span class="recent-branch">${escapeHTML(branch)}</span>
         <span class="recent-when" title="${escapeHTML(dep.created_at || '')}">${when}</span>
@@ -3424,7 +3441,10 @@ function renderOverviewHeader(proj) {
     <div class="ph-main">
       <div class="top">
         <span class="type-badge" title="Container web service">Web Service</span>
-        <h2>${escapeHTML(proj.slug)}</h2>
+        <input class="proj-rename" type="text" maxlength="80"
+               value="${escapeHTML(projectLabel(proj))}"
+               title="App display name — saved on change"
+               aria-label="App display name">
       </div>
       <div class="meta-row">
         <span class="meta" title="Internal service identifier">
@@ -3469,6 +3489,27 @@ function renderOverviewHeader(proj) {
       } catch (_) { /* clipboard blocked — silent no-op */ }
     });
   });
+  const nameInput = host.querySelector('.proj-rename');
+  if (nameInput) {
+    nameInput.addEventListener('change', async () => {
+      const val = nameInput.value.trim();
+      try {
+        const r = await fetch('/v1/projects/' + proj.id, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ display_name: val }),
+        });
+        if (r.status === 401) { window.location.href = '/login'; return; }
+        if (!r.ok) throw new Error('save failed');
+        proj.display_name = val;
+        renderSidebar();
+        renderBreadcrumbs();
+        renderHomeTableBody(DATA.projects || []);
+      } catch (_) {
+        nameInput.value = projectLabel(proj);
+      }
+    });
+  }
   // Gate the freshly-rendered Visit button + inline URL anchor on a
   // live DNS resolution. Both anchors point at the same host so a
   // single probe unlocks them together. Pill button shows the inline

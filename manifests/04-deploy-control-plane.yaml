@@ -91,7 +91,7 @@ spec:
             - name: APP_HOSTS
               value: "app.spinup.in"
             - name: MAX_PROJECTS_PER_USER
-              value: "3"
+              value: "15"
             # Pre-launch abuse guardrail: invite-only sign-in. Only these
             # GitHub logins can complete login; everyone else hits the
             # waitlist screen and never gets a session or tenant namespace.

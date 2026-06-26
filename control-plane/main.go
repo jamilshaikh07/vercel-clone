@@ -165,6 +165,17 @@ func main() {
 		log.Info("requeued stuck deployments after restart", "count", requeued)
 	}
 
+	if orphans, err := s.store.ReconcileOrphanRepos(rootCtx); err != nil {
+		log.Error("reconcile orphan repos failed", "err", err)
+	} else if len(orphans) > 0 {
+		log.Info("reconciled orphan repos into projects", "count", len(orphans))
+		for _, o := range orphans {
+			s.tryAutoDeployRepo(rootCtx, o.InstallationID, githubRepo{
+				ID: o.RepoID, FullName: o.FullName, DefaultBranch: o.DefaultBranch,
+			})
+		}
+	}
+
 	bw := &worker{store: s.store, gh: gh, k8s: k8s, log: log}
 	go bw.Run(rootCtx)
 
@@ -203,6 +214,7 @@ func main() {
 		"GET /v1/me":                            s.handleMe,
 		"GET /v1/version":                       s.handleVersion,
 		"GET /v1/projects":                      s.handleListProjects,
+		"PATCH /v1/projects/{id}":                 s.handlePatchProject,
 		"GET /v1/deployments":                   s.handleListDeployments,
 		"GET /v1/deployments/{id}/logs":         s.handleDeploymentLogs,
 		"GET /v1/deployments/{id}/runtime-logs": s.handleDeploymentRuntimeLogs,

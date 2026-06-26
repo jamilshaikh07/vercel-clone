@@ -429,6 +429,7 @@ type projectRow struct {
 	ID               string  `json:"id"`
 	Slug             string  `json:"slug"`
 	FullName         string  `json:"full_name"`
+	DisplayName      string  `json:"display_name,omitempty"`
 	ProductionBranch string  `json:"production_branch"`
 	CreatedAt        string  `json:"created_at"`
 	// ProductionDeploymentID is the deployment whose Service the
@@ -449,7 +450,8 @@ func (s *store) ListProjectsForUser(ctx context.Context, userID string) ([]proje
 	var err error
 	if userID == "" {
 		rows, err = s.pool.Query(ctx, `
-			SELECT id::text, slug, full_name, production_branch,
+			SELECT id::text, slug, full_name,
+			       COALESCE(display_name, ''), production_branch,
 			       to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 			       production_deployment_id::text
 			  FROM projects
@@ -457,7 +459,8 @@ func (s *store) ListProjectsForUser(ctx context.Context, userID string) ([]proje
 		`)
 	} else {
 		rows, err = s.pool.Query(ctx, `
-			SELECT id::text, slug, full_name, production_branch,
+			SELECT id::text, slug, full_name,
+			       COALESCE(display_name, ''), production_branch,
 			       to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 			       production_deployment_id::text
 			  FROM projects
@@ -473,7 +476,7 @@ func (s *store) ListProjectsForUser(ctx context.Context, userID string) ([]proje
 	for rows.Next() {
 		var p projectRow
 		var prodDepID *string
-		if err := rows.Scan(&p.ID, &p.Slug, &p.FullName, &p.ProductionBranch, &p.CreatedAt, &prodDepID); err != nil {
+		if err := rows.Scan(&p.ID, &p.Slug, &p.FullName, &p.DisplayName, &p.ProductionBranch, &p.CreatedAt, &prodDepID); err != nil {
 			return nil, err
 		}
 		p.ProductionDeploymentID = prodDepID
@@ -1278,4 +1281,63 @@ func (s *store) CountProjectsForUser(ctx context.Context, userID string) (int, e
 		SELECT COUNT(*)::int FROM projects WHERE owner_user_id = $1::uuid
 	`, userID).Scan(&n)
 	return n, err
+}
+
+func (s *store) UpdateProjectDisplayName(ctx context.Context, projectID, name string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE projects SET display_name = NULLIF($2, '') WHERE id = $1::uuid
+	`, projectID, name)
+	return err
+}
+
+// orphanRepo is an installation_repos row with no matching projects row.
+type orphanRepo struct {
+	InstallationID int64
+	RepoID         int64
+	FullName       string
+	DefaultBranch  string
+}
+
+// ReconcileOrphanRepos creates project rows for repos the user explicitly
+// added to the GitHub App but that were skipped when MAX_PROJECTS_PER_USER
+// blocked AddRepos. Ignores the cap — the user chose these repos.
+func (s *store) ReconcileOrphanRepos(ctx context.Context) ([]orphanRepo, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT ir.installation_id, ir.repo_id, ir.full_name,
+		       COALESCE(ir.default_branch, '')
+		  FROM installation_repos ir
+		  LEFT JOIN projects p
+		    ON p.installation_id = ir.installation_id AND p.repo_id = ir.repo_id
+		 WHERE ir.removed_at IS NULL AND p.id IS NULL
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var created []orphanRepo
+	for rows.Next() {
+		var o orphanRepo
+		if err := rows.Scan(&o.InstallationID, &o.RepoID, &o.FullName, &o.DefaultBranch); err != nil {
+			return nil, err
+		}
+		branch := o.DefaultBranch
+		if branch == "" {
+			branch = "main"
+		}
+		tag, err := s.pool.Exec(ctx, `
+			INSERT INTO projects (installation_id, repo_id, full_name, slug,
+			                     production_branch, owner_user_id)
+			SELECT $1, $2, $3, $4, $5, i.owner_user_id
+			  FROM installations i WHERE i.id = $1
+			ON CONFLICT (installation_id, repo_id) DO NOTHING
+		`, o.InstallationID, o.RepoID, o.FullName, slugify(o.FullName), branch)
+		if err != nil {
+			return nil, err
+		}
+		if tag.RowsAffected() > 0 {
+			created = append(created, o)
+		}
+	}
+	return created, rows.Err()
 }
