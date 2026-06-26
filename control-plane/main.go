@@ -179,6 +179,9 @@ func main() {
 	bw := &worker{store: s.store, gh: gh, k8s: k8s, log: log}
 	go bw.Run(rootCtx)
 
+	br := &buildReconciler{store: s.store, k8s: k8s, log: log}
+	go br.Run(rootCtx)
+
 	// Self-rebuilder: polls our own git repo for new commits and triggers
 	// a fresh image build + rollout. Lets `git push` actually deploy
 	// control-plane changes without any manual kubectl steps.

@@ -986,6 +986,53 @@ func (s *store) MarkReady(ctx context.Context, deploymentID, url string) error {
 	return err
 }
 
+type inFlightDeployment struct {
+	ID        string
+	Status    string
+	StartedAt time.Time
+}
+
+// ListInFlightDeployments returns rows the build reconciler should watch.
+func (s *store) ListInFlightDeployments(ctx context.Context) ([]inFlightDeployment, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id::text, status, COALESCE(build_started_at, created_at)
+		  FROM deployments
+		 WHERE status IN ('building', 'deploying')
+		 ORDER BY COALESCE(build_started_at, created_at)
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []inFlightDeployment
+	for rows.Next() {
+		var d inFlightDeployment
+		if err := rows.Scan(&d.ID, &d.Status, &d.StartedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// RequeueDeployment resets a stuck in-flight row back to queued so the
+// worker can retry. Returns whether a row was updated.
+func (s *store) RequeueDeployment(ctx context.Context, deploymentID, reason string) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE deployments
+		   SET status = 'queued',
+		       build_started_at = NULL,
+		       build_ended_at = NULL,
+		       error = $2
+		 WHERE id = $1::uuid
+		   AND status IN ('building', 'deploying')
+	`, deploymentID, reason)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 // RequeueStale requeues any deployment that's been in a non-terminal state
 // longer than maxAge. Called periodically by the worker so a crashed or
 // terminated worker (rollout race, OOM, etc.) can't permanently strand a row.
@@ -1030,6 +1077,21 @@ func (s *store) MarkFailed(ctx context.Context, deploymentID, reason string) err
 		       build_ended_at = COALESCE(build_ended_at, now()),
 		       error = $2
 		 WHERE id = $1::uuid
+	`, deploymentID, reason)
+	return err
+}
+
+// MarkFailedIfInFlight marks a deployment failed only if it is still
+// building or deploying. The build reconciler may have already requeued
+// the row when it deleted a stuck Kaniko Job.
+func (s *store) MarkFailedIfInFlight(ctx context.Context, deploymentID, reason string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE deployments
+		   SET status = 'failed',
+		       build_ended_at = COALESCE(build_ended_at, now()),
+		       error = $2
+		 WHERE id = $1::uuid
+		   AND status IN ('building', 'deploying')
 	`, deploymentID, reason)
 	return err
 }

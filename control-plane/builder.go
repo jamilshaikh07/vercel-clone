@@ -27,7 +27,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 )
 
@@ -117,7 +116,7 @@ func (w *worker) tick(ctx context.Context) error {
 	if err := w.runOne(buildCtx, claim); err != nil {
 		w.log.Error("deployment failed",
 			"deployment_id", claim.DeploymentID, "err", err)
-		if markErr := w.store.MarkFailed(ctx, claim.DeploymentID, err.Error()); markErr != nil {
+		if markErr := w.store.MarkFailedIfInFlight(ctx, claim.DeploymentID, err.Error()); markErr != nil {
 			w.log.Error("mark failed failed", "err", markErr)
 		}
 		w.postStatus(ctx, claim, "failure", err.Error(), deploymentLogURL(claim.DeploymentID))
@@ -153,7 +152,7 @@ func (w *worker) runOne(ctx context.Context, c *claimedDeployment) error {
 	pushImage := registryPushHost + "/" + repoPath
 	pullImage := registryPullHost + "/" + repoPath
 	host := fmt.Sprintf("%s-%s.%s", c.Slug, shortSHA, tenantHostZone)
-	buildName := fmt.Sprintf("build-%s", strings.ReplaceAll(c.DeploymentID[:8], "-", ""))
+	buildName := buildJobName(c.DeploymentID)
 	gitSecretName := buildName + "-git"
 	deployName := fmt.Sprintf("%s-%s", c.Slug, shortSHA)
 
@@ -435,6 +434,8 @@ func (w *worker) ensureBuildJob(ctx context.Context, namespace, name string, spe
 
 func (w *worker) waitForJob(ctx context.Context, namespace, name string) error {
 	deadline := time.Now().Add(buildTimeout)
+	var seenJob bool
+	var nilSince time.Time
 	for {
 		select {
 		case <-ctx.Done():
@@ -446,10 +447,19 @@ func (w *worker) waitForJob(ctx context.Context, namespace, name string) error {
 			return fmt.Errorf("get job phase: %w", err)
 		}
 		if phase == nil {
-			// race after create
+			if seenJob {
+				return fmt.Errorf("build job deleted unexpectedly")
+			}
+			if nilSince.IsZero() {
+				nilSince = time.Now()
+			} else if time.Since(nilSince) > 2*time.Minute {
+				return fmt.Errorf("build job not found after create")
+			}
 			time.Sleep(time.Second)
 			continue
 		}
+		seenJob = true
+		nilSince = time.Time{}
 		switch {
 		case phase.Succeeded >= 1:
 			return nil
@@ -680,6 +690,7 @@ func buildJobManifest(in buildJobInput) map[string]any {
 		},
 		"spec": map[string]any{
 			"backoffLimit":            0,
+			"activeDeadlineSeconds":   1200,
 			"ttlSecondsAfterFinished": 1800,
 			"template": map[string]any{
 				"metadata": map[string]any{
@@ -737,7 +748,7 @@ func buildJobManifest(in buildJobInput) map[string]any {
 							},
 							"volumeMounts": []any{workspaceMount, dockerCfgMount},
 							"resources": map[string]any{
-								"requests": map[string]any{"cpu": "500m", "memory": "1Gi"},
+								"requests": map[string]any{"cpu": "1", "memory": "1536Mi"},
 								"limits":   map[string]any{"cpu": "2", "memory": "4Gi"},
 							},
 						},
