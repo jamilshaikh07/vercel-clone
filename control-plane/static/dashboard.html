@@ -664,23 +664,39 @@
       display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px;
     }
     .proj-icon {
-      width: 44px; height: 44px; border-radius: 10px; flex-shrink: 0;
-      border: 1px solid var(--border); overflow: hidden; position: relative;
-      background: var(--panel-3);
+      width: 44px; height: 44px; border-radius: 11px; flex-shrink: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid var(--border);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 13px; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; line-height: 1;
+      color: var(--proj-fg);
+      background:
+        radial-gradient(120% 120% at 18% 12%, var(--proj-glow) 0%, transparent 55%),
+        linear-gradient(155deg, var(--proj-bg-top) 0%, var(--proj-bg-bot) 100%);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.07),
+        0 1px 2px rgba(0, 0, 0, 0.18);
     }
-    .proj-icon-sm { width: 22px; height: 22px; border-radius: 6px; }
-    .proj-icon-fallback {
-      display: flex; align-items: center; justify-content: center;
-      width: 100%; height: 100%;
-      font-size: 14px; font-weight: 700; letter-spacing: -0.03em;
-      color: var(--text); text-transform: uppercase;
-      background: linear-gradient(145deg, var(--panel-2) 0%, var(--panel-3) 100%);
+    html[data-theme="light"] .proj-icon {
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.85),
+        0 1px 2px rgba(0, 0, 0, 0.06);
     }
-    .proj-icon-sm .proj-icon-fallback { font-size: 9px; }
-    .proj-icon-img {
-      position: absolute; inset: 0; width: 100%; height: 100%;
-      object-fit: cover; background: var(--panel);
+    .proj-icon-sm {
+      width: 24px; height: 24px; border-radius: 7px;
+      font-size: 9px; letter-spacing: 0.04em;
     }
+    .proj-icon[data-tone="0"] { --proj-bg-top:#1c1c1c; --proj-bg-bot:#101010; --proj-fg:#f5f5f5; --proj-glow:rgba(255,255,255,0.12); }
+    .proj-icon[data-tone="1"] { --proj-bg-top:#1a1a1a; --proj-bg-bot:#0e0e0e; --proj-fg:#ededed; --proj-glow:rgba(255,255,255,0.1); }
+    .proj-icon[data-tone="2"] { --proj-bg-top:#181818; --proj-bg-bot:#0c0c0c; --proj-fg:#e5e5e5; --proj-glow:rgba(255,255,255,0.11); }
+    .proj-icon[data-tone="3"] { --proj-bg-top:#1e1e1e; --proj-bg-bot:#121212; --proj-fg:#fafafa; --proj-glow:rgba(255,255,255,0.13); }
+    .proj-icon[data-tone="4"] { --proj-bg-top:#171717; --proj-bg-bot:#0a0a0a; --proj-fg:#d4d4d4; --proj-glow:rgba(255,255,255,0.09); }
+    html[data-theme="light"] .proj-icon[data-tone="0"] { --proj-bg-top:#f4f4f5; --proj-bg-bot:#d4d4d8; --proj-fg:#09090b; --proj-glow:rgba(255,255,255,0.65); }
+    html[data-theme="light"] .proj-icon[data-tone="1"] { --proj-bg-top:#ececee; --proj-bg-bot:#cbcbd1; --proj-fg:#18181b; --proj-glow:rgba(255,255,255,0.7); }
+    html[data-theme="light"] .proj-icon[data-tone="2"] { --proj-bg-top:#e4e4e7; --proj-bg-bot:#c4c4ca; --proj-fg:#27272a; --proj-glow:rgba(255,255,255,0.68); }
+    html[data-theme="light"] .proj-icon[data-tone="3"] { --proj-bg-top:#f0f0f1; --proj-bg-bot:#d0d0d5; --proj-fg:#0a0a0a; --proj-glow:rgba(255,255,255,0.72); }
+    html[data-theme="light"] .proj-icon[data-tone="4"] { --proj-bg-top:#eaeaea; --proj-bg-bot:#c8c8ce; --proj-fg:#3f3f46; --proj-glow:rgba(255,255,255,0.66); }
     .project-card .pc-title { font-weight: 600; font-size: 14px; line-height: 1.3; }
     .project-card .pc-repo { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
     .project-card .pc-spark { height: 32px; margin: 8px 0; opacity: 0.9; }
@@ -3522,34 +3538,50 @@ function projectLabel(p) {
   return dash > 0 ? slug.slice(dash + 1) : slug;
 }
 
-function projectIconHost(proj) {
-  const urls = liveURLHostsForProject(proj);
-  if (urls.custom) return urls.custom;
-  if (urls.spinup) {
-    try { return new URL(urls.spinup).hostname; } catch (_) { /* fall through */ }
+function projectInitials(proj) {
+  const label = (projectLabel(proj) || '').trim();
+  const slug = (proj.slug || '').replace(/^[^-]+-/, ''); // drop owner- prefix
+
+  // "Urban Equestrian" → UE
+  const words = label.split(/[\s._]+/).filter(w => /[a-zA-Z0-9]/.test(w));
+  if (words.length >= 2) {
+    return (words[0][0] + words[1][0]).toUpperCase();
   }
-  if (proj.slug) return proj.slug + '.spinup.in';
-  const owner = (proj.full_name || '').split('/')[0];
-  return owner || 'spinup.in';
+
+  // owner-repo slug segments → first letter each
+  const segs = slug.split(/[-_]+/).filter(Boolean);
+  if (segs.length >= 2) {
+    return (segs[0][0] + segs[1][0]).toUpperCase();
+  }
+
+  // camelCase → first cap boundary (myCoolApp → MC)
+  const camel = label.match(/[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+/g);
+  if (camel && camel.length >= 2) {
+    return (camel[0][0] + camel[1][0]).toUpperCase();
+  }
+
+  const word = (label || slug).replace(/[^a-zA-Z0-9]/g, '');
+  if (!word) return '??';
+
+  // urbanequestrian → urban|equestrian → UE
+  const compound = word.match(/^([a-z]+[bcdfghjklmnpqrstvwxyz])([aeiouAEIOU][a-zA-Z0-9]+)$/);
+  if (compound) return (compound[1][0] + compound[2][0]).toUpperCase();
+
+  if (word.length >= 2) return word.slice(0, 2).toUpperCase();
+  return word[0].toUpperCase();
 }
 
-function projectInitials(proj) {
-  const label = projectLabel(proj);
-  const parts = label.replace(/[^a-zA-Z0-9\s]/g, ' ').trim().split(/\s+/).filter(Boolean);
-  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
-  if (parts[0] && parts[0].length >= 2) return parts[0].slice(0, 2).toUpperCase();
-  return (proj.slug || '??').slice(0, 2).toUpperCase();
+function projectIconTone(proj) {
+  let h = 0;
+  const key = proj.id || proj.slug || proj.full_name || 'app';
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  return h % 5;
 }
 
 function projectIconHTML(proj, sizeClass) {
-  const host = projectIconHost(proj);
   const initials = projectInitials(proj);
-  const favicon = 'https://www.google.com/s2/favicons?domain=' + encodeURIComponent(host) + '&sz=64';
   const cls = 'proj-icon' + (sizeClass ? ' ' + sizeClass : '');
-  return `<span class="${cls}" title="${escapeHTML(host)}">
-    <span class="proj-icon-fallback">${escapeHTML(initials)}</span>
-    <img class="proj-icon-img" src="${escapeHTML(favicon)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">
-  </span>`;
+  return `<span class="${cls}" data-tone="${projectIconTone(proj)}" title="${escapeHTML(projectLabel(proj))}">${escapeHTML(initials)}</span>`;
 }
 
 function renderHome() {
@@ -7020,11 +7052,6 @@ window.navigate = navigate;
 
 initUserMenu();
 loadMe();
-
-document.addEventListener('error', (ev) => {
-  const img = ev.target;
-  if (img && img.classList && img.classList.contains('proj-icon-img')) img.remove();
-}, true);
 
 $('page-settings')?.addEventListener('click', async (ev) => {
   const btn = ev.target.closest('#settings-general .copy');
