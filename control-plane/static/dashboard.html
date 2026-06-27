@@ -141,10 +141,47 @@
       font-weight: 700; font-size: 15px; letter-spacing: 0.02em;
       color: var(--text);
     }
-    .brand .meta {
-      margin-left: auto;
-      font-size: 10px; color: var(--text-dim);
-      font-family: ui-monospace, monospace;
+
+    /* Header theme toggle — moved out of the user menu so account stays
+       account-only and theme is always one click away. */
+    .head-theme-picker {
+      display: inline-flex; flex-shrink: 0;
+      border: 1px solid var(--border); border-radius: 8px;
+      overflow: hidden; background: var(--panel);
+    }
+    .head-theme-picker button {
+      width: 34px; height: 34px; padding: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: transparent; border: none; color: var(--text-dim);
+      cursor: pointer; transition: color 0.1s, background 0.1s;
+    }
+    .head-theme-picker button + button { border-left: 1px solid var(--border); }
+    .head-theme-picker button:hover { color: var(--text); background: var(--panel-2); }
+    .head-theme-picker button[aria-checked="true"] {
+      color: var(--text); background: var(--accent-dim); font-weight: 600;
+    }
+    .head-theme-picker button svg { display: block; }
+
+    /* Docs / backstory page */
+    .docs-page { padding: 28px 32px 40px; max-width: 720px; }
+    .docs-page .docs-eyebrow {
+      font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--text-dim); font-weight: 600; margin-bottom: 10px;
+    }
+    .docs-page h1 { margin: 0 0 12px; font-size: 28px; font-weight: 700; letter-spacing: -0.02em; }
+    .docs-page .docs-lead { font-size: 15px; line-height: 1.6; color: var(--text); margin-bottom: 28px; }
+    .docs-page .docs-section { margin-bottom: 28px; padding-bottom: 24px; border-bottom: 1px solid var(--border); }
+    .docs-page .docs-section:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+    .docs-page h2 { margin: 0 0 10px; font-size: 16px; font-weight: 700; }
+    .docs-page p { margin: 0 0 10px; font-size: 13px; line-height: 1.65; color: var(--text-dim); }
+    .docs-page p:last-child { margin-bottom: 0; }
+    .docs-page ul { margin: 8px 0 0; padding-left: 1.2em; font-size: 13px; line-height: 1.65; color: var(--text-dim); }
+    .docs-page li { margin: 0.35em 0; }
+    .docs-page li strong { color: var(--text); font-weight: 600; }
+    .docs-page a { color: var(--text); font-weight: 600; }
+    .docs-page .docs-mission {
+      border-left: 3px solid var(--border); padding-left: 14px;
+      font-size: 14px; color: var(--text); line-height: 1.6; margin: 0 0 10px;
     }
 
     /* === Sub-sidebar (per-app navigation) ================================ */
@@ -393,31 +430,6 @@
       font-size: 10px; font-weight: 600; text-transform: uppercase;
       letter-spacing: 0.08em; color: var(--text-faint);
       margin-bottom: 8px;
-    }
-    .theme-picker {
-      display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
-      gap: 0;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      overflow: hidden;
-      background: var(--bg-2);
-    }
-    .theme-picker button {
-      border: none;
-      background: transparent;
-      color: var(--text-dim);
-      padding: 6px 4px;
-      font-size: 11px; font-weight: 500;
-      cursor: pointer;
-      font-family: inherit;
-    }
-    .theme-picker button + button { border-left: 1px solid var(--border); }
-    .theme-picker button:hover { color: var(--text); background: var(--panel-2); }
-    .theme-picker button[aria-checked="true"] {
-      background: var(--accent-dim);
-      color: var(--text);
-      font-weight: 600;
     }
     .user-menu-item {
       display: block; width: 100%;
@@ -2133,7 +2145,6 @@
           </svg>
         </span>
         <span class="name">spinup</span>
-        <span class="meta">v1</span>
       </a>
       <div class="sidebar-scroll">
         <!-- Primary navigation: Home shows the apps list; Monitoring
@@ -2159,6 +2170,7 @@
         <div class="nav-section">
           <div class="nav-section-title muted">Platform</div>
           <ul class="nav-list">
+            <li><a class="nav-item" data-globalview="docs" href="#/docs"><span class="label">Docs</span></a></li>
             <li><a class="nav-item" data-globalview="alerts" href="#/alerts"><span class="label">Alerts</span><span class="nav-badge soon">Soon</span></a></li>
             <li><a class="nav-item" data-globalview="integrations" href="#/integrations"><span class="label">Integrations</span><span class="nav-badge soon">Soon</span></a></li>
           </ul>
@@ -2175,10 +2187,7 @@
           <ul class="nav-list" id="main-sidebar-apps"></ul>
         </div>
       </div>
-      <!-- Sidebar footer: minimal. Per-user controls (avatar, theme,
-           sign out) moved into the topbar user menu so the rail stays
-           focused on app navigation. The only thing that needs to live
-           down here is a way to reach a human when something breaks. -->
+      <!-- Sidebar footer: support link only — theme + account live in the top bar. -->
       <div class="sidebar-footer">
         <a class="support-link" href="mailto:hi@spinup.in?subject=spinup%20support" title="Email support">
           <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M2 3h12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm0 2v.4l6 3.6 6-3.6V5H2zm0 2.1V12h12V7.1l-5.5 3.3a1 1 0 0 1-1 0L2 7.1z"/></svg>
@@ -2239,9 +2248,18 @@
         <span class="spacer"></span>
         <a id="visit-app" class="visit-btn" target="_blank" rel="noopener" title="Open this app in a new tab">Visit ↗</a>
         <span class="meta" id="meta">loading…</span>
-        <!-- User menu. Avatar opens a dropdown with the signed-in
-             user, a System/Light/Dark theme picker, and Sign out.
-             populateUserMenu() fills in the avatar/email from /v1/me. -->
+        <div class="head-theme-picker" role="radiogroup" aria-label="Theme">
+          <button type="button" data-theme-choice="system" role="radio" aria-checked="false" title="System theme">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2" y="3" width="12" height="9" rx="1"/><path d="M5 14h6"/></svg>
+          </button>
+          <button type="button" data-theme-choice="light" role="radio" aria-checked="false" title="Light theme">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.05 3.05l1.06 1.06M11.89 11.89l1.06 1.06M3.05 12.95l1.06-1.06M11.89 4.11l1.06-1.06"/></svg>
+          </button>
+          <button type="button" data-theme-choice="dark" role="radio" aria-checked="false" title="Dark theme">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M6.2 2.5a5.5 5.5 0 1 0 7.3 7.3A4.5 4.5 0 0 1 6.2 2.5z"/></svg>
+          </button>
+        </div>
+        <!-- User menu — identity + sign out only; theme lives in the header. -->
         <div class="user-menu" id="user-menu">
           <button class="user-menu-btn" id="user-menu-btn" type="button" aria-haspopup="true" aria-expanded="false" title="Account">
             <span class="avatar" id="user-menu-avatar">?</span>
@@ -2252,14 +2270,6 @@
               <div class="user-menu-id-text">
                 <div class="name" id="user-menu-name">—</div>
                 <div class="email" id="user-menu-email">—</div>
-              </div>
-            </div>
-            <div class="user-menu-section">
-              <div class="user-menu-section-label">Theme</div>
-              <div class="theme-picker" role="radiogroup" aria-label="Theme">
-                <button type="button" data-theme-choice="system" role="radio" aria-checked="false">System</button>
-                <button type="button" data-theme-choice="light"  role="radio" aria-checked="false">Light</button>
-                <button type="button" data-theme-choice="dark"   role="radio" aria-checked="false">Dark</button>
               </div>
             </div>
             <div class="user-menu-section">
@@ -2293,6 +2303,48 @@
                 <span id="activity-asof" style="color:var(--text-faint);font-size:11px;">—</span>
               </div>
               <div class="activity-feed" id="activity-feed-body"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- GLOBAL: Docs / backstory -->
+        <div class="page" id="page-docs">
+          <div class="page-inner docs-page">
+            <p class="docs-eyebrow">About Spinup</p>
+            <h1>Push to GitHub.<br>Get a live URL.</h1>
+            <p class="docs-lead">Spinup is a self-hosted deployment platform — a Vercel-style experience running on a bare-metal Kubernetes homelab in India.</p>
+
+            <div class="docs-section">
+              <h2>Why this exists</h2>
+              <p class="docs-mission">Built so students and indie builders can ship real projects without Vercel-scale bills. The infrastructure is mine; the goal is to make “git push → HTTPS URL” accessible to people who would otherwise stall on cost or complexity.</p>
+              <p>Spinup started as a homelab experiment: could a two-node Talos cluster reliably turn a GitHub push into a running app with TLS, logs, env vars, and Postgres — with no human in the loop? The answer turned out to be yes, and this dashboard is the control plane for that pipeline.</p>
+            </div>
+
+            <div class="docs-section">
+              <h2>How it works</h2>
+              <ul>
+                <li><strong>Connect a repo</strong> — install the Spinup GitHub App on a repository you own.</li>
+                <li><strong>Push code</strong> — every push queues a build. Kaniko builds your Dockerfile (or auto-detects a static/Node app) inside the cluster.</li>
+                <li><strong>Go live</strong> — a Deployment, Service, and IngressRoute appear automatically. Production branch deploys get a stable <code>*.spinup.in</code> alias; every commit gets its own preview URL.</li>
+                <li><strong>Configure</strong> — env vars, optional Postgres, custom domains, and rollback from this dashboard.</li>
+              </ul>
+            </div>
+
+            <div class="docs-section">
+              <h2>What's included today</h2>
+              <ul>
+                <li>HTTPS via Cloudflare Tunnel (no cert-manager juggling)</li>
+                <li>Per-project Postgres on a shared CloudNativePG cluster</li>
+                <li>Build logs, deployment history, instant rollback</li>
+                <li>Request telemetry and traffic charts from Traefik access logs</li>
+                <li>Custom domain verification (TXT + CNAME)</li>
+              </ul>
+            </div>
+
+            <div class="docs-section">
+              <h2>What we're not (yet)</h2>
+              <p>Spinup is invite-only while the cluster scales. There's no multi-region, no team RBAC, and no managed registry SLA — images live on an in-cluster registry. Treat it as production-capable for side projects and learning, not as a replacement for Vercel at enterprise scale.</p>
+              <p>Questions or access requests: <a href="mailto:hi@spinup.in">hi@spinup.in</a> · Public landing page: <a href="/" target="_blank" rel="noopener">spinup.in</a></p>
             </div>
           </div>
         </div>
@@ -2555,6 +2607,7 @@ const pageEls = {
   settings:     $('page-settings'),
   domains:      $('page-domains'),
   activity:     $('page-activity'),
+  docs:         $('page-docs'),
   alerts:       $('page-alerts'),
   integrations: $('page-integrations'),
 };
@@ -2671,23 +2724,6 @@ async function loadMe() {
   } catch (e) { /* loadMe runs after fetchJSON already redirects on 401 */ }
 }
 
-// loadVersion fills the brand 'meta' slot with the short SHA of the
-// currently-running control-plane image. Sourced from the self-rebuilder
-// state ConfigMap so it auto-updates after every successful rollout.
-async function loadVersion() {
-  const el = document.querySelector('.brand .meta');
-  if (!el) return;
-  try {
-    const v = await fetch('/v1/version', { credentials: 'same-origin', cache: 'no-store' });
-    if (!v.ok) return;
-    const data = await v.json();
-    if (data.short_sha) {
-      el.textContent = data.short_sha;
-      el.title = (data.sha || '') + (data.updated_at ? ` — built ${data.updated_at}` : '');
-    }
-  } catch (_) { /* keep the default 'v1' placeholder on failure */ }
-}
-
 // --- Theme + user menu ---------------------------------------------------
 //
 // The pre-paint script in <head> already resolved the saved preference
@@ -2722,7 +2758,7 @@ function applyThemePref(pref) {
 // safe to call whenever menus open or themes change.
 function paintThemePicker() {
   const pref = currentThemePref();
-  document.querySelectorAll('.theme-picker button[data-theme-choice]').forEach(b => {
+  document.querySelectorAll('.head-theme-picker button[data-theme-choice]').forEach(b => {
     b.setAttribute('aria-checked', String(b.dataset.themeChoice === pref));
   });
 }
@@ -2739,10 +2775,8 @@ function initUserMenu() {
     });
   }
 
-  // Theme picker buttons: each writes the new preference and re-renders.
-  // We keep the menu open after a click so the user can preview each
-  // option without re-opening the popover.
-  document.querySelectorAll('.theme-picker button[data-theme-choice]').forEach(b => {
+  // Theme picker in the header toolbar.
+  document.querySelectorAll('.head-theme-picker button[data-theme-choice]').forEach(b => {
     b.addEventListener('click', (ev) => {
       ev.stopPropagation();
       applyThemePref(b.dataset.themeChoice);
@@ -2932,8 +2966,8 @@ function parseHash() {
     return route;
   }
 
-  // #/activity | #/telemetry | #/traffic | #/alerts | #/integrations
-  if (raw === 'activity' || raw === 'telemetry' || raw === 'traffic' ||
+  // #/activity | #/docs | #/telemetry | #/traffic | #/alerts | #/integrations
+  if (raw === 'activity' || raw === 'docs' || raw === 'telemetry' || raw === 'traffic' ||
       raw === 'alerts' || raw === 'integrations') {
     return { scope: 'global', view: raw };
   }
@@ -3175,7 +3209,7 @@ function renderCrumbs() {
   }
   if (ROUTE.scope === 'global') {
     const labels = {
-      activity: 'Activity', telemetry: 'Telemetry', traffic: 'Traffic',
+      activity: 'Activity', docs: 'Docs', telemetry: 'Telemetry', traffic: 'Traffic',
       alerts: 'Alerts', integrations: 'Integrations',
     };
     const label = labels[ROUTE.view] || ROUTE.view;
@@ -3352,8 +3386,7 @@ function showPage(isNavigation) {
 
   if (ROUTE.scope === 'global') {
     if (ROUTE.view === 'activity') return renderActivityPage();
-    if (ROUTE.view === 'alerts') return;
-    if (ROUTE.view === 'integrations') return;
+    if (ROUTE.view === 'docs' || ROUTE.view === 'alerts' || ROUTE.view === 'integrations') return;
     if (monTabs) monTabs.style.display = 'none';
     paintMonitoringPanels(ROUTE.view);
     const selfManaged = ROUTE.view === 'telemetry' || ROUTE.view === 'traffic';
@@ -6941,7 +6974,6 @@ window.navigate = navigate;
 
 initUserMenu();
 loadMe();
-loadVersion();
 
 $('page-settings')?.addEventListener('click', async (ev) => {
   const btn = ev.target.closest('#settings-general .copy');
