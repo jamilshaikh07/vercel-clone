@@ -1409,6 +1409,20 @@
       50%      { box-shadow: 0 0 0 6px rgba(255, 107, 107, 0.0); }
     }
 
+    /* Ops callout — clarifies Monitoring pages are infra signals, not
+       product / visitor analytics. */
+    .ops-callout {
+      display: flex; gap: 10px; align-items: flex-start;
+      padding: 10px 14px; margin-bottom: 14px;
+      border: 1px solid var(--border); border-radius: 8px;
+      background: var(--panel-2);
+      font-size: 12px; line-height: 1.55; color: var(--text-dim);
+    }
+    .ops-callout strong {
+      color: var(--text); font-weight: 600; flex-shrink: 0;
+      font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
+    }
+
     /* === Domains page ===================================================
        Per-domain card with a clear "DNS records to publish" block —
        we show TXT (for verification) and CNAME (for routing) as two
@@ -2193,8 +2207,8 @@
                  title="Connect a new GitHub repo" aria-label="Connect a new GitHub repo">+</a>
             </li>
             <li><a class="nav-item" data-globalview="activity" href="#/activity"><span class="label">Activity</span></a></li>
-            <li><a class="nav-item" data-globalview="telemetry" href="#/telemetry"><span class="label">Telemetry</span></a></li>
-            <li><a class="nav-item" data-globalview="traffic" href="#/traffic"><span class="label">Traffic</span></a></li>
+            <li><a class="nav-item" data-globalview="telemetry" href="#/telemetry"><span class="label">Resources</span></a></li>
+            <li><a class="nav-item" data-globalview="traffic" href="#/traffic"><span class="label">Edge</span></a></li>
           </ul>
         </div>
         <div class="nav-section">
@@ -2366,7 +2380,7 @@
                 <li>HTTPS via Cloudflare Tunnel (no cert-manager juggling)</li>
                 <li>Per-project Postgres on a shared CloudNativePG cluster</li>
                 <li>Build logs, deployment history, instant rollback</li>
-                <li>Request telemetry and traffic charts from Traefik access logs</li>
+                <li>Ops monitoring — pod resources and edge HTTP counts from Traefik (not visitor analytics)</li>
                 <li>Custom domain verification (TXT + CNAME)</li>
               </ul>
             </div>
@@ -2511,8 +2525,8 @@
         <div class="page" id="page-monitoring">
           <div class="page-inner">
             <nav class="section-tabs" id="monitoring-tabs" aria-label="Monitoring sections">
-              <a class="section-tab" data-tab="telemetry" href="#">Telemetry</a>
-              <a class="section-tab" data-tab="traffic" href="#">Traffic</a>
+              <a class="section-tab" data-tab="telemetry" href="#">Resources</a>
+              <a class="section-tab" data-tab="traffic" href="#">Edge requests</a>
               <a class="section-tab" data-tab="insights" href="#">Insights</a>
             </nav>
             <div class="section-panel page-inner-panel active" id="monitoring-panel-telemetry">
@@ -3240,7 +3254,7 @@ function renderCrumbs() {
   }
   if (ROUTE.scope === 'global') {
     const labels = {
-      activity: 'Activity', docs: 'Docs', telemetry: 'Telemetry', traffic: 'Traffic',
+      activity: 'Activity', docs: 'Docs', telemetry: 'Resources', traffic: 'Edge requests',
       alerts: 'Alerts', integrations: 'Integrations',
     };
     const label = labels[ROUTE.view] || ROUTE.view;
@@ -3252,7 +3266,10 @@ function renderCrumbs() {
     overview: 'Overview', runtime: 'Runtime', domains: 'Domains',
     monitoring: 'Monitoring', settings: 'Settings',
   })[ROUTE.view] || ROUTE.view;
-  const tabNames = { logs: 'Status', env: 'Env vars', database: 'Database' };
+  const tabNames = {
+    logs: 'Status', env: 'Env vars', database: 'Database',
+    telemetry: 'Resources', traffic: 'Edge requests', insights: 'Insights',
+  };
   const tabLabel = ROUTE.tab ? ` / ${tabNames[ROUTE.tab] || ROUTE.tab}` : '';
   crumbsEl.innerHTML = `Apps <span class="sep">/</span> <strong>${escapeHTML(proj ? projectLabel(proj) : '?')}</strong> <span class="sep">/</span> ${escapeHTML(viewLabel + tabLabel)}`;
 
@@ -3865,7 +3882,7 @@ function renderOverviewCommandCenter(proj) {
     <div class="panel">
       <div class="panel-head"><h3>Live signals · 1h</h3></div>
       <div class="mini-charts-row">
-        <div><div class="mini-chart-label">Requests</div><div id="ov-spark-req"></div></div>
+        <div><div class="mini-chart-label">Edge requests</div><div id="ov-spark-req"></div></div>
         <div><div class="mini-chart-label">CPU</div><div id="ov-spark-cpu"></div></div>
       </div>
     </div>`;
@@ -4155,23 +4172,23 @@ function renderOverview() {
       <div class="value" style="font-size:14px;font-family:ui-monospace,monospace;">${latest ? latest.status : '—'}</div>
       <div class="sub">${latest ? timeAgo(latest.created_at) : 'no deployments yet'}</div>
     </div>
-    <a class="stat stat-link" id="cpu-tile" href="#/p/${proj.id}/monitoring/telemetry" title="Open Telemetry">
+    <a class="stat stat-link" id="cpu-tile" href="#/p/${proj.id}/monitoring/telemetry" title="Open Resources">
       <div class="label">CPU</div>
       <div class="value" style="font-size:18px;color:var(--text-dim);">…</div>
       <div class="sub">live</div>
     </a>
-    <a class="stat stat-link" id="mem-tile" href="#/p/${proj.id}/monitoring/telemetry" title="Open Telemetry">
+    <a class="stat stat-link" id="mem-tile" href="#/p/${proj.id}/monitoring/telemetry" title="Open Resources">
       <div class="label">Memory</div>
       <div class="value" style="font-size:18px;color:var(--text-dim);">…</div>
       <div class="sub">live</div>
     </a>
-    <a class="stat stat-link" id="req-tile" href="#/p/${proj.id}/monitoring/traffic" title="Open Traffic">
-      <div class="label">Requests</div>
+    <a class="stat stat-link" id="req-tile" href="#/p/${proj.id}/monitoring/traffic" title="Open Edge requests">
+      <div class="label">Edge requests</div>
       <div class="value" style="font-size:18px;color:var(--text-dim);">…</div>
-      <div class="sub">since Traefik start</div>
+      <div class="sub">since Traefik restart</div>
     </a>
-    <a class="stat stat-link" id="err-tile" href="#/p/${proj.id}/monitoring/traffic" title="Open Traffic">
-      <div class="label">Error rate</div>
+    <a class="stat stat-link" id="err-tile" href="#/p/${proj.id}/monitoring/traffic" title="Open Edge requests">
+      <div class="label">Server errors</div>
       <div class="value" style="font-size:18px;color:var(--text-dim);">…</div>
       <div class="sub">5xx share</div>
     </a>`;
@@ -4763,8 +4780,8 @@ async function loadAndRenderProjectTelemetryTiles(projectID) {
     });
     cpuTile.querySelector('.sub').textContent = 'no live pods';
     memTile.querySelector('.sub').textContent = 'no live pods';
-    reqTile.querySelector('.sub').textContent = 'no traffic yet';
-    errTile.querySelector('.sub').textContent = 'no traffic yet';
+    reqTile.querySelector('.sub').textContent = 'no edge traffic yet';
+    errTile.querySelector('.sub').textContent = 'no edge traffic yet';
     return;
   }
   // Populate. CPU + Memory are absolute (cluster sees current pod
@@ -4779,8 +4796,8 @@ async function loadAndRenderProjectTelemetryTiles(projectID) {
 
   reqTile.querySelector('.value').textContent = fmtCount(app.requests);
   reqTile.querySelector('.sub').textContent   = app.avg_latency_ms
-    ? `avg ${app.avg_latency_ms} ms`
-    : 'avg latency —';
+    ? `avg ${app.avg_latency_ms} ms · Traefik edge`
+    : 'Traefik · incl. health probes';
 
   const errPct = app.requests > 0
     ? (app.errors / app.requests) * 100
@@ -5997,6 +6014,13 @@ const RANGE_KEYS = ['5m', '15m', '1h', '1d', '1w'];
 let telemetryRange = '1h';
 let trafficRange   = '1h';
 
+const OPS_EDGE_NOTE = 'HTTP requests Traefik routed to your app — assets, APIs, bots, and Spinup health probes (~2–4 every 30s). Not visitors or page analytics.';
+const OPS_RESOURCES_NOTE = 'Pod CPU and memory from Kubernetes metrics-server. Use this after deploys to spot resource pressure — not user or business analytics.';
+
+function opsCallout(text) {
+  return `<div class="ops-callout"><strong>Ops signal</strong><span>${escapeHTML(text)}</span></div>`;
+}
+
 // rangeBarHTML renders the segmented selector for the active page.
 // `asofID` is the DOM id for the right-aligned 'updated HH:MM:SS'
 // slot so each page can keep its existing as-of element working
@@ -6078,18 +6102,19 @@ function renderTraffic() {
 function renderGlobalTelemetry() {
   const root = $('telemetry-content');
   root.innerHTML = `
+    ${opsCallout(OPS_RESOURCES_NOTE)}
     <div class="summary" id="telemetry-summary"></div>
     <div class="panel">
       <div class="panel-head">
-        <h3>Per-app live signals</h3>
+        <h3>Per-app resources</h3>
         <span class="spacer"></span>
         <span id="telemetry-asof" style="color:var(--text-faint);font-size:11px;">—</span>
       </div>
       <table class="recent-table" id="telemetry-table">
         <thead><tr>
           <th>App</th><th class="num">Pods</th><th class="num">CPU</th>
-          <th class="num">Memory</th><th class="num">Requests</th>
-          <th class="num">Errors</th><th class="num">Avg latency</th>
+          <th class="num">Memory</th><th class="num">Edge requests</th>
+          <th class="num">5xx</th><th class="num">Avg latency</th>
         </tr></thead>
         <tbody id="telemetry-rows"><tr><td colspan="7" style="color:var(--text-dim);font-style:italic;">loading…</td></tr></tbody>
       </table>
@@ -6114,7 +6139,7 @@ async function tickGlobalTelemetry() {
     <div class="stat"><div class="label">Total pods</div><div class="value">${data.total_pods}</div></div>
     <div class="stat"><div class="label">CPU usage</div><div class="value">${fmtCPU(data.total_cpu_m)}</div></div>
     <div class="stat"><div class="label">Memory</div><div class="value">${fmtMem(data.total_memory_mi)}</div></div>
-    <div class="stat"><div class="label">Requests served</div><div class="value">${fmtCount(data.total_requests)}</div><div class="sub">since Traefik start</div></div>`;
+    <div class="stat"><div class="label">Edge requests</div><div class="value">${fmtCount(data.total_requests)}</div><div class="sub">since Traefik restart</div></div>`;
   $('telemetry-asof').textContent = 'updated ' + new Date(data.as_of).toLocaleTimeString();
 
   const apps = data.apps || [];
@@ -6141,15 +6166,16 @@ async function tickGlobalTelemetry() {
 function renderGlobalTraffic() {
   const root = $('traffic-content');
   root.innerHTML = `
+    ${opsCallout(OPS_EDGE_NOTE)}
     <div class="panel">
       <div class="panel-head">
-        <h3>Traffic per app</h3>
+        <h3>Edge requests per app</h3>
         <span class="spacer"></span>
         <span id="traffic-asof" style="color:var(--text-faint);font-size:11px;">—</span>
       </div>
       <table class="recent-table" id="traffic-table">
         <thead><tr>
-          <th>App</th><th class="num">Requests</th><th class="num">Errors</th>
+          <th>App</th><th class="num">Edge requests</th><th class="num">5xx</th>
           <th class="num">Avg latency</th><th style="width:30%">Share</th>
         </tr></thead>
         <tbody id="traffic-rows"><tr><td colspan="5" style="color:var(--text-dim);font-style:italic;">loading…</td></tr></tbody>
@@ -6685,6 +6711,7 @@ function renderProjectTelemetry() {
   const memLbl    = `MiB · ${meta.label}`;
   const bucketLbl = `per ${meta.bucket.replace(' buckets', '')} window`;
   root.innerHTML = `
+    ${opsCallout(OPS_RESOURCES_NOTE)}
     ${rangeBarHTML('pt-range', telemetryRange, 'pt-asof')}
     <div class="summary" id="pt-summary"></div>
     <div class="chart-grid">
@@ -6706,7 +6733,7 @@ function renderProjectTelemetry() {
       </div>
       <div class="panel">
         <div class="panel-head">
-          <h3>Requests by status</h3>
+          <h3>Edge requests by status</h3>
           <span class="spacer"></span>
           <span style="color:var(--text-faint);font-size:11px;">${bucketLbl}</span>
         </div>
@@ -6774,7 +6801,7 @@ async function tickProjectTelemetry() {
     kpiTile('CPU', fmtCPU(snap.total_cpu_m), 'current'),
     kpiTile('Memory', fmtMem(snap.total_memory_mi), 'current'),
     kpiTile('Avg RPS', avgRps.toFixed(2), winSub),
-    kpiTile('Requests', fmtCount(totalReqs), winSub),
+    kpiTile('Edge requests', fmtCount(totalReqs), winSub),
   ].join('');
 
   // Charts
@@ -6801,7 +6828,7 @@ async function tickProjectTelemetry() {
       { name: 'p99', color: 'var(--err)',  values: pts.map(p => p.latency_p99_ms) },
     ], { times, yFormat: v => v + 'ms', height: 180 });
   } else {
-    $('pt-latency').innerHTML = `<div class="empty" style="padding:30px;color:var(--text-dim);font-style:italic;">No requests in the window yet — waiting for traffic.</div>`;
+    $('pt-latency').innerHTML = `<div class="empty" style="padding:30px;color:var(--text-dim);font-style:italic;">No edge requests in the window yet — waiting for Traefik traffic.</div>`;
   }
 
   // Pod table with inline CPU/mem horizontal bars relative to project max.
@@ -6837,12 +6864,13 @@ function renderProjectTraffic() {
   const meta = RANGE_META[trafficRange];
   const winLbl = `last ${meta.label} · ${meta.bucket}`;
   root.innerHTML = `
+    ${opsCallout(OPS_EDGE_NOTE)}
     ${rangeBarHTML('pa-range', trafficRange, 'pa-asof')}
     <div id="pa-incidents" style="display:none;"></div>
     <div class="summary" id="pa-summary"></div>
     <div class="panel">
       <div class="panel-head">
-        <h3>Requests by status</h3>
+        <h3>Edge requests by status</h3>
         <span class="spacer"></span>
         <span style="color:var(--text-faint);font-size:11px;">${winLbl}</span>
       </div>
@@ -6855,7 +6883,7 @@ function renderProjectTraffic() {
         <div class="panel-head">
           <h3>Status distribution</h3>
           <span class="spacer"></span>
-          <span style="color:var(--text-faint);font-size:11px;">lifetime</span>
+          <span style="color:var(--text-faint);font-size:11px;">since Traefik restart</span>
         </div>
         <div class="panel-body" style="padding: 14px 16px;"><div id="pa-donut"></div></div>
       </div>
@@ -6929,15 +6957,15 @@ async function tickProjectTraffic() {
   paintIncidents(detectIncidents(pts, metrics.interval_s || 30));
 
   $('pa-summary').innerHTML = [
-    kpiTile('Requests', fmtCount(winReqs), winLabel),
-    kpiTile('Error rate', errPct.toFixed(errPct < 1 ? 2 : 1) + '%',
+    kpiTile('Edge requests', fmtCount(winReqs), winLabel),
+    kpiTile('Server error rate', errPct.toFixed(errPct < 1 ? 2 : 1) + '%',
             win5xx > 0
               ? `${fmtCount(win5xx)} 5xx${win4xx ? ` · ${fmtCount(win4xx)} 4xx` : ''} · ${winLabel}`
               : win4xx > 0
                 ? `0 5xx · ${fmtCount(win4xx)} 4xx (client) · ${winLabel}`
                 : 'no errors in window',
             errPct > 5 ? 'err' : errPct > 1 ? 'warn' : 'ok'),
-    kpiTile('Avg latency', fmtMs(tel.avg_latency_ms), 'lifetime'),
+    kpiTile('Avg latency', fmtMs(tel.avg_latency_ms), 'since Traefik restart'),
     kpiTile('p95', fmtMs(lastWithLat.latency_p95_ms || 0), 'last active window'),
     kpiTile('p99', fmtMs(lastWithLat.latency_p99_ms || 0), 'last active window'),
   ].join('');
