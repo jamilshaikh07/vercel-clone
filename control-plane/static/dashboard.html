@@ -1782,6 +1782,8 @@
     .env-rows .empty { padding: 14px 0; font-style: italic; color: var(--text-dim); font-size: 12px; }
     .env-toast { padding: 0 16px 14px; font-size: 11px; color: var(--ok); min-height: 14px; }
     .env-toast.err { color: var(--err); }
+    .settings-saved { font-size: 11px; color: var(--ok); margin-left: 8px; opacity: 0; transition: opacity 0.2s; }
+    .settings-saved.show { opacity: 1; }
 
     /* === Logs page =======================================================
        Single-column pane: a header strip with mode label / commit / open
@@ -3518,6 +3520,7 @@ function renderSettings() {
       <div class="settings-v">
         <input type="text" id="settings-display-name" maxlength="80"
                value="${escapeHTML(projectLabel(proj))}" aria-label="App display name">
+        <span class="settings-saved" id="settings-display-name-status"></span>
       </div>
     </div>
     <div class="settings-row">
@@ -3529,6 +3532,7 @@ function renderSettings() {
       <div class="settings-v">
         <input type="text" id="settings-production-branch" maxlength="255"
                value="${escapeHTML(proj.production_branch)}" aria-label="Production branch">
+        <span class="settings-saved" id="settings-production-branch-status"></span>
       </div>
     </div>
     <div class="settings-row">
@@ -3879,6 +3883,10 @@ function renderOverviewCommandCenter(proj) {
           · ${escapeHTML(latest.ref.replace('refs/heads/', '').replace('refs/pull/', 'PR '))}
           ${dur != null ? `<span style="color:var(--text-dim);"> · ${dur}s build</span>` : ''}
           <div class="ld-msg">${escapeHTML((msg || '').split('\n')[0].slice(0, 120))}</div>
+          ${!['queued','building','deploying'].includes(latest.status) ? `
+            <button class="btn-redeploy" id="ov-latest-redeploy" data-id="${latest.id}" style="margin-top:10px">
+              ${latest.status === 'failed' ? '↺ Retry build' : '↺ Redeploy'}
+            </button>` : ''}
         ` : '<div class="empty">No deployments yet</div>'}
       </div>
     </div>
@@ -3892,6 +3900,7 @@ function renderOverviewCommandCenter(proj) {
 
   loadOverviewSparklines(proj.id);
   loadOverviewUptimePill(proj.id);
+  $('ov-latest-redeploy')?.addEventListener('click', function() { redeployFromButton(this); });
 }
 
 async function loadOverviewSparklines(projectID) {
@@ -7098,6 +7107,15 @@ $('page-settings')?.addEventListener('change', async (ev) => {
   const proj = findProject(ROUTE.projectID);
   if (!proj) return;
 
+  function flashSaved(statusId, ok) {
+    const el = $(statusId);
+    if (!el) return;
+    el.textContent = ok ? '✓ Saved' : '✗ Failed';
+    el.style.color = ok ? 'var(--ok)' : 'var(--err)';
+    el.classList.add('show');
+    setTimeout(() => el.classList.remove('show'), 2000);
+  }
+
   if (ev.target.id === 'settings-display-name') {
     const val = ev.target.value.trim();
     try {
@@ -7109,12 +7127,14 @@ $('page-settings')?.addEventListener('change', async (ev) => {
       if (r.status === 401) { window.location.href = '/login'; return; }
       if (!r.ok) throw new Error('save failed');
       proj.display_name = val;
+      flashSaved('settings-display-name-status', true);
       renderSidebar();
       renderCrumbs();
       renderOverviewHeader(proj);
       renderHomeTableBody(DATA.projects || []);
     } catch (_) {
       ev.target.value = projectLabel(proj);
+      flashSaved('settings-display-name-status', false);
     }
   }
 
@@ -7130,9 +7150,11 @@ $('page-settings')?.addEventListener('change', async (ev) => {
       if (r.status === 401) { window.location.href = '/login'; return; }
       if (!r.ok) throw new Error('save failed');
       proj.production_branch = val;
+      flashSaved('settings-production-branch-status', true);
       renderHomeTableBody(DATA.projects || []);
     } catch (_) {
       ev.target.value = proj.production_branch;
+      flashSaved('settings-production-branch-status', false);
     }
   }
 });
