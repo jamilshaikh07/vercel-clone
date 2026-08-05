@@ -3520,7 +3520,6 @@ function renderSettings() {
       <div class="settings-v">
         <input type="text" id="settings-display-name" maxlength="80"
                value="${escapeHTML(projectLabel(proj))}" aria-label="App display name">
-        <span class="settings-saved" id="settings-display-name-status"></span>
       </div>
     </div>
     <div class="settings-row">
@@ -3532,7 +3531,13 @@ function renderSettings() {
       <div class="settings-v">
         <input type="text" id="settings-production-branch" maxlength="255"
                value="${escapeHTML(proj.production_branch)}" aria-label="Production branch">
-        <span class="settings-saved" id="settings-production-branch-status"></span>
+      </div>
+    </div>
+    <div class="settings-row">
+      <div class="settings-k"></div>
+      <div class="settings-v">
+        <button class="btn primary" id="settings-save-btn" type="button">Save changes</button>
+        <span class="settings-saved" id="settings-save-status" style="margin-left:10px"></span>
       </div>
     </div>
     <div class="settings-row">
@@ -5700,6 +5705,10 @@ function envToast(msg, isErr) {
 }
 
 function renderEnvPage() {
+  // Skip background-poll reload if user is mid-edit
+  const activelyEditing = wsEnvRows.contains(document.activeElement) ||
+                          wsEnvRows.querySelector('[data-is-new="1"]');
+  if (activelyEditing) return;
   loadEnv(ROUTE.projectID);
 }
 
@@ -5740,6 +5749,7 @@ function renderEnvRows(projectID, vars) {
 function buildEnvRow(projectID, v) {
   const row = document.createElement('div');
   row.className = 'row';
+  if (v.isNew) row.dataset.isNew = '1';
 
   const keyInput = document.createElement('input');
   keyInput.type = 'text';
@@ -5814,6 +5824,7 @@ function buildEnvRow(projectID, v) {
         saveBtn.disabled = false; saveBtn.textContent = orig;
         return;
       }
+      delete row.dataset.isNew;
       envToast('Saved ' + name + '. Takes effect on next deploy.');
       await loadEnv(projectID);
     } catch (e) {
@@ -7102,60 +7113,64 @@ $('page-settings')?.addEventListener('click', async (ev) => {
     setTimeout(() => { btn.textContent = '⧉'; }, 1200);
   } catch (_) {}
 });
-$('page-settings')?.addEventListener('change', async (ev) => {
+$('page-settings')?.addEventListener('click', async (ev) => {
+  if (ev.target.id !== 'settings-save-btn') return;
   if (ROUTE.scope !== 'project' || ROUTE.view !== 'settings') return;
   const proj = findProject(ROUTE.projectID);
   if (!proj) return;
 
-  function flashSaved(statusId, ok) {
-    const el = $(statusId);
-    if (!el) return;
-    el.textContent = ok ? '✓ Saved' : '✗ Failed';
-    el.style.color = ok ? 'var(--ok)' : 'var(--err)';
-    el.classList.add('show');
-    setTimeout(() => el.classList.remove('show'), 2000);
+  const nameInput   = $('settings-display-name');
+  const branchInput = $('settings-production-branch');
+  const statusEl    = $('settings-save-status');
+  const btn         = ev.target;
+
+  const displayName = nameInput?.value.trim() ?? '';
+  const branch      = branchInput?.value.trim() ?? '';
+
+  if (!branch) { branchInput.value = proj.production_branch; return; }
+  if (displayName.length > 80) {
+    statusEl.textContent = '✗ Display name too long';
+    statusEl.style.color = 'var(--err)';
+    statusEl.classList.add('show');
+    setTimeout(() => statusEl.classList.remove('show'), 3000);
+    return;
   }
 
-  if (ev.target.id === 'settings-display-name') {
-    const val = ev.target.value.trim();
-    try {
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  try {
+    const body = {};
+    if (displayName !== (proj.display_name || '')) body.display_name = displayName;
+    if (branch !== proj.production_branch)         body.production_branch = branch;
+
+    if (Object.keys(body).length > 0) {
       const r = await fetch('/v1/projects/' + proj.id, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ display_name: val }),
+        body: JSON.stringify(body),
       });
       if (r.status === 401) { window.location.href = '/login'; return; }
       if (!r.ok) throw new Error('save failed');
-      proj.display_name = val;
-      flashSaved('settings-display-name-status', true);
+      if (body.display_name !== undefined) proj.display_name = body.display_name;
+      if (body.production_branch)          proj.production_branch = body.production_branch;
       renderSidebar();
       renderCrumbs();
       renderOverviewHeader(proj);
       renderHomeTableBody(DATA.projects || []);
-    } catch (_) {
-      ev.target.value = projectLabel(proj);
-      flashSaved('settings-display-name-status', false);
     }
-  }
 
-  if (ev.target.id === 'settings-production-branch') {
-    const val = ev.target.value.trim();
-    if (!val) { ev.target.value = proj.production_branch; return; }
-    try {
-      const r = await fetch('/v1/projects/' + proj.id, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ production_branch: val }),
-      });
-      if (r.status === 401) { window.location.href = '/login'; return; }
-      if (!r.ok) throw new Error('save failed');
-      proj.production_branch = val;
-      flashSaved('settings-production-branch-status', true);
-      renderHomeTableBody(DATA.projects || []);
-    } catch (_) {
-      ev.target.value = proj.production_branch;
-      flashSaved('settings-production-branch-status', false);
-    }
+    statusEl.textContent = '✓ Saved';
+    statusEl.style.color = 'var(--ok)';
+    statusEl.classList.add('show');
+    setTimeout(() => statusEl.classList.remove('show'), 2500);
+  } catch (_) {
+    statusEl.textContent = '✗ Failed';
+    statusEl.style.color = 'var(--err)';
+    statusEl.classList.add('show');
+    setTimeout(() => statusEl.classList.remove('show'), 3000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save changes';
   }
 });
 $('settings-delete-btn')?.addEventListener('click', () => {
