@@ -137,39 +137,53 @@ func (g *githubApp) installationToken(ctx context.Context, installationID int64)
 	if err != nil {
 		return "", fmt.Errorf("sign jwt: %w", err)
 	}
-	url := fmt.Sprintf("https://api.github.com/app/installations/%d/access_tokens", installationID)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+jwt)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	apiURL := fmt.Sprintf("https://api.github.com/app/installations/%d/access_tokens", installationID)
 
-	resp, err := g.http.Do(req)
-	if err != nil {
-		return "", err
+	var lastErr error
+	for attempt := range 3 {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(time.Duration(attempt) * 3 * time.Second):
+			}
+		}
+		tCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		req, err := http.NewRequestWithContext(tCtx, "POST", apiURL, nil)
+		if err != nil {
+			cancel()
+			return "", err
+		}
+		req.Header.Set("Authorization", "Bearer "+jwt)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		resp, err := g.http.Do(req)
+		cancel()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode/100 != 2 {
+			return "", fmt.Errorf("installation token: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+		var r struct {
+			Token     string    `json:"token"`
+			ExpiresAt time.Time `json:"expires_at"`
+		}
+		if err := json.Unmarshal(body, &r); err != nil {
+			return "", fmt.Errorf("decode token response: %w", err)
+		}
+		if r.Token == "" {
+			return "", errors.New("empty token in response")
+		}
+		g.mu.Lock()
+		g.cache[installationID] = cachedToken{token: r.Token, expiresAt: r.ExpiresAt}
+		g.mu.Unlock()
+		return r.Token, nil
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode/100 != 2 {
-		return "", fmt.Errorf("installation token: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	var r struct {
-		Token     string    `json:"token"`
-		ExpiresAt time.Time `json:"expires_at"`
-	}
-	if err := json.Unmarshal(body, &r); err != nil {
-		return "", fmt.Errorf("decode token response: %w", err)
-	}
-	if r.Token == "" {
-		return "", errors.New("empty token in response")
-	}
-
-	g.mu.Lock()
-	g.cache[installationID] = cachedToken{token: r.Token, expiresAt: r.ExpiresAt}
-	g.mu.Unlock()
-	return r.Token, nil
+	return "", fmt.Errorf("mint token after 3 attempts: %w", lastErr)
 }
 
 // setCommitStatus posts a Status check to the given commit. `state` must be
