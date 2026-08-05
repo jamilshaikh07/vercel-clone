@@ -3889,7 +3889,7 @@ function renderOverviewCommandCenter(proj) {
           ${dur != null ? `<span style="color:var(--text-dim);"> · ${dur}s build</span>` : ''}
           <div class="ld-msg">${escapeHTML((msg || '').split('\n')[0].slice(0, 120))}</div>
           ${!['queued','building','deploying'].includes(latest.status) ? `
-            <button class="btn-redeploy" id="ov-latest-redeploy" data-id="${latest.id}" style="margin-top:10px">
+            <button class="btn-redeploy" id="ov-latest-redeploy" data-deployment-id="${latest.id}" data-commit="${latest.commit_sha || ''}" style="margin-top:10px">
               ${latest.status === 'failed' ? '↺ Retry build' : '↺ Redeploy'}
             </button>` : ''}
         ` : '<div class="empty">No deployments yet</div>'}
