@@ -356,6 +356,19 @@ func (w *worker) runOne(ctx context.Context, c *claimedDeployment) error {
 		}
 	}
 
+	// Garbage-collect old Deployments and Services for this project. Only
+	// runs on production-branch deploys; the new pod is already serving so
+	// it's safe to remove the previous ones.
+	if c.Ref == "refs/heads/"+c.ProductionBranch {
+		oldSel := fmt.Sprintf("paas.project=%s,paas.commit!=%s", c.Slug, shortSHA)
+		if err := w.k8s.deleteAllByLabel(ctx, tenantNS, "apis/apps/v1", "deployments", oldSel); err != nil {
+			w.log.Warn("cleanup old deployments failed", "deployment_id", c.DeploymentID, "err", err)
+		}
+		if err := w.k8s.deleteAllByLabel(ctx, tenantNS, "api/v1", "services", oldSel); err != nil {
+			w.log.Warn("cleanup old services failed", "deployment_id", c.DeploymentID, "err", err)
+		}
+	}
+
 	// Success status: target_url is the production alias when applicable,
 	// otherwise the per-SHA preview URL.
 	w.postStatus(ctx, c, "success", "deployed", prodURL)
