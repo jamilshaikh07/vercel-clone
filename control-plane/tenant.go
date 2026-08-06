@@ -315,7 +315,10 @@ func tenantAllowPublicEgressManifest(namespace string) map[string]any {
 			"podSelector": map[string]any{},
 			"policyTypes": []any{"Egress"},
 			"egress": []any{
-				// DNS — needed for any outbound name resolution.
+				// DNS — kube-system pods (CoreDNS) and NodeLocal DNS
+				// cache VIP (169.254.20.10). The link-local VIP is
+				// excluded from the public-egress ipBlock below, so it
+				// needs its own explicit rule.
 				map[string]any{
 					"to": []any{
 						map[string]any{
@@ -324,6 +327,9 @@ func tenantAllowPublicEgressManifest(namespace string) map[string]any {
 									"kubernetes.io/metadata.name": "kube-system",
 								},
 							},
+						},
+						map[string]any{
+							"ipBlock": map[string]any{"cidr": "169.254.20.10/32"},
 						},
 					},
 					"ports": []any{
