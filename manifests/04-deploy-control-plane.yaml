@@ -29,6 +29,17 @@ spec:
         app.kubernetes.io/component: control-plane
     spec:
       serviceAccountName: control-plane
+      dnsPolicy: None
+      dnsConfig:
+        nameservers:
+          - 10.96.0.10
+        searches:
+          - paas-system.svc.cluster.local
+          - svc.cluster.local
+          - cluster.local
+        options:
+          - name: ndots
+            value: "5"
       # Pull the self-built image from the in-cluster, MinIO-backed registry
       # via its public HTTPS endpoint. registry-dockercfg holds the creds.
       imagePullSecrets:
