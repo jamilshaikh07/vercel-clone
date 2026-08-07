@@ -848,6 +848,18 @@ func deploymentManifest(in deployInput) map[string]any {
 					"imagePullSecrets": []any{
 						map[string]any{"name": dockerCfgSecret},
 					},
+					"dnsPolicy": "None",
+					"dnsConfig": map[string]any{
+						"nameservers": []any{"10.96.0.10"},
+						"searches": []any{
+							fmt.Sprintf("%s.svc.cluster.local", in.Namespace),
+							"svc.cluster.local",
+							"cluster.local",
+						},
+						"options": []any{
+							map[string]any{"name": "ndots", "value": "5"},
+						},
+					},
 					// Pod-level securityContext: required by PSA `restricted`
 					// in the tenant namespace. The numeric uid/gid match
 					// nginxinc/nginx-unprivileged (101) and most common
