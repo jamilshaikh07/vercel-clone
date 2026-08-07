@@ -106,12 +106,44 @@
       grid-template-columns: var(--sidebar-w) 1fr;
       grid-template-rows: 100vh;
       height: 100vh;
+      transition: grid-template-columns 0.15s ease;
     }
     /* When an app is the active scope we slot in a second nav column
        between the main rail and the content area. Toggled from JS via
        renderSubSidebar() based on ROUTE.scope. */
     .app.has-subnav {
       grid-template-columns: var(--sidebar-w) var(--sub-sidebar-w) 1fr;
+    }
+    /* Desktop sidebar hide/collapse. Collapsing sets the shared
+       --sidebar-w var to 0 for this grid only, so both the plain and
+       has-subnav column templates above shrink together — the sidebar's
+       own overflow:hidden (below) clips its contents instead of letting
+       them reflow/wrap. A small floating rail button (added in the JS
+       section) reopens it. Persisted via localStorage so the choice
+       survives reloads/navigation. */
+    .sidebar-collapse-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 22px; height: 22px; border-radius: 6px; flex-shrink: 0;
+      color: var(--text-dim); background: transparent; border: 1px solid transparent;
+      cursor: pointer; margin-left: auto;
+    }
+    .sidebar-collapse-btn:hover { color: var(--text); background: var(--panel-2); border-color: var(--border); }
+    .sidebar-expand-btn {
+      display: none;
+      position: fixed; top: 14px; left: 14px; z-index: 50;
+      width: 32px; height: 32px; border-radius: 8px;
+      align-items: center; justify-content: center;
+      background: var(--panel); border: 1px solid var(--border);
+      color: var(--text-dim); cursor: pointer;
+    }
+    .sidebar-expand-btn:hover { color: var(--text); background: var(--panel-2); }
+    /* Collapse feature is desktop-only, scoped behind the same breakpoint
+       the off-canvas mobile drawer uses below, so the two mechanisms
+       never fight for control of the sidebar's width. */
+    @media (min-width: 769px) {
+      .app.sidebar-collapsed { --sidebar-w: 0px; }
+      .app.sidebar-collapsed .sidebar { border-right: none; }
+      .app.sidebar-collapsed .sidebar-expand-btn { display: inline-flex; }
     }
 
     /* === Sidebar ========================================================= */
@@ -122,10 +154,14 @@
       min-height: 0;
       overflow: hidden;
     }
+    .brand-row {
+      display: flex; align-items: center;
+      padding: 16px 14px 14px 18px;
+      border-bottom: 1px solid var(--border);
+    }
     .brand {
       display: flex; align-items: center; gap: 10px;
-      padding: 16px 18px 14px;
-      border-bottom: 1px solid var(--border);
+      flex: 1; min-width: 0;
       text-decoration: none;
       color: inherit;
     }
@@ -2166,32 +2202,55 @@
 </head>
 <body>
   <div class="app">
+    <!-- Floating rail button shown only while the sidebar is collapsed
+         (desktop only — see the min-width:769px rule above); the sidebar
+         itself is 0-width then so this is the only way back in. -->
+    <button id="sidebar-expand-btn" class="sidebar-expand-btn" type="button"
+            title="Show sidebar" aria-label="Show sidebar">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+           stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/>
+        <line x1="6" y1="2.5" x2="6" y2="13.5"/>
+        <polyline points="3,6 5,8 3,10"/>
+      </svg>
+    </button>
     <!-- =================================================================
          Sidebar rail. Sections: Apps (project list) → optional sub-nav
          for the active app → Monitoring (global views). User footer at
          the bottom pinned via flex.
          ================================================================= -->
     <nav class="sidebar">
-      <a class="brand" href="#/" aria-label="Spinup home">
-        <span class="logo" aria-hidden="true">
-          <!-- Spinup brand mark: an upward chevron with three stacking,
-               fading motion lines beneath. Reads as 'launching up' /
-               'spinning up' and stays legible down to 16px (favicon).
-               Stroke-only, currentColor — so the colour is driven by
-               .brand .logo { color: ... } above. Mirror any geometry
-               change here into the favicon data URI at the top of the
-               file; they are deliberately two copies, not shared. -->
-          <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" fill="none"
-               stroke="currentColor" stroke-width="3"
-               stroke-linecap="round" stroke-linejoin="round">
-            <path d="M7 14 L16 5 L25 14"/>
-            <path d="M9 19 L23 19"/>
-            <path d="M11 23 L21 23" opacity="0.7"/>
-            <path d="M13 27 L19 27" opacity="0.4"/>
+      <div class="brand-row">
+        <a class="brand" href="#/" aria-label="Spinup home">
+          <span class="logo" aria-hidden="true">
+            <!-- Spinup brand mark: an upward chevron with three stacking,
+                 fading motion lines beneath. Reads as 'launching up' /
+                 'spinning up' and stays legible down to 16px (favicon).
+                 Stroke-only, currentColor — so the colour is driven by
+                 .brand .logo { color: ... } above. Mirror any geometry
+                 change here into the favicon data URI at the top of the
+                 file; they are deliberately two copies, not shared. -->
+            <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" fill="none"
+                 stroke="currentColor" stroke-width="3"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <path d="M7 14 L16 5 L25 14"/>
+              <path d="M9 19 L23 19"/>
+              <path d="M11 23 L21 23" opacity="0.7"/>
+              <path d="M13 27 L19 27" opacity="0.4"/>
+            </svg>
+          </span>
+          <span class="name">spinup</span>
+        </a>
+        <button id="sidebar-collapse-btn" class="sidebar-collapse-btn" type="button"
+                title="Hide sidebar" aria-label="Hide sidebar">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+               stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="1.5" y="2.5" width="13" height="11" rx="1.5"/>
+            <line x1="6" y1="2.5" x2="6" y2="13.5"/>
+            <polyline points="4,6 2,8 4,10"/>
           </svg>
-        </span>
-        <span class="name">spinup</span>
-      </a>
+        </button>
+      </div>
       <div class="sidebar-scroll">
         <!-- Primary navigation: Home shows the apps list; Monitoring
              holds the two cluster-wide views. Per-app navigation
@@ -3135,6 +3194,19 @@ window.addEventListener('keydown', (ev) => {
 window.addEventListener('resize', () => {
   if (window.innerWidth > 768) closeMobileNav();
 });
+
+// Desktop sidebar hide/collapse. Independent of the mobile drawer above
+// (that one overlays on small viewports; this one reclaims the column on
+// desktop). Persisted so it survives reloads and route changes since
+// renderUI() never touches document.body/.app's class list itself.
+const SIDEBAR_COLLAPSE_KEY = 'spinup_sidebar_collapsed';
+function setSidebarCollapsed(collapsed) {
+  document.querySelector('.app')?.classList.toggle('sidebar-collapsed', collapsed);
+  try { localStorage.setItem(SIDEBAR_COLLAPSE_KEY, collapsed ? '1' : '0'); } catch {}
+}
+setSidebarCollapsed(localStorage.getItem(SIDEBAR_COLLAPSE_KEY) === '1');
+document.getElementById('sidebar-collapse-btn')?.addEventListener('click', () => setSidebarCollapsed(true));
+document.getElementById('sidebar-expand-btn')?.addEventListener('click', () => setSidebarCollapsed(false));
 
 // ----- Top-level render --------------------------------------------------
 // Called by both applyRoute (route change) and refresh (data change).

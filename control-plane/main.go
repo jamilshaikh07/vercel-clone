@@ -292,7 +292,13 @@ func connectDB(ctx context.Context, dsn string, log *slog.Logger) (*pgxpool.Pool
 	cfg.MinConns = 1
 	cfg.MaxConnLifetime = 30 * time.Minute
 
-	deadline := time.Now().Add(60 * time.Second)
+	// Deadline is generous (5m) because Cilium's ClusterIP/DNS datapath on
+	// this cluster is occasionally flaky for a few seconds at a time
+	// (observed on talos-wk-01) — a single slow DNS lookup or ping used to
+	// blow through the old 60s budget and os.Exit(1), crash-looping the
+	// pod even though the DB itself was fine. Retrying longer just makes
+	// the pod sit non-ready until the network blip clears instead.
+	deadline := time.Now().Add(5 * time.Minute)
 	for attempt := 1; ; attempt++ {
 		pool, err := pgxpool.NewWithConfig(ctx, cfg)
 		if err == nil {
@@ -308,7 +314,9 @@ func connectDB(ctx context.Context, dsn string, log *slog.Logger) (*pgxpool.Pool
 		if time.Now().After(deadline) {
 			return nil, err
 		}
-		log.Warn("db not ready, retrying", "attempt", attempt, "err", err)
+		if attempt%5 == 1 {
+			log.Warn("db not ready, retrying", "attempt", attempt, "err", err)
+		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
